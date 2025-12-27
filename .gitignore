@@ -1,0 +1,3 @@
+env/*
+browser_profile_uc/*
+**/__pycache__/*

@@ -1,0 +1,33 @@
+debug: true
+
+scrapers:
+  seloger:
+    enabled: true
+    # The base URL is used, and query parameters are appended based on the filters below
+    base_url: "https://www.seloger.com/classified-search" 
+    filters:
+      locations: "AD08FR31096" # Code for specific location (e.g., AD08FR31096)
+      price_min: 600
+      price_max: 850
+      surface_min: 19
+      # distributionTypes: "Rent" # Default assumed in code, but can be added here
+      # estateTypes: "House,Apartment" # Default assumed
+    interval_minutes: 30
+
+anti_detection:
+  headless: true # This will be overridden if debug: true is set at the top level
+  min_delay: 5
+  max_delay: 15
+  max_pages_per_session: 15
+  user_agents:
+    - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    - "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+    - "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.1; rv:121.0) Gecko/20100101 Firefox/121.0"
+
+storage:
+  file: "annonces.json"
+
+notifications:
+  ntfy_topic: "logements_alerts"

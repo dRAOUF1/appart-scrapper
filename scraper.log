@@ -1,0 +1,16 @@
+2025-12-27 20:20:11,241 - INFO - Starting scraper run...
+2025-12-27 20:20:11,246 - INFO - Debug mode enabled: Running headful browser.
+2025-12-27 20:20:11,247 - INFO - Using User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+2025-12-27 20:20:11,937 - INFO - patching driver executable /home/raouf/.local/share/undetected_chromedriver/undetected_chromedriver
+2025-12-27 20:20:13,805 - INFO - Browser launched with persistent profile: /home/raouf/Bureau/appart-scrapper/browser_profile_uc
+2025-12-27 20:20:13,805 - INFO - Running scraper: seloger
+2025-12-27 20:20:23,512 - INFO - [seloger] Navigating to https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=House,Apartment&locationsInBuildingExcluded=Groundfloor&locations=AD08FR31096&priceMin=600&priceMax=850&spaceMin=19&order=DateDesc
+2025-12-27 20:20:23,513 - INFO - [seloger] Visiting homepage first...
+2025-12-27 20:20:44,461 - INFO - [seloger] Navigating to search page...
+2025-12-27 20:20:51,375 - INFO - [seloger] Parsed 0 cards
+2025-12-27 20:20:51,375 - WARNING - [seloger] BLOCKED - Bot detection triggered!
+2025-12-27 20:20:55,317 - INFO - Debug screenshot saved.
+2025-12-27 20:20:55,627 - INFO - Alert notification sent.
+2025-12-27 20:20:55,630 - WARNING - Alert notification sent for seloger being blocked
+2025-12-27 20:20:55,631 - INFO - Browser closed.
+2025-12-27 20:20:55,631 - INFO - Scraper run completed.
