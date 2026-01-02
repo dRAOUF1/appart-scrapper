@@ -1,6 +1,5 @@
-playwright>=1.40.0
-playwright-stealth>=1.0.6
+# Scraper dependencies
+curl_cffi>=0.7.0
 beautifulsoup4>=4.12.0
 pyyaml>=6.0
-fake-useragent>=1.4.0
 requests>=2.31.0

@@ -1,3 +1,6 @@
 env/*
 browser_profile_uc/*
 **/__pycache__/*
+annonces.json
+scraper.log
+.gitignore

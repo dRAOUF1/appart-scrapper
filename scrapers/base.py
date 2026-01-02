@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class BaseScraper(ABC):
     def __init__(self, config: Dict[str, Any]):
@@ -33,26 +34,16 @@ class BaseScraper(ABC):
         """Formats a listing into a notification message."""
         pass
     
-    def scrape(self, page, stealth_mgr=None) -> List[Dict[str, Any]]:
+    @abstractmethod
+    def scrape_with_curl(self, session, config: dict) -> Tuple[List[Dict[str, Any]], bool]:
         """
-        Main method to execute the scraping logic using the provided Playwright Page object.
-        Can be overridden if custom navigation/logic is needed (e.g. handling pagination).
+        Scrape using curl_cffi session.
+        
+        Args:
+            session: curl_cffi Session object with impersonation
+            config: Full application config dict
+            
+        Returns:
+            Tuple of (listings, is_blocked)
         """
-        url = self.get_start_url()
-        logger.info(f"[{self.get_name()}] Navigating to {url}")
-        
-        # Navigation is usually handled here or in main, but let's handle it here so scraper controls it
-        # Note: 'page' comes from main.py which handles the Stealth wrapper
-        response = page.goto(url, wait_until="domcontentloaded")
-        
-        # Add basic wait logic if needed, e.g. for selectors
-        # page.wait_for_selector('config_selector') 
-        
-        # Get content
-        content = page.content()
-        
-        # Parse
-        listings = self.parse_listings(content)
-        logger.info(f"[{self.get_name()}] Found {len(listings)} listings")
-        
-        return listings
+        pass

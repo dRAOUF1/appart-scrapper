@@ -1,1 +1,448 @@
-{}
+{
+  "seloger": {
+    "257464433": {
+      "id": "257464433",
+      "price": "752 €/mois",
+      "location": "Faubourg du Temple-Hôpital Saint Louis, Paris 11ème (75011)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-10eme-75/faubourg-du-temple-hopital-saint-louis/257464433.htm",
+      "title": "Logement à Faubourg du Temple-Hôpital Saint Louis, Paris 11ème (75011)",
+      "details": "1 pièce·26 m²·3ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257464461": {
+      "id": "257464461",
+      "price": "700 €/mois",
+      "location": "Porte Dauphine, Paris 16ème (75016)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-16eme-75/porte-dauphine/257464461.htm",
+      "title": "Logement à Porte Dauphine, Paris 16ème (75016)",
+      "details": "1 pièce·25 m²·3ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257464465": {
+      "id": "257464465",
+      "price": "699 €/mois",
+      "location": "Legendre-Lévis, Paris 17ème (75017)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-17eme-75/legendre-levis/257464465.htm",
+      "title": "Logement à Legendre-Lévis, Paris 17ème (75017)",
+      "details": "1 pièce·27 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257441561": {
+      "id": "257441561",
+      "price": "757 €/mois",
+      "location": "Télégraphe-Pelleport Saint Fargeau, Paris 20ème (75020)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-20eme-75/telegraphe-pelleport-saint-fargeau/257441561.htm",
+      "title": "Logement à Télégraphe-Pelleport Saint Fargeau, Paris 20ème (75020)",
+      "details": "1 pièce·25 m²·Étage 8/8",
+      "agency": "SERGIC PARIS SAINT LAZARE"
+    },
+    "257416969": {
+      "id": "257416969",
+      "price": "820 €/mois",
+      "location": "Danube-Porte des Lilas, Paris 19ème (75019)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-19eme-75/danube-porte-des-lilas/257416969.htm",
+      "title": "Logement à Danube-Porte des Lilas, Paris 19ème (75019)",
+      "details": "1 pièce·1 chambre·115 m²·1er étage",
+      "agency": "STUDAPART"
+    },
+    "257388331": {
+      "id": "257388331",
+      "price": "642 €/mois",
+      "location": "Muette Nord, Paris 16ème (75016)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-16eme-75/muette-nord/257388331.htm",
+      "title": "Logement à Muette Nord, Paris 16ème (75016)",
+      "details": "1 pièce·22 m²·3ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257388351": {
+      "id": "257388351",
+      "price": "602 €/mois",
+      "location": "Léon-Blum Folie-Regnault, Paris 11ème (75011)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-11eme-75/leon-blum-folie-regnault/257388351.htm",
+      "title": "Logement à Léon-Blum Folie-Regnault, Paris 11ème (75011)",
+      "details": "1 pièce·19 m²·3ème étage",
+      "agency": "ALLO APPART"
+    },
+    "gen_7": {
+      "id": "gen_7",
+      "price": "790 €/mois",
+      "location": "Didot-Porte de Vanves, Paris (75014)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-14eme-75/didot-porte-de-vanves/25FIWE5R6NQY.htm",
+      "title": "Logement à Didot-Porte de Vanves, Paris (75014)",
+      "details": "1 pièce·20 m²·Étage 2/2",
+      "agency": "Particulier"
+    },
+    "257308911": {
+      "id": "257308911",
+      "price": "679 €/mois",
+      "location": "Saint Blaise, Paris 20ème (75020)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-20eme-75/saint-blaise/257308911.htm",
+      "title": "Logement à Saint Blaise, Paris 20ème (75020)",
+      "details": "1 pièce·19,1 m²·1er étage",
+      "agency": "Réussite Immobilière"
+    },
+    "211440415": {
+      "id": "211440415",
+      "price": "752 €/mois",
+      "location": "République-Gare-Porte de Paris, Saint-Denis (93200)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/saint-denis-93/peri-langevin-stalingrad-politzer/211440415.htm",
+      "title": "Logement à République-Gare-Porte de Paris, Saint-Denis (93200)",
+      "details": "1 pièce·19 m²",
+      "agency": "LES BELLES ANNEES"
+    },
+    "257304357": {
+      "id": "257304357",
+      "price": "796 €/mois",
+      "location": "Clignancourt-Jules Joffrin, Paris 18ème (75018)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-18eme-75/clignancourt-jules-joffrin/257304357.htm",
+      "title": "Logement à Clignancourt-Jules Joffrin, Paris 18ème (75018)",
+      "details": "2 pièces·1 chambre·21 m²·2ème étage",
+      "agency": "IMMO FAN"
+    },
+    "257278241": {
+      "id": "257278241",
+      "price": "755 €/mois",
+      "location": "Père Lachaise-Réunion, Paris 20ème (75020)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-20eme-75/pere-lachaise-reunion/257278241.htm",
+      "title": "Logement à Père Lachaise-Réunion, Paris 20ème (75020)",
+      "details": "1 pièce·19 m²·1er étage·dès le 23/01/2026",
+      "agency": "LAMIRAND ET ASSOCIES"
+    },
+    "257265561": {
+      "id": "257265561",
+      "price": "742 €/mois",
+      "location": "République-Saint Ambroise, Paris 11ème (75011)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-11eme-75/republique-saint-ambroise/257265561.htm",
+      "title": "Logement à République-Saint Ambroise, Paris 11ème (75011)",
+      "details": "1 pièce·26 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257265585": {
+      "id": "257265585",
+      "price": "689 €/mois",
+      "location": "Porte Dauphine, Paris 16ème (75016)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-16eme-75/porte-dauphine/257265585.htm",
+      "title": "Logement à Porte Dauphine, Paris 16ème (75016)",
+      "details": "1 pièce·23 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257264317": {
+      "id": "257264317",
+      "price": "825 €/mois",
+      "location": "Alleray Procession, Paris 15ème (75015)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-15eme-75/alleray-procession/257264317.htm",
+      "title": "Logement à Alleray Procession, Paris 15ème (75015)",
+      "details": "1 pièce·19 m²·Étage 1/7",
+      "agency": ""
+    },
+    "255453551": {
+      "id": "255453551",
+      "price": "750 €/mois",
+      "location": "Léon-Blum Folie-Regnault, Paris 11ème (75011)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-11eme-75/leon-blum-folie-regnault/255453551.htm",
+      "title": "Logement à Léon-Blum Folie-Regnault, Paris 11ème (75011)",
+      "details": "1 pièce·21 m²·5ème étage",
+      "agency": ""
+    },
+    "257199749": {
+      "id": "257199749",
+      "price": "850 €/mois",
+      "location": "Bassin de la Villette, Paris 19ème (75019)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-19eme-75/bassin-de-la-villette/257199749.htm",
+      "title": "Logement à Bassin de la Villette, Paris 19ème (75019)",
+      "details": "1 pièce·21 m²·1er étage",
+      "agency": ""
+    },
+    "257128377": {
+      "id": "257128377",
+      "price": "646 €/mois",
+      "location": "Legendre-Lévis, Paris 17ème (75017)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-17eme-75/legendre-levis/257128377.htm",
+      "title": "Logement à Legendre-Lévis, Paris 17ème (75017)",
+      "details": "1 pièce·25 m²·3ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257123469": {
+      "id": "257123469",
+      "price": "840 €/mois",
+      "location": "Saint Germain des Prés, Paris 6ème (75006)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-6eme-75/saint-germain-des-pres/257123469.htm",
+      "title": "Logement à Saint Germain des Prés, Paris 6ème (75006)",
+      "details": "1 pièce·1 chambre·19 m²·Étage 2/5",
+      "agency": "LOCENMAIN"
+    },
+    "257062839": {
+      "id": "257062839",
+      "price": "850 €/mois",
+      "location": "La Chapelle-Marx Dormoy, Paris 18ème (75018)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-18eme-75/la-chapelle-marx-dormoy/257062839.htm",
+      "title": "Logement à La Chapelle-Marx Dormoy, Paris 18ème (75018)",
+      "details": "1 pièce·26 m²·2ème étage·dès le 08/01/2026",
+      "agency": "IMODIRECT"
+    },
+    "257059137": {
+      "id": "257059137",
+      "price": "770 €/mois",
+      "location": "Saint Germain des Prés, Paris 6ème (75006)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-6eme-75/saint-germain-des-pres/257059137.htm",
+      "title": "Logement à Saint Germain des Prés, Paris 6ème (75006)",
+      "details": "1 pièce·19 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "257059107": {
+      "id": "257059107",
+      "price": "653 €/mois",
+      "location": "Auteuil Sud, Paris 16ème (75016)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-16eme-75/auteuil-sud/257059107.htm",
+      "title": "Logement à Auteuil Sud, Paris 16ème (75016)",
+      "details": "1 pièce·19 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "256929775": {
+      "id": "256929775",
+      "price": "720 €/mois",
+      "location": "Nation-Picpus, Paris 12ème (75012)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-12eme-75/nation-picpus/256929775.htm",
+      "title": "Logement à Nation-Picpus, Paris 12ème (75012)",
+      "details": "1 pièce·23 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "210049801": {
+      "id": "210049801",
+      "price": "740 €/mois",
+      "location": "République-Gare-Porte de Paris, Saint-Denis (93200)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/saint-denis-93/peri-langevin-stalingrad-politzer/210049801.htm",
+      "title": "Logement à République-Gare-Porte de Paris, Saint-Denis (93200)",
+      "details": "1 pièce·19 m²",
+      "agency": "LES BELLES ANNEES"
+    },
+    "256929743": {
+      "id": "256929743",
+      "price": "772 €/mois",
+      "location": "Buttes Aux Cailles-Glacière, Paris 13ème (75013)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-13eme-75/buttes-aux-cailles-glaciere/256929743.htm",
+      "title": "Logement à Buttes Aux Cailles-Glacière, Paris 13ème (75013)",
+      "details": "1 pièce·23 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "256921603": {
+      "id": "256921603",
+      "price": "850 €/mois",
+      "location": "Léon-Blum Folie-Regnault, Paris 11ème (75011)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-11eme-75/leon-blum-folie-regnault/256921603.htm",
+      "title": "Logement à Léon-Blum Folie-Regnault, Paris 11ème (75011)",
+      "details": "1 pièce·20 m²·Étage 6/6",
+      "agency": ""
+    },
+    "256921419": {
+      "id": "256921419",
+      "price": "844 €/mois",
+      "location": "La Chapelle-Marx Dormoy, Paris 18ème (75018)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-18eme-75/la-chapelle-marx-dormoy/256921419.htm",
+      "title": "Logement à La Chapelle-Marx Dormoy, Paris 18ème (75018)",
+      "details": "1 pièce·20,4 m²·2ème étage·dès le 24/01/2026",
+      "agency": "BEANSTOCK"
+    },
+    "256742613": {
+      "id": "256742613",
+      "price": "662 €/mois",
+      "location": "Grandes Carrières-Clichy, Paris 18ème (75018)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-18eme-75/grandes-carrieres-clichy/256742613.htm",
+      "title": "Logement à Grandes Carrières-Clichy, Paris 18ème (75018)",
+      "details": "1 pièce·19 m²·2ème étage",
+      "agency": "ALLO APPART"
+    },
+    "256739219": {
+      "id": "256739219",
+      "price": "775 €/mois",
+      "location": "Vallée de Fécamp, Paris 12ème (75012)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-12eme-75/nation-picpus/256739219.htm",
+      "title": "Logement à Vallée de Fécamp, Paris 12ème (75012)",
+      "details": "1 pièce·21 m²·Étage 1/6",
+      "agency": "LOCENMAIN"
+    },
+    "256724401": {
+      "id": "256724401",
+      "price": "800 €/mois",
+      "location": "Bois de Vincennes, Paris 12ème (75012)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-12eme-75/bois-de-vincennes/256724401.htm",
+      "title": "Logement à Bois de Vincennes, Paris 12ème (75012)",
+      "details": "1 pièce·25 m²·3ème étage",
+      "agency": ""
+    },
+    "256685109": {
+      "id": "256685109",
+      "price": "830 €/mois",
+      "location": "Bièvres Sud Tolbiac, Paris 13ème (75013)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-13eme-75/bievres-sud-tolbiac/256685109.htm",
+      "title": "Logement à Bièvres Sud Tolbiac, Paris 13ème (75013)",
+      "details": "1 pièce·22 m²·1er étage",
+      "agency": ""
+    },
+    "256652555": {
+      "id": "256652555",
+      "price": "700 €/mois",
+      "location": "Grandes Carrières-Clichy, Paris 18ème (75018)",
+      "url": "https://www.seloger.com/annonces/locations/appartement/paris-17eme-75/la-fourche-guy-moquet/256652555.htm",
+      "title": "Logement à Grandes Carrières-Clichy, Paris 18ème (75018)",
+      "details": "1 pièce·20 m²",
+      "agency": "LocService"
+    }
+  },
+  "bienici": {
+    "ag754691-505922513": {
+      "id": "ag754691-505922513",
+      "price": "850€/mois + 65€ charges",
+      "location": "Paris 11e Arrondissement - Belleville - Saint-Maur, Paris 11e (75011)",
+      "url": "https://www.bienici.com/annonce/location/paris-11e/ag754691-505922513",
+      "title": "Appartement PARIS   1 pièce(s)   26 m2",
+      "details": "1 pièce · 22 m²",
+      "agency": "PRIMAS immobilier",
+      "furnished": false,
+      "energy_class": "E"
+    },
+    "immo-facile-59755353": {
+      "id": "immo-facile-59755353",
+      "price": "776€/mois + 70€ charges",
+      "location": "Paris 16e Arrondissement - Porte de Saint-Cloud - Auteuil-Sud, Paris 16e (75016)",
+      "url": "https://www.bienici.com/annonce/location/paris-16e/immo-facile-59755353",
+      "title": "Appartement Paris 1 pièce(s) 23.60 m2",
+      "details": "1 pièce · 23.6 m² · Étage 3",
+      "agency": "",
+      "furnished": false,
+      "energy_class": "F"
+    },
+    "ag753644-505652759": {
+      "id": "ag753644-505652759",
+      "price": "757€/mois + 83€ charges",
+      "location": "Paris 20e Arrondissement - Télégraphe - Pelleport - Saint-Fargeau, Paris 20e (75020)",
+      "url": "https://www.bienici.com/annonce/location/paris-20e/ag753644-505652759",
+      "title": "Appartement type 1",
+      "details": "1 pièce · 25 m²",
+      "agency": "SERGIC PARIS 8ÈME",
+      "furnished": false,
+      "energy_class": "D"
+    },
+    "ag755809-505616768": {
+      "id": "ag755809-505616768",
+      "price": "679.01€/mois + 45€ charges",
+      "location": "Paris 20e Arrondissement - Saint-Blaise, Paris 20e (75020)",
+      "url": "https://www.bienici.com/annonce/location/paris-20e/ag755809-505616768",
+      "title": "Appartement Paris 1 pièce(s) 21.58 m2",
+      "details": "1 pièce · 19 m² · Étage 1",
+      "agency": "Réussite Immobilière",
+      "furnished": true,
+      "energy_class": "E"
+    },
+    "ag752352-505528172": {
+      "id": "ag752352-505528172",
+      "price": "755€/mois + 80€ charges",
+      "location": "Paris 20e Arrondissement - Père Lachaise - Réunion, Paris 20e (75020)",
+      "url": "https://www.bienici.com/annonce/location/paris-20e/ag752352-505528172",
+      "title": "Appartement studio à PARIS 20ème",
+      "details": "1 pièce · 19 m² · Étage 1",
+      "agency": "",
+      "furnished": true,
+      "energy_class": "D"
+    },
+    "ag210198-504918467": {
+      "id": "ag210198-504918467",
+      "price": "850€/mois + 65€ charges",
+      "location": "Paris 18e Arrondissement - La Chapelle - Marx Dormoy, Paris 18e (75018)",
+      "url": "https://www.bienici.com/annonce/location/paris-18e/ag210198-504918467",
+      "title": "Appartement - 2ème étage - 26,45 m2 - 1 pièce - Meublé",
+      "details": "1 pièce · 26 m² · Étage 2",
+      "agency": "",
+      "furnished": true,
+      "energy_class": "D"
+    },
+    "lamy-38-FL0841940": {
+      "id": "lamy-38-FL0841940",
+      "price": "772€/mois + 50€ charges",
+      "location": "Paris 17e Arrondissement - Batignolles - Cardinet, Paris 17e (75017)",
+      "url": "https://www.bienici.com/annonce/location/paris-17e/lamy-38-FL0841940",
+      "title": "Appartement",
+      "details": "1 pièce · 19.32 m² · Étage 3",
+      "agency": "",
+      "furnished": false,
+      "energy_class": "E"
+    },
+    "ag752352-504661994": {
+      "id": "ag752352-504661994",
+      "price": "792€/mois + 55€ charges",
+      "location": "Paris 12e Arrondissement - Aligre - Gare de Lyon, Paris 12e (75012)",
+      "url": "https://www.bienici.com/annonce/location/paris-12e/ag752352-504661994",
+      "title": "Appartement 2 p à PARIS 12ème",
+      "details": "2 pièces · 1 ch. · 21 m²",
+      "agency": "",
+      "furnished": true,
+      "energy_class": "E"
+    },
+    "apimo-86519741": {
+      "id": "apimo-86519741",
+      "price": "840.1€/mois + 55€ charges",
+      "location": "Paris 18e Arrondissement - Grandes Carrières - Clichy, Paris 18e (75018)",
+      "url": "https://www.bienici.com/annonce/location/paris-18e/apimo-86519741",
+      "title": "PARIS XVIII - A LOUER VIDE - RUE DAMREMONT - JOLI STUDIO - REFAIT A NEUF - REZ-DE-CHAUSSEE",
+      "details": "1 pièce · 23 m²",
+      "agency": "",
+      "furnished": false,
+      "energy_class": "D"
+    },
+    "immo-facile-59588314": {
+      "id": "immo-facile-59588314",
+      "price": "780€/mois + 110€ charges",
+      "location": "Paris 18e Arrondissement - Grandes Carrières - Clichy, Paris 18e (75018)",
+      "url": "https://www.bienici.com/annonce/location/paris-18e/immo-facile-59588314",
+      "title": "Studio Paris 18ème arrondissement",
+      "details": "1 pièce · 1 ch. · 19.3 m² · Étage 1",
+      "agency": "",
+      "furnished": false,
+      "energy_class": "F"
+    },
+    "lamy-38-FL0828238": {
+      "id": "lamy-38-FL0828238",
+      "price": "795€/mois + 75€ charges",
+      "location": "Paris 17e Arrondissement - La Fourche - Guy Moquet, Paris 17e (75017)",
+      "url": "https://www.bienici.com/annonce/location/paris-17e/lamy-38-FL0828238",
+      "title": "Appartement",
+      "details": "1 pièce · 19.34 m²",
+      "agency": "",
+      "furnished": true,
+      "energy_class": "F"
+    },
+    "ag755809-454685432": {
+      "id": "ag755809-454685432",
+      "price": "691.54€/mois + 30€ charges",
+      "location": "Paris 20e Arrondissement - Saint-Blaise, Paris 20e (75020)",
+      "url": "https://www.bienici.com/annonce/location/paris-20e/ag755809-454685432",
+      "title": "Appartement À Louer",
+      "details": "1 pièce · 19 m²",
+      "agency": "Réussite Immobilière",
+      "furnished": false,
+      "energy_class": "D"
+    },
+    "immo-facile-57404150": {
+      "id": "immo-facile-57404150",
+      "price": "824.7€/mois + 108€ charges",
+      "location": "Paris 15e Arrondissement - Alleray - Procession, Paris 15e (75015)",
+      "url": "https://www.bienici.com/annonce/location/paris-15e/immo-facile-57404150",
+      "title": "Studio meublé  _ Paris 15ème",
+      "details": "1 pièce · 19.32 m² · Étage 1",
+      "agency": "",
+      "furnished": true,
+      "energy_class": "D"
+    },
+    "apimo-1744746": {
+      "id": "apimo-1744746",
+      "price": "840.1€/mois + 55€ charges",
+      "location": "Paris 18e Arrondissement - Grandes Carrières - Clichy, Paris 18e (75018)",
+      "url": "https://www.bienici.com/annonce/location/paris-18e/apimo-1744746",
+      "title": "PARIS XVIII - A LOUER VIDE - RUE DAMREMONT - JOLI STUDIO - REFAIT A NEUF - REZ-DE-CHAUSSEE",
+      "details": "1 pièce · 23 m²",
+      "agency": "",
+      "furnished": false,
+      "energy_class": "D"
+    }
+  }
+}

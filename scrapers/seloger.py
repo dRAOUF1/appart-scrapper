@@ -1,11 +1,11 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from .base import BaseScraper
 from bs4 import BeautifulSoup
 import logging
-import time
-import random
+import re
 
 logger = logging.getLogger(__name__)
+
 
 class SeLogerScraper(BaseScraper):
     def get_name(self) -> str:
@@ -37,116 +37,52 @@ class SeLogerScraper(BaseScraper):
         
         return f"{base_url}?{'&'.join(params)}"
 
-    def scrape(self, page, stealth_mgr=None) -> List[Dict[str, Any]]:
-        """Legacy Playwright scrape method."""
-        return []
-
-    def scrape_with_uc(self, driver, config: dict) -> tuple[List[Dict[str, Any]], bool]:
-        """Scrape using undetected-chromedriver. Returns (listings, is_blocked)."""
+    def scrape_with_curl(self, session, config: dict) -> Tuple[List[Dict[str, Any]], bool]:
+        """Scrape SeLoger using curl_cffi session."""
         url = self.get_start_url()
-        logger.info(f"[{self.get_name()}] Navigating to {url}")
-        is_blocked = False
+        logger.info(f"[{self.get_name()}] Fetching {url}")
+        
+        headers = {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate, br",
+            "accept-language": "fr-FR,fr;q=0.9",
+        }
         
         try:
-            # First visit homepage to establish session
-            logger.info(f"[{self.get_name()}] Visiting homepage first...")
-            driver.get("https://www.seloger.com/")
+            response = session.get(url, headers=headers, timeout=30)
             
-            # Wait for page to load
-            time.sleep(random.uniform(3, 6))
-            
-            # Simulate human behavior
-            self._simulate_human(driver)
-            
-            # Handle cookie consent
-            self._handle_cookies(driver)
-            
-            # Small delay
-            time.sleep(random.uniform(2, 4))
-            
-            # Navigate to search URL
-            logger.info(f"[{self.get_name()}] Navigating to search page...")
-            driver.get(url)
-            
-            # Wait for content
-            time.sleep(random.uniform(4, 7))
-            
-            # Simulate scrolling
-            self._simulate_human(driver)
-            
-            # Get page content
-            content = driver.page_source
-            
-            # Debug: save HTML
+            # Debug: save response
             with open("debug_seloger.html", "w", encoding="utf-8") as f:
-                f.write(content)
-            logger.debug("Saved page to debug_seloger.html")
+                f.write(response.text)
+            logger.debug("Saved response to debug_seloger.html")
             
-            # First try to parse - if we have listings, we're not blocked
+            # Check for blocking
+            if response.status_code != 200:
+                logger.warning(f"[{self.get_name()}] HTTP {response.status_code}")
+                return [], True
+            
+            content = response.text
+            
+            # Check for CAPTCHA/blocking indicators
+            blocking_indicators = [
+                ("captcha" in content.lower() and "enable JS" in content and len(content) < 5000),
+                ("captcha-delivery.com" in content and "cardmfe" not in content),
+                ("robot" in content.lower() and "detected" in content.lower() and "cardmfe" not in content),
+            ]
+            
+            if any(blocking_indicators):
+                logger.warning(f"[{self.get_name()}] BLOCKED - Bot detection triggered!")
+                return [], True
+            
+            # Parse listings
             listings = self.parse_listings(content)
-            
-            # Only check for blocking if we found no listings
-            if len(listings) == 0:
-                # Check for actual blocking indicators (not just datadome scripts on normal pages)
-                blocking_indicators = [
-                    # CAPTCHA page with JS requirement
-                    ("captcha" in content.lower() and "enable JS" in content and len(content) < 5000),
-                    # DataDome interstitial (small page with just captcha)
-                    ("captcha-delivery.com" in content and "cardmfe" not in content),
-                    # Bot detection message
-                    ("robot" in content.lower() and "detected" in content.lower() and "cardmfe" not in content),
-                ]
-                
-                if any(blocking_indicators):
-                    is_blocked = True
-                    logger.warning(f"[{self.get_name()}] BLOCKED - Bot detection triggered!")
-                    try:
-                        driver.save_screenshot("debug_seloger.png")
-                        logger.info("Debug screenshot saved.")
-                    except:
-                        pass
-                    return [], True
-            
             logger.info(f"[{self.get_name()}] Found {len(listings)} listings")
+            
             return listings, False
             
         except Exception as e:
             logger.error(f"[{self.get_name()}] Error: {e}", exc_info=True)
             return [], False
-
-    def _simulate_human(self, driver):
-        """Simulate human scrolling."""
-        try:
-            for _ in range(random.randint(2, 4)):
-                scroll = random.randint(200, 500)
-                driver.execute_script(f"window.scrollBy(0, {scroll})")
-                time.sleep(random.uniform(0.3, 0.8))
-        except:
-            pass
-
-    def _handle_cookies(self, driver):
-        """Handle cookie consent."""
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        
-        selectors = [
-            (By.ID, "didomi-notice-agree-button"),
-            (By.XPATH, "//button[contains(text(), 'Accepter')]"),
-            (By.XPATH, "//button[contains(text(), 'Tout accepter')]"),
-        ]
-        
-        for by, sel in selectors:
-            try:
-                elem = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((by, sel))
-                )
-                elem.click()
-                logger.info(f"[{self.get_name()}] Clicked consent: {sel}")
-                time.sleep(random.uniform(0.5, 1.5))
-                return
-            except:
-                continue
 
     def parse_listings(self, page_content: str) -> List[Dict[str, Any]]:
         soup = BeautifulSoup(page_content, 'html.parser')
@@ -183,7 +119,6 @@ class SeLogerScraper(BaseScraper):
                 # Extract ID from URL (format: .../257128377.htm)
                 listing_id = f"gen_{i}"
                 if url:
-                    import re
                     # Match pattern like /257128377.htm
                     match = re.search(r'/(\d{6,12})\.htm', url)
                     if match:
@@ -211,20 +146,31 @@ class SeLogerScraper(BaseScraper):
                 if keyfacts_node:
                     keyfacts = keyfacts_node.get_text(strip=True)
                 
-                # Agency name - it's in the img alt attribute, not in text
+                # Agency name - multiple locations possible
                 agency = ""
-                # First try the text-based title
-                agency_node = card.select_one('[data-testid="cardmfe-agency-title-test-id"]')
-                if agency_node:
-                    agency = agency_node.get_text(strip=True)
                 
-                # If no text, try to get from image alt attribute
+                # 1. Try text-based title (e.g. "Particulier")
+                agency_title = card.select_one('[data-testid="cardmfe-agency-title-test-id"]')
+                if agency_title:
+                    agency = agency_title.get_text(strip=True)
+                
+                # 2. Try span inside publisher container (XL cards)
                 if not agency:
-                    agency_container = card.select_one('[data-testid*="cardmfe-agency-publisher"]')
-                    if agency_container:
-                        img = agency_container.select_one('img[alt]')
-                        if img:
-                            agency = img.get('alt', '')
+                    for container_type in ['xl', 'large', 'medium']:
+                        container = card.select_one(f'[data-testid="cardmfe-agency-publisher-{container_type}-test-id"]')
+                        if container:
+                            # Check for span text first
+                            span = container.select_one('span')
+                            if span:
+                                text = span.get_text(strip=True)
+                                if text:
+                                    agency = text
+                                    break
+                            # Then check img alt
+                            img = container.select_one('img[alt]')
+                            if img:
+                                agency = img.get('alt', '')
+                                break
                 
                 listings.append({
                     "id": listing_id,
@@ -245,14 +191,13 @@ class SeLogerScraper(BaseScraper):
         return listing.get("id")
 
     def format_notification(self, listing: Dict[str, Any]) -> str:
+        agency = listing.get('agency', '')
         msg = (
-            f"🏠 Nouveau Logement SeLoger!\n"
-            f"💰 Prix: {listing.get('price')}\n"
-            f"📍 Lieu: {listing.get('location')}\n"
+            f"🏠 SeLoger\n"
+            f"💰 {listing.get('price')}\n"
+            f"📍 {listing.get('location')}\n"
         )
-        if listing.get('details'):
-            msg += f"📐 Détails: {listing.get('details')}\n"
-        if listing.get('agency'):
-            msg += f"🏢 Agence: {listing.get('agency')}\n"
+        if agency:
+            msg += f"🏢 {agency}\n"
         msg += f"🔗 {listing.get('url')}"
         return msg

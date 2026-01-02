@@ -5,15 +5,13 @@ import os
 import logging
 import requests
 import random
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from curl_cffi import requests as curl_requests
 from scrapers.seloger import SeLogerScraper
+from scrapers.bienici import BienIciScraper
 
 # Logging setup
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("scraper.log"),
@@ -24,14 +22,14 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = "config.yaml"
 DATA_PATH = "annonces.json"
-USER_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_profile_uc")
+
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
-        logger.error(f"Configuration file {CONFIG_PATH} not found.")
         return {}
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
+
 
 def load_data():
     if not os.path.exists(DATA_PATH):
@@ -42,11 +40,13 @@ def load_data():
         except json.JSONDecodeError:
             return {}
 
+
 def save_data(data):
     with open(DATA_PATH, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-def send_notification(topic, message, title="Nouveau Logement Détecté"):
+
+def send_notification(topic, message, url="", title="Nouveau Logement"):
     if not topic:
         return
     try:
@@ -56,175 +56,90 @@ def send_notification(topic, message, title="Nouveau Logement Détecté"):
             headers={"Title": title}
         )
         if resp.status_code == 200:
-            logger.info("Notification sent successfully.")
+            logger.info(f"Notification envoyée: {url}")
         else:
-            logger.error(f"Failed to send notification: {resp.status_code} - {resp.text}")
+            logger.error(f"Échec notification: {resp.status_code}")
     except Exception as e:
-        logger.error(f"Failed to send notification: {e}")
+        logger.error(f"Échec notification: {e}")
 
 
-def send_alert_notification(topic, alert_type, details=""):
-    """Send an alert notification for errors like being blocked."""
+def send_alert(topic, alert_type, details=""):
+    """Send an alert notification for errors/blocking."""
     if not topic:
         return
     try:
-        message = f"ALERTE SCRAPER\n\nType: {alert_type}\n"
+        message = f"🚨 ALERTE SCRAPER\n\nType: {alert_type}"
         if details:
-            message += f"Details: {details}\n"
-        message += "\nVerifiez les logs et debug_seloger.html/png"
+            message += f"\nDétails: {details}"
         
-        resp = requests.post(
-            f"https://ntfy.sh/{topic}", 
+        requests.post(
+            f"https://ntfy.sh/{topic}",
             data=message.encode('utf-8'),
             headers={
-                "Title": "Scraper Bloque",
+                "Title": f"⚠️ {alert_type}",
                 "Priority": "high",
-                "Tags": "warning",
-                "Content-Type": "text/plain; charset=utf-8"
-            }
+                "Tags": "warning"
+            },
+            timeout=10
         )
-        if resp.status_code == 200:
-            logger.info("Alert notification sent.")
-        else:
-            logger.error(f"Failed to send alert: {resp.status_code}")
+        logger.info(f"Alerte envoyée: {alert_type}")
     except Exception as e:
-        logger.error(f"Failed to send alert notification: {e}")
+        logger.error(f"Échec envoi alerte: {e}")
 
 
-def create_stealth_driver(config: dict):
-    """Create an undetected Chrome driver with anti-bot measures."""
-    headless = config.get('anti_detection', {}).get('headless', True)
-    if config.get('debug', False):
-        logger.info("Debug mode enabled: Running headful browser.")
-        headless = False
-    
-    # Chrome options
-    options = uc.ChromeOptions()
-    
-    # Persistent profile for cookies
-    os.makedirs(USER_DATA_DIR, exist_ok=True)
-    options.add_argument(f"--user-data-dir={USER_DATA_DIR}")
-    
-    # Anti-detection arguments
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-infobars")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(800, 1080)}")
-    
-    # Language and locale
-    options.add_argument("--lang=fr-FR")
-    options.add_argument("--accept-language=fr-FR,fr;q=0.9,en;q=0.8")
-    
-    # Random user agent (if provided in config)
-    user_agents = config.get('anti_detection', {}).get('user_agents', [])
-    if user_agents:
-        ua = random.choice(user_agents)
-        logger.info(f"Using User-Agent: {ua}")
-    
-    # Create undetected driver
-    driver = uc.Chrome(
-        options=options,
-        headless=headless,
-        use_subprocess=True,
-        version_main=140,  # Match installed Chrome version
-    )
-    
-    logger.info(f"Browser launched with persistent profile: {USER_DATA_DIR}")
-    return driver
-
-
-def simulate_human_behavior(driver, min_delay=1, max_delay=3):
-    """Simulate human-like browsing behavior."""
-    try:
-        # Random scroll
-        scroll_distance = random.randint(200, 600)
-        driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
-        time.sleep(random.uniform(0.5, 1.5))
-        
-        # More scrolling
-        scroll_distance = random.randint(300, 700)
-        driver.execute_script(f"window.scrollBy(0, {scroll_distance})")
-        time.sleep(random.uniform(min_delay, max_delay))
-        
-    except Exception as e:
-        logger.debug(f"Human simulation error: {e}")
-
-
-def handle_cookie_consent(driver):
-    """Try to handle cookie consent popups."""
-    try:
-        consent_selectors = [
-            (By.ID, "didomi-notice-agree-button"),
-            (By.CSS_SELECTOR, "button[aria-label*='accept']"),
-            (By.CSS_SELECTOR, "button[aria-label*='Accepter']"),
-            (By.XPATH, "//button[contains(text(), 'Accepter')]"),
-            (By.XPATH, "//button[contains(text(), 'Tout accepter')]"),
-            (By.CSS_SELECTOR, "[data-testid*='accept']"),
-        ]
-        
-        for by, selector in consent_selectors:
-            try:
-                element = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((by, selector))
-                )
-                element.click()
-                logger.info(f"Clicked cookie consent: {selector}")
-                time.sleep(random.uniform(0.5, 1.5))
-                return True
-            except:
-                continue
-                
-    except Exception as e:
-        logger.debug(f"Cookie consent handling: {e}")
-    
-    return False
+def create_session(config: dict) -> curl_requests.Session:
+    """Create a curl_cffi session with Safari impersonation."""
+    impersonate = config.get('anti_detection', {}).get('impersonate', 'safari17_0')
+    session = curl_requests.Session(impersonate=impersonate)
+    logger.info(f"Session créée (impersonate={impersonate})")
+    return session
 
 
 def run_scrapers():
-    """Main scraper function using undetected-chromedriver."""
-    logger.info("Starting scraper run...")
+    """Main scraper function using curl_cffi."""
+    logger.info("=== Démarrage du scraping ===")
     config = load_config()
     if not config:
         return
 
     previous_listings = load_data()
-    driver = None
+    session = None
     
     try:
-        # Create undetected driver
-        driver = create_stealth_driver(config)
+        session = create_session(config)
         
-        # Scrapers
+        # Merge search_criteria into scraper configs
+        search_criteria = config.get('search_criteria', {})
+        
         scrapers = []
         if config.get('scrapers', {}).get('seloger', {}).get('enabled', False):
-            scrapers.append(SeLogerScraper(config['scrapers']['seloger']))
+            seloger_config = config['scrapers']['seloger'].copy()
+            seloger_config['filters'] = {**search_criteria, **seloger_config.get('filters', {})}
+            scrapers.append(SeLogerScraper(seloger_config))
+        if config.get('scrapers', {}).get('bienici', {}).get('enabled', False):
+            bienici_config = config['scrapers']['bienici'].copy()
+            bienici_config['filters'] = {**search_criteria, **bienici_config.get('filters', {})}
+            scrapers.append(BienIciScraper(bienici_config))
             
         for scraper in scrapers:
             site_name = scraper.get_name()
-            logger.info(f"Running scraper: {site_name}")
+            logger.info(f"Scraping {site_name}...")
             
             try:
-                # Random delay before starting
                 delay = random.uniform(
                     config.get('anti_detection', {}).get('min_delay', 5),
                     config.get('anti_detection', {}).get('max_delay', 15)
                 )
-                logger.debug(f"Sleeping for {delay:.2f} seconds...")
                 time.sleep(delay)
                 
-                # Scrape using undetected-chromedriver
-                current_listings_list, is_blocked = scraper.scrape_with_uc(driver, config)
+                current_listings_list, is_blocked = scraper.scrape_with_curl(session, config)
                 
-                # Send alert if blocked
                 if is_blocked:
+                    logger.error(f"❌ {site_name} BLOQUÉ par anti-bot!")
                     topic = config.get('notifications', {}).get('ntfy_topic')
-                    send_alert_notification(topic, "Bot Detection", f"Le scraper {site_name} a été bloqué par DataDome/Cloudflare")
-                    logger.warning(f"Alert notification sent for {site_name} being blocked")
+                    send_alert(topic, "Bot Détecté", f"{site_name} a été bloqué par le site")
                     continue
                 
-                # Check for new listings
                 if site_name not in previous_listings:
                     previous_listings[site_name] = {}
                 
@@ -240,28 +155,49 @@ def run_scrapers():
                         new_count += 1
                         site_data[lid] = listing
                         
-                        # Notification
                         msg = scraper.format_notification(listing)
                         topic = config.get('notifications', {}).get('ntfy_topic')
-                        send_notification(topic, msg)
-                        logger.info(f"New listing detected: {lid}")
+                        url = listing.get('url', '')
+                        send_notification(topic, msg, url)
                 
                 if new_count > 0:
-                    logger.info(f"Found {new_count} new listings for {site_name}")
+                    logger.info(f"✅ {site_name}: {new_count} nouvelles annonces")
                 else:
-                    logger.info(f"No new listings for {site_name}")
+                    logger.info(f"📭 {site_name}: aucune nouvelle annonce")
                     
             except Exception as e:
-                logger.error(f"Error scraping {site_name}: {e}", exc_info=True)
+                logger.error(f"Erreur {site_name}: {e}", exc_info=True)
     
     finally:
-        if driver:
-            driver.quit()
-            logger.info("Browser closed.")
+        if session:
+            session.close()
     
     save_data(previous_listings)
-    logger.info("Scraper run completed.")
+    logger.info("=== Scraping terminé ===")
 
 
 if __name__ == "__main__":
-    run_scrapers()
+    logger.info("🚀 Scraper démarré")
+    
+    while True:
+        try:
+            run_scrapers()
+            
+            config = load_config()
+            interval = config.get('check_interval', 10)
+            logger.info(f"⏳ Prochain check dans {interval} min...")
+            time.sleep(interval * 60)
+            
+        except KeyboardInterrupt:
+            logger.info("🛑 Scraper arrêté")
+            config = load_config()
+            topic = config.get('notifications', {}).get('ntfy_topic')
+            send_alert(topic, "Scraper Arrêté", "Arrêt manuel (Ctrl+C)")
+            break
+        except Exception as e:
+            logger.error(f"Erreur critique: {e}", exc_info=True)
+            config = load_config()
+            topic = config.get('notifications', {}).get('ntfy_topic')
+            send_alert(topic, "Erreur Critique", str(e))
+            logger.info("Redémarrage dans 1 min...")
+            time.sleep(60)
