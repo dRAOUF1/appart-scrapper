@@ -68,23 +68,23 @@ def send_alert(topic, alert_type, details=""):
     if not topic:
         return
     try:
-        message = f"🚨 ALERTE SCRAPER\n\nType: {alert_type}"
+        message = f"ALERTE SCRAPER\n\nType: {alert_type}"
         if details:
-            message += f"\nDétails: {details}"
+            message += f"\nDetails: {details}"
         
         requests.post(
             f"https://ntfy.sh/{topic}",
             data=message.encode('utf-8'),
             headers={
-                "Title": f"⚠️ {alert_type}",
+                "Title": alert_type,
                 "Priority": "high",
                 "Tags": "warning"
             },
             timeout=10
         )
-        logger.info(f"Alerte envoyée: {alert_type}")
+        logger.info(f"Alerte envoyee: {alert_type}")
     except Exception as e:
-        logger.error(f"Échec envoi alerte: {e}")
+        logger.error(f"Echec envoi alerte: {e}")
 
 
 def create_session(config: dict) -> curl_requests.Session:
