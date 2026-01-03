@@ -9,6 +9,7 @@ from curl_cffi import requests as curl_requests
 from scrapers.seloger import SeLogerScraper
 from scrapers.bienici import BienIciScraper
 from scrapers.laforet import LaforetScraper
+from scrapers.century21 import Century21Scraper
 
 # Logging setup
 logging.basicConfig(
@@ -125,6 +126,10 @@ def run_scrapers():
             laforet_config = config['scrapers']['laforet'].copy()
             laforet_config['filters'] = {**search_criteria, **laforet_config.get('filters', {})}
             scrapers.append(LaforetScraper(laforet_config))
+        if config.get('scrapers', {}).get('century21', {}).get('enabled', False):
+            century21_config = config['scrapers']['century21'].copy()
+            century21_config['filters'] = {**search_criteria, **century21_config.get('filters', {})}
+            scrapers.append(Century21Scraper(century21_config))
             
         for scraper in scrapers:
             site_name = scraper.get_name()
