@@ -11,6 +11,7 @@ from scrapers.bienici import BienIciScraper
 from scrapers.laforet import LaforetScraper
 from scrapers.century21 import Century21Scraper
 from scrapers.safar import SafarScraper
+from scrapers.valierecortez import ValiereCortezScraper
 
 # Logging setup
 logging.basicConfig(
@@ -135,6 +136,10 @@ def run_scrapers():
             safar_config = config['scrapers']['safar'].copy()
             safar_config['filters'] = {**search_criteria, **safar_config.get('filters', {})}
             scrapers.append(SafarScraper(safar_config))
+        if config.get('scrapers', {}).get('valierecortez', {}).get('enabled', False):
+            valierecortez_config = config['scrapers']['valierecortez'].copy()
+            valierecortez_config['filters'] = {**search_criteria, **valierecortez_config.get('filters', {})}
+            scrapers.append(ValiereCortezScraper(valierecortez_config))
             
         for scraper in scrapers:
             site_name = scraper.get_name()

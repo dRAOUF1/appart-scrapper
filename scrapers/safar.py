@@ -25,14 +25,35 @@ class SafarScraper(BaseScraper):
         # Merge global search_criteria with local filters
         criteria = {**(search_criteria or {}), **filters}
         
-        # Get Paris zip codes from config or use defaults
-        paris_zipcodes_raw = filters.get('paris_zipcodes', [
+        # Get zip codes from config (legacy name is paris_zipcodes, but now supports others)
+        zipcodes_raw = filters.get('paris_zipcodes', [
             "75001", "75002", "75003", "75004", "75005", "75006", "75008",
             "75010", "75011", "75012", "75013", "75014", "75015", "75016",
             "75017", "75018", "75020", "75116"
         ])
-        # Format as "75001+PARIS" for the URL
-        paris_zipcodes = [f"{z}+PARIS" for z in paris_zipcodes_raw]
+        
+        # Helper to format zipcodes for Safar URL
+        def format_zipcode(z):
+            z = str(z).strip()
+            if z.startswith("75"):
+                return f"{z}+PARIS"
+            elif z == "92100":
+                return "92100+BOULOGNE+BILLANCOURT"
+            elif z == "92200":
+                return "92200+NEUILLY+SUR+SEINE"
+            elif z == "92300":
+                return "92300+LEVALLOIS+PERRET"
+            elif z == "92400":
+                return "92400+COURBEVOIE"
+            elif z == "94200":
+                return "94200+IVRY+SUR+SEINE"
+            elif z == "94300":
+                return "94300+VINCENNES"
+            # Default fallback: try to guess or just send zipcode
+            # Safar seems to require CITY name. 
+            return z
+
+        target_zipcodes = [format_zipcode(z) for z in zipcodes_raw]
         
         # Build base URL with required parameters
         base_url = "https://www.safar.fr/catalog/advanced_search_result.php"
@@ -45,11 +66,11 @@ class SafarScraper(BaseScraper):
         params.append("C_28=Location")
         params.append("C_65_search=CONTIENT")
         params.append("C_65_type=TEXT")
-        params.append("C_65=" + "%2C".join(paris_zipcodes))  # Join with encoded comma
+        params.append("C_65=" + "%2C".join(target_zipcodes))  # Join with encoded comma
         
         # Add individual C_65_tmp parameters
-        for zipcode in paris_zipcodes:
-            params.append(f"C_65_tmp={zipcode}")
+        for code in target_zipcodes:
+            params.append(f"C_65_tmp={code}")
         
         params.append("C_27_search=EGAL")
         params.append("C_27_type=TEXT")
