@@ -8,6 +8,7 @@ import random
 from curl_cffi import requests as curl_requests
 from scrapers.seloger import SeLogerScraper
 from scrapers.bienici import BienIciScraper
+from scrapers.laforet import LaforetScraper
 
 # Logging setup
 logging.basicConfig(
@@ -120,6 +121,10 @@ def run_scrapers():
             bienici_config = config['scrapers']['bienici'].copy()
             bienici_config['filters'] = {**search_criteria, **bienici_config.get('filters', {})}
             scrapers.append(BienIciScraper(bienici_config))
+        if config.get('scrapers', {}).get('laforet', {}).get('enabled', False):
+            laforet_config = config['scrapers']['laforet'].copy()
+            laforet_config['filters'] = {**search_criteria, **laforet_config.get('filters', {})}
+            scrapers.append(LaforetScraper(laforet_config))
             
         for scraper in scrapers:
             site_name = scraper.get_name()

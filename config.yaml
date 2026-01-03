@@ -9,16 +9,22 @@ search_criteria:
 
 scrapers:
   seloger:
-    enabled: true
+    enabled: false
     base_url: "https://www.seloger.com/classified-search" 
     filters:
       locations: "AD08FR31096"
 
   bienici:
-    enabled: true
+    enabled: false
     filters:
       zone_ids: ["-7444"]  # Paris zone
       property_types: ["flat"]
+
+  laforet:
+    enabled: true
+    filters:
+      cities: ["75056"]  # Paris
+      allowed_zipcodes: ["75"]  # Only keep listings with zipcode starting with 75
 
 anti_detection:
   impersonate: "safari17_0"
