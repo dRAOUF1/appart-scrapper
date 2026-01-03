@@ -10,6 +10,7 @@ from scrapers.seloger import SeLogerScraper
 from scrapers.bienici import BienIciScraper
 from scrapers.laforet import LaforetScraper
 from scrapers.century21 import Century21Scraper
+from scrapers.safar import SafarScraper
 
 # Logging setup
 logging.basicConfig(
@@ -130,6 +131,10 @@ def run_scrapers():
             century21_config = config['scrapers']['century21'].copy()
             century21_config['filters'] = {**search_criteria, **century21_config.get('filters', {})}
             scrapers.append(Century21Scraper(century21_config))
+        if config.get('scrapers', {}).get('safar', {}).get('enabled', False):
+            safar_config = config['scrapers']['safar'].copy()
+            safar_config['filters'] = {**search_criteria, **safar_config.get('filters', {})}
+            scrapers.append(SafarScraper(safar_config))
             
         for scraper in scrapers:
             site_name = scraper.get_name()
