@@ -4,3 +4,4 @@ browser_profile_uc/*
 annonces.json
 scraper.log
 .gitignore
+debug*
