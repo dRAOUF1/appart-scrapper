@@ -268,21 +268,58 @@ class BienIciPayload(BaseModel):
 
 
 @app.post("/parse/bienici/json")
-async def parse_bienici_json(payload: BienIciPayload):
+async def parse_bienici_json(request: Request):
     """
     Parse BienIci JSON API response.
     
     BienIci returns JSON from their API, not HTML.
     This endpoint accepts the JSON response directly.
+    Expects: {"data": {...}}
     """
     config = load_config()
+    
+    # Read raw body first for debug
+    body = await request.body()
+    body_str = body.decode('utf-8')
+    
+    # Debug: log and save received content
+    if config.get('debug', False):
+        logger.info(f"[DEBUG] Received {len(body_str)} bytes for bienici/json")
+        logger.info(f"[DEBUG] First 500 chars: {body_str[:500]}")
+        
+        # Save to debug file
+        debug_file = "debug_received_bienici.json"
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(body_str)
+        logger.info(f"[DEBUG] Saved request body to {debug_file}")
+    
+    # Parse JSON
+    try:
+        payload = json.loads(body_str)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+    
+    # Require {"data": {...}} format
+    if 'data' not in payload:
+        raise HTTPException(status_code=400, detail="Missing 'data' field. Expected: {\"data\": {...}}")
+    
+    data = payload['data']
+    
+    # Handle double-encoded JSON (data is a string instead of object)
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+            logger.info("[bienici] Detected double-encoded JSON, parsed successfully")
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"data field is a string but not valid JSON: {e}")
+    
     scraper = get_scraper('bienici', config)
     
     if not scraper:
         raise HTTPException(status_code=500, detail="Failed to initialize BienIci scraper")
     
     # Parse JSON (BienIci's parse_listings accepts dict)
-    listings = scraper.parse_listings(payload.data)
+    listings = scraper.parse_listings(data)
     
     # Load existing data
     all_data = load_data()
