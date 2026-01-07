@@ -235,6 +235,18 @@ async def parse_html(scraper_name: str, request: Request):
     body = await request.body()
     html_content = body.decode('utf-8')
     
+    # Debug: log and save received content
+    config = load_config()
+    if config.get('debug', False):
+        logger.info(f"[DEBUG] Received {len(html_content)} bytes for {scraper_name}")
+        logger.info(f"[DEBUG] First 500 chars: {html_content[:500]}")
+        
+        # Save to debug file
+        debug_file = f"debug_received_{scraper_name}.html"
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        logger.info(f"[DEBUG] Saved request body to {debug_file}")
+    
     if not html_content or len(html_content) < 100:
         raise HTTPException(
             status_code=400,
