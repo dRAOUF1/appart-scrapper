@@ -1,5 +1,11 @@
 debug: false
-check_interval: 5 # Interval in minutes between checks
+
+# API configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+
+check_interval: 5 # Interval in minutes between checks (for legacy mode)
 
 # Global search criteria (shared by all scrapers)
 search_criteria:
