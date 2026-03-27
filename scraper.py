@@ -221,14 +221,26 @@ class SeLogerScraper:
         logger.info(f"Utilisation de Chrome version {chrome_version or 'auto'}")
 
         try:
-            driver = uc.Chrome(
-                options=options,
-                version_main=chrome_version,
-                driver_executable_path=chromedriver_path,
-                no_sandbox=True,
-            )
+            import concurrent.futures
+
+            logger.info("Tentative de lancement avec undetected-chromedriver (timeout 20s)...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    uc.Chrome,
+                    options=options,
+                    version_main=chrome_version,
+                    driver_executable_path=chromedriver_path,
+                    browser_executable_path=chrome_binary,
+                    no_sandbox=True,
+                )
+                driver = future.result(timeout=20)
+
         except Exception as e:
-            logger.warning(f"undetected-chromedriver a échoué: {e}")
+            if isinstance(e, concurrent.futures.TimeoutError):
+                logger.warning("undetected-chromedriver a timeout après 20 secondes.")
+            else:
+                logger.warning(f"undetected-chromedriver a échoué: {e}")
+            
             logger.info("Fallback vers Selenium standard...")
             from selenium import webdriver
             from selenium.webdriver.chrome.service import Service
