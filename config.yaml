@@ -1,78 +1,42 @@
-debug: true
+# ============================================================
+# SeLoger Scraper — Configuration
+# ============================================================
+# Comment utiliser :
+#   1. Va sur https://www.seloger.com/
+#   2. Fais ta recherche avec tes critères (ville, prix, surface, etc.)
+#   3. Copie l'URL de la page de résultats
+#   4. Colle-la dans searches ci-dessous avec un topic ntfy unique
+# ============================================================
 
-# API configuration
-api:
-  host: "0.0.0.0"
-  port: 8000
+# Recherches à surveiller
+# Chaque recherche est un couple (url, topic ntfy)
+searches:
+  - url: "https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=House,Apartment&locations=AD08FR31096&locationsInBuildingExcluded=Groundfloor&priceMax=850&priceMin=600&spaceMin=19&order=DateDesc"
+    topic: "logements_alerts111103"
 
-check_interval: 5 # Interval in minutes between checks (for legacy mode)
+  # Tu peux ajouter d'autres recherches avec des topics différents :
+  # - url: "https://www.seloger.com/list.htm?projects=2&types=1&places=[{cp:75}]"
+  #   topic: "paris-achats"
 
-# Global search criteria (shared by all scrapers)
-search_criteria:
-  price_min: 60
-  price_max: 850
-  surface_min: 17
+# Intervalle entre chaque scan (en minutes)
+interval_minutes: 5
 
-scrapers:
-  seloger:
-    enabled: false
-    base_url: "https://www.seloger.com/classified-search" 
-    filters:
-      locations: "AD08FR31096"
+# Configuration des notifications ntfy
+ntfy:
+  server: "https://ntfy.sh"
+  priority: "default"  # low, min, default, high, urgent
 
-  bienici:
-    enabled: true
-    filters:
-      zone_ids: ["-7444"]  # Paris zone
-      property_types: ["flat"]
+# Configuration du navigateur
+browser:
+  headless: true
+  # Temps d'attente max pour le chargement des pages (secondes)
+  page_load_timeout: 30
+  # Délai entre les actions (secondes) — évite la détection
+  action_delay: 2
 
-  laforet:
-    enabled: true
-    filters:
-      cities: ["75056"]  # Paris
-      allowed_zipcodes: ["75"]  # Only keep listings with zipcode starting with 75
-
-  century21:
-    enabled: true
-    filters:
-      city: "paris"
-
-  safar:
-    enabled: true
-    filters:
-      paris_zipcodes:  # List of Paris zip codes to search
-        - "75001"
-        - "75002"
-        - "75003"
-        - "75004"
-        - "75005"
-        - "75006"
-        - "75008"
-        - "75010"
-        - "75011"
-        - "75012"
-        - "75013"
-        - "75014"
-        - "75015"
-        - "75016"
-        - "75017"
-        - "75018"
-        - "75020"
-        - "75116"
-        # - "92100"
-
-  valierecortez:
-    enabled: true
-    filters:
-      allowed_zipcodes: ["75"]  # Only Paris
-
-anti_detection:
-  impersonate: "safari17_0"
-  min_delay: 5
-  max_delay: 15
-
+# Configuration du stockage
 storage:
-  file: "annonces.json"
+  db_path: "listings.db"
 
-notifications:
-  ntfy_topic: "logements_alerts"
+# Logging
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR

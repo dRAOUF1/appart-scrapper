@@ -1,223 +1,266 @@
+#!/usr/bin/env python3
+"""
+SeLoger Scraper — Point d'entree principal.
+
+Surveille les resultats de recherche SeLoger.com et envoie des notifications
+push via ntfy quand de nouvelles annonces apparaissent.
+
+Usage:
+    python main.py                  # Boucle continue
+    python main.py --once           # Un seul scan
+    python main.py --test-notif     # Tester les notifications
+    python main.py --config other.yaml  # Config alternative
+"""
+
+from __future__ import annotations
+
+import argparse
+import signal
+import sys
 import time
-import yaml
-import json
+from pathlib import Path
 import os
+import threading
+from flask import Flask
+
+import schedule
+from loguru import logger
+
+from config import load_config, AppConfig
+from notifier import Notifier
+from scraper import SeLogerScraper
+from storage import Storage
+
+
+app = Flask(__name__)
+
+# Optionnel : On masque les logs "werkzeug" de Flask pour 
+# ne pas spammer ta console à chaque ping de Render
 import logging
-import requests
-import random
-from curl_cffi import requests as curl_requests
-from scrapers.seloger import SeLogerScraper
-from scrapers.bienici import BienIciScraper
-from scrapers.laforet import LaforetScraper
-from scrapers.century21 import Century21Scraper
-from scrapers.safar import SafarScraper
-from scrapers.valierecortez import ValiereCortezScraper
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("scraper.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+@app.route('/')
+def health_check():
+    return "Scraper is running OK with Flask!", 200
 
-CONFIG_PATH = "config.yaml"
-DATA_PATH = "annonces.json"
+def start_flask_server():
+    # Render definit automatiquement la variable d'environnement PORT
+    port = int(os.environ.get("PORT", 10000))
+    logger.info(f"Serveur Flask demarre sur le port {port} (pour Render)")
+    
+    # host="0.0.0.0" est obligatoire pour que le serveur soit accessible de l'exterieur
+    # use_reloader=False est crucial dans un thread pour eviter que Flask ne lance un 2eme processus
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
-def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    with open(CONFIG_PATH, "r") as f:
-        return yaml.safe_load(f)
+# -- Logging setup --
+
+def setup_logging(log_level: str) -> None:
+    """Configure loguru logging."""
+    logger.remove()  # Remove default handler
+    logger.add(
+        sys.stderr,
+        level=log_level,
+        format=(
+            "<green>{time:HH:mm:ss}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{module}</cyan>:<cyan>{function}</cyan> | "
+            "<level>{message}</level>"
+        ),
+        colorize=True,
+    )
+    # Also log to file
+    logger.add(
+        "seloger_scraper.log",
+        level="DEBUG",
+        rotation="10 MB",
+        retention="7 days",
+        compression="zip",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {module}:{function} | {message}",
+    )
 
 
-def load_data():
-    if not os.path.exists(DATA_PATH):
-        return {}
-    with open(DATA_PATH, "r") as f:
+# -- Core scan function --
+
+def run_scan(config: AppConfig, scraper: SeLogerScraper, storage: Storage, notifier: Notifier) -> None:
+    """Execute a single scan cycle across all searches."""
+    total_new = 0
+    total_scanned = 0
+
+    for search in config.searches:
+        search_url = search.url
+        topic = search.topic
+
+        logger.info(f"{'=' * 60}")
+        logger.info(f"Scan [{topic}]: {search_url[:80]}...")
+
         try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
+            # Scrape the search results
+            listings = scraper.scrape(search_url)
+            total_scanned += len(listings)
 
+            if not listings:
+                logger.warning(f"[{topic}] Aucune annonce trouvee")
+                continue
 
-def save_data(data):
-    with open(DATA_PATH, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+            # Filter and save new listings
+            new_listings = storage.save_batch(listings, search_url)
+            total_new += len(new_listings)
 
+            logger.info(
+                f"[{topic}] Resultat: {len(listings)} annonces, "
+                f"{len(new_listings)} nouvelle{'s' if len(new_listings) > 1 else ''}"
+            )
 
-def send_notification(topic, message, url="", title="Nouveau Logement"):
-    if not topic:
-        return
-    try:
-        resp = requests.post(
-            f"https://ntfy.sh/{topic}", 
-            data=message.encode('utf-8'),
-            headers={"Title": title}
-        )
-        if resp.status_code == 200:
-            logger.info(f"Notification envoyée: {url}")
-        else:
-            logger.error(f"Échec notification: {resp.status_code}")
-    except Exception as e:
-        logger.error(f"Échec notification: {e}")
-
-
-def send_alert(topic, alert_type, details=""):
-    """Send an alert notification for errors/blocking."""
-    if not topic:
-        return
-    try:
-        message = f"ALERTE SCRAPER\n\nType: {alert_type}"
-        if details:
-            message += f"\nDetails: {details}"
-        
-        requests.post(
-            f"https://ntfy.sh/{topic}",
-            data=message.encode('utf-8'),
-            headers={
-                "Title": alert_type,
-                "Priority": "high",
-                "Tags": "warning"
-            },
-            timeout=10
-        )
-        logger.info(f"Alerte envoyee: {alert_type}")
-    except Exception as e:
-        logger.error(f"Echec envoi alerte: {e}")
-
-
-def create_session(config: dict) -> curl_requests.Session:
-    """Create a curl_cffi session with Safari impersonation."""
-    impersonate = config.get('anti_detection', {}).get('impersonate', 'safari17_0')
-    session = curl_requests.Session(impersonate=impersonate)
-    logger.info(f"Session créée (impersonate={impersonate})")
-    return session
-
-
-def run_scrapers():
-    """Main scraper function using curl_cffi."""
-    logger.info("=== Démarrage du scraping ===")
-    config = load_config()
-    if not config:
-        return
-
-    previous_listings = load_data()
-    session = None
-    
-    try:
-        session = create_session(config)
-        
-        # Merge search_criteria into scraper configs
-        search_criteria = config.get('search_criteria', {})
-        
-        scrapers = []
-        if config.get('scrapers', {}).get('seloger', {}).get('enabled', False):
-            seloger_config = config['scrapers']['seloger'].copy()
-            seloger_config['filters'] = {**search_criteria, **seloger_config.get('filters', {})}
-            scrapers.append(SeLogerScraper(seloger_config))
-        if config.get('scrapers', {}).get('bienici', {}).get('enabled', False):
-            bienici_config = config['scrapers']['bienici'].copy()
-            bienici_config['filters'] = {**search_criteria, **bienici_config.get('filters', {})}
-            scrapers.append(BienIciScraper(bienici_config))
-        if config.get('scrapers', {}).get('laforet', {}).get('enabled', False):
-            laforet_config = config['scrapers']['laforet'].copy()
-            laforet_config['filters'] = {**search_criteria, **laforet_config.get('filters', {})}
-            scrapers.append(LaforetScraper(laforet_config))
-        if config.get('scrapers', {}).get('century21', {}).get('enabled', False):
-            century21_config = config['scrapers']['century21'].copy()
-            century21_config['filters'] = {**search_criteria, **century21_config.get('filters', {})}
-            scrapers.append(Century21Scraper(century21_config))
-        if config.get('scrapers', {}).get('safar', {}).get('enabled', False):
-            safar_config = config['scrapers']['safar'].copy()
-            safar_config['filters'] = {**search_criteria, **safar_config.get('filters', {})}
-            scrapers.append(SafarScraper(safar_config))
-        if config.get('scrapers', {}).get('valierecortez', {}).get('enabled', False):
-            valierecortez_config = config['scrapers']['valierecortez'].copy()
-            valierecortez_config['filters'] = {**search_criteria, **valierecortez_config.get('filters', {})}
-            scrapers.append(ValiereCortezScraper(valierecortez_config))
-            
-        for scraper in scrapers:
-            site_name = scraper.get_name()
-            logger.info(f"Scraping {site_name}...")
-            
-            try:
-                delay = random.uniform(
-                    config.get('anti_detection', {}).get('min_delay', 5),
-                    config.get('anti_detection', {}).get('max_delay', 15)
+            # Send individual notifications for each new listing
+            for listing in new_listings:
+                logger.info(
+                    f"  NEW {listing.title} -- {listing.price} -- "
+                    f"{listing.location} -- {listing.agency} -- {listing.url}"
                 )
-                time.sleep(delay)
-                
-                current_listings_list, is_blocked = scraper.scrape_with_curl(session, config)
-                
-                if is_blocked:
-                    logger.error(f"❌ {site_name} BLOQUÉ par anti-bot!")
-                    topic = config.get('notifications', {}).get('ntfy_topic')
-                    send_alert(topic, "Bot Détecté", f"{site_name} a été bloqué par le site")
-                    continue
-                
-                if site_name not in previous_listings:
-                    previous_listings[site_name] = {}
-                
-                site_data = previous_listings[site_name]
-                new_count = 0
-                
-                for listing in current_listings_list:
-                    lid = scraper.get_listing_id(listing)
-                    if not lid:
-                        continue
-                        
-                    if lid not in site_data:
-                        new_count += 1
-                        site_data[lid] = listing
-                        
-                        msg = scraper.format_notification(listing)
-                        topic = config.get('notifications', {}).get('ntfy_topic')
-                        url = listing.get('url', '')
-                        send_notification(topic, msg, url)
-                
-                if new_count > 0:
-                    logger.info(f"✅ {site_name}: {new_count} nouvelles annonces")
-                else:
-                    logger.info(f"📭 {site_name}: aucune nouvelle annonce")
-                    
-            except Exception as e:
-                logger.error(f"Erreur {site_name}: {e}", exc_info=True)
-    
+                notifier.notify_new_listing(topic, listing)
+                time.sleep(0.5)  # Avoid rate limiting
+
+            # Send summary for this search
+            if new_listings:
+                notifier.notify_summary(topic, len(new_listings), len(listings), search_url)
+
+        except Exception as e:
+            logger.error(f"Erreur lors du scan [{topic}]: {e}")
+            continue
+
+    # Stats
+    stats = storage.get_stats()
+    logger.info(f"{'=' * 60}")
+    logger.info(
+        f"Scan termine: {total_scanned} scannees, {total_new} nouvelles | "
+        f"Total en base: {stats['total']} | Nouvelles aujourd'hui: {stats['new_today']}"
+    )
+
+
+# -- Signal handling --
+
+_running = True
+
+
+def _signal_handler(signum, frame):
+    global _running
+    logger.info(f"\nSignal recu ({signum}), arret en cours...")
+    _running = False
+
+
+# -- Main --
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="SeLoger.com -- Surveillance d'annonces immobilieres",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exemples:
+  python main.py                     Lancer la surveillance continue
+  python main.py --once              Faire un seul scan
+  python main.py --test-notif        Tester les notifications
+  python main.py --config my.yaml    Utiliser un fichier config alternatif
+        """,
+    )
+    parser.add_argument(
+        "--config", "-c",
+        default="config.yaml",
+        help="Chemin vers le fichier de configuration (defaut: config.yaml)",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Executer un seul scan puis quitter",
+    )
+    parser.add_argument(
+        "--test-notif",
+        action="store_true",
+        help="Envoyer une notification de test puis quitter",
+    )
+    args = parser.parse_args()
+
+    # Load configuration
+    config = load_config(args.config)
+    setup_logging(config.log_level)
+
+    logger.info("=" * 60)
+    logger.info("SeLoger Scraper -- Demarrage")
+    logger.info(f"   Recherches       : {len(config.searches)}")
+    for s in config.searches:
+        logger.info(f"     - [{s.topic}] {s.url[:60]}...")
+    logger.info(f"   Intervalle       : {config.interval_minutes} min")
+    logger.info(f"   ntfy server      : {config.ntfy.server}")
+    logger.info(f"   Headless         : {config.browser.headless}")
+    logger.info("=" * 60)
+
+    # Initialize components
+    notifier = Notifier(
+        server=config.ntfy.server,
+        priority=config.ntfy.priority,
+    )
+    storage = Storage(db_path=config.storage.db_path)
+
+    # Test notification mode
+    if args.test_notif:
+        logger.info("Envoi de notifications de test...")
+        for s in config.searches:
+            success = notifier.send_test(s.topic)
+            if success:
+                logger.info(f"  OK Notification envoyee sur [{s.topic}]")
+            else:
+                logger.error(f"  FAIL Echec pour [{s.topic}]")
+        return
+
+    # Create scraper
+    scraper = SeLogerScraper(
+        headless=config.browser.headless,
+        page_load_timeout=config.browser.page_load_timeout,
+        action_delay=config.browser.action_delay,
+    )
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    try:
+        if args.once:
+            # Single scan mode
+            logger.info("Mode scan unique (--once)")
+            run_scan(config, scraper, storage, notifier)
+        else:
+            # Continuous monitoring mode
+            logger.info(
+                f"Mode continu -- scan toutes les {config.interval_minutes} minutes. "
+                "Ctrl+C pour arreter."
+            )
+
+            # Lancement flask
+            server_thread = threading.Thread(target=start_flask_server, daemon=True)
+            server_thread.start()
+            ##############
+            
+            # Run immediately on start
+            run_scan(config, scraper, storage, notifier)
+
+            # Schedule recurring scans
+            schedule.every(config.interval_minutes).minutes.do(
+                run_scan, config, scraper, storage, notifier
+            )
+
+            while _running:
+                schedule.run_pending()
+                time.sleep(1)
+
+    except KeyboardInterrupt:
+        logger.info("\nInterruption clavier, arret...")
     finally:
-        if session:
-            session.close()
-    
-    save_data(previous_listings)
-    logger.info("=== Scraping terminé ===")
+        scraper.close()
+        stats = storage.get_stats()
+        logger.info(f"Total annonces en base : {stats['total']}")
+        logger.info("SeLoger Scraper -- Arrete")
 
 
 if __name__ == "__main__":
-    logger.info("🚀 Scraper démarré")
-    
-    while True:
-        try:
-            run_scrapers()
-            
-            config = load_config()
-            interval = config.get('check_interval', 10)
-            logger.info(f"⏳ Prochain check dans {interval} min...")
-            time.sleep(interval * 60)
-            
-        except KeyboardInterrupt:
-            logger.info("🛑 Scraper arrêté")
-            config = load_config()
-            topic = config.get('notifications', {}).get('ntfy_topic')
-            send_alert(topic, "Scraper Arrêté", "Arrêt manuel (Ctrl+C)")
-            break
-        except Exception as e:
-            logger.error(f"Erreur critique: {e}", exc_info=True)
-            config = load_config()
-            topic = config.get('notifications', {}).get('ntfy_topic')
-            send_alert(topic, "Erreur Critique", str(e))
-            logger.info("Redémarrage dans 1 min...")
-            time.sleep(60)
+    main()
