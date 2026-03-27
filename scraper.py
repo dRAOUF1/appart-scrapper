@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import shutil
 import time
 from typing import Optional
 
@@ -32,6 +34,51 @@ def _generate_listing_id(url: str, title: str = "") -> str:
 
     # Fallback: hash the URL
     return f"sl_{hashlib.md5(url.encode()).hexdigest()[:12]}"
+
+
+def _find_chrome_binary() -> str | None:
+    """
+    Find the Chrome/Chromium binary path.
+    Checks environment variables first (CHROME_BIN, GOOGLE_CHROME_BIN),
+    then common install locations (useful for Render, Docker, etc.).
+    """
+    # 1. Check environment variables
+    for env_var in ("CHROME_BIN", "GOOGLE_CHROME_BIN", "CHROMIUM_BIN"):
+        path = os.environ.get(env_var)
+        if path and os.path.isfile(path):
+            logger.info(f"Chrome trouvé via ${env_var}: {path}")
+            return path
+
+    # 2. Check common binary names in PATH
+    for name in (
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+    ):
+        path = shutil.which(name)
+        if path:
+            logger.info(f"Chrome trouvé dans PATH: {path}")
+            return path
+
+    # 3. Check common absolute paths (Render, Docker, etc.)
+    common_paths = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/lib/chromium/chromium",
+        "/opt/google/chrome/chrome",
+        "/opt/google/chrome/google-chrome",
+        "/opt/render/project/.render/chrome/opt/google/chrome/google-chrome",
+    ]
+    for path in common_paths:
+        if os.path.isfile(path):
+            logger.info(f"Chrome trouvé: {path}")
+            return path
+
+    logger.warning("Aucun binaire Chrome/Chromium trouvé")
+    return None
 
 
 class SeLogerScraper:
@@ -142,6 +189,16 @@ class SeLogerScraper:
             "profile.password_manager_enabled": False,
         }
         options.add_experimental_option("prefs", prefs)
+
+        # --- Locate Chrome binary (critical for Render / Docker) ---
+        chrome_binary = _find_chrome_binary()
+        if chrome_binary:
+            options.binary_location = chrome_binary
+        else:
+            logger.warning(
+                "Chrome introuvable — vérifiez que Chrome/Chromium est installé "
+                "ou définissez la variable d'environnement CHROME_BIN"
+            )
 
         # Auto-detect Chrome version to avoid mismatch
         chrome_version = self._get_chrome_version()
