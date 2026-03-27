@@ -34,5 +34,8 @@ COPY main.py scraper.py config.py notifier.py storage.py ./
 # ---- Config (can be overridden via volume/mount) ----
 COPY config.yaml .
 
+# ---- Render uses $PORT (default 10000) ----
+EXPOSE 10000
+
 # ---- Run ----
 ENTRYPOINT ["python", "main.py"]
