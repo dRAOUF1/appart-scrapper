@@ -105,7 +105,7 @@ def get_scraper(scraper_name: str, config: dict):
     return scraper_class(scraper_config)
 
 
-def process_html(scraper_name: str, html_content: str) -> dict:
+def process_html(scraper_name: str, html_content: str, custom_topic: Optional[str] = None) -> dict:
     """
     Process HTML content through the appropriate scraper.
     
@@ -142,7 +142,7 @@ def process_html(scraper_name: str, html_content: str) -> dict:
             
             # Send notification
             msg = scraper.format_notification(listing)
-            topic = config.get('notifications', {}).get('ntfy_topic')
+            topic = custom_topic or config.get('notifications', {}).get('ntfy_topic')
             url = listing.get('url', '')
             send_notification(topic, msg, url)
     
@@ -216,7 +216,7 @@ async def get_all_listings():
 
 
 @app.post("/parse/{scraper_name}")
-async def parse_html(scraper_name: str, request: Request):
+async def parse_html(scraper_name: str, request: Request, topic: Optional[str] = None):
     """
     Parse HTML content and detect new listings.
     
@@ -254,7 +254,7 @@ async def parse_html(scraper_name: str, request: Request):
         )
     
     try:
-        result = process_html(scraper_name, html_content)
+        result = process_html(scraper_name, html_content, custom_topic=topic)
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"Error processing {scraper_name}: {e}", exc_info=True)
@@ -268,7 +268,7 @@ class BienIciPayload(BaseModel):
 
 
 @app.post("/parse/bienici/json")
-async def parse_bienici_json(request: Request):
+async def parse_bienici_json(request: Request, topic: Optional[str] = None):
     """
     Parse BienIci JSON API response.
     
@@ -339,9 +339,9 @@ async def parse_bienici_json(request: Request):
             site_data[lid] = listing
             
             msg = scraper.format_notification(listing)
-            topic = config.get('notifications', {}).get('ntfy_topic')
+            notification_topic = topic or config.get('notifications', {}).get('ntfy_topic')
             url = listing.get('url', '')
-            send_notification(topic, msg, url)
+            send_notification(notification_topic, msg, url)
     
     save_data(all_data)
     
