@@ -174,6 +174,9 @@ class SeLogerScraper:
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--single-process")
         options.add_argument("--window-size=1920,1080")
         options.add_argument("--lang=fr-FR")
         options.add_argument(
@@ -183,7 +186,7 @@ class SeLogerScraper:
 
         # Reduce resource usage
         prefs = {
-            "profile.managed_default_content_settings.images": 1,  # Load images for detection
+            "profile.managed_default_content_settings.images": 1,
             "profile.default_content_setting_values.notifications": 2,
             "credentials_enable_service": False,
             "profile.password_manager_enabled": False,
@@ -194,19 +197,46 @@ class SeLogerScraper:
         chrome_binary = _find_chrome_binary()
         if chrome_binary:
             options.binary_location = chrome_binary
+
+        # --- Locate chromedriver (skip UC's auto-download which hangs in Docker) ---
+        chromedriver_path = (
+            os.environ.get("CHROMEDRIVER_PATH")
+            or shutil.which("chromedriver")
+            or shutil.which("chromium-driver")
+        )
+        # Check common Docker/Render paths
+        if not chromedriver_path:
+            for p in ["/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver"]:
+                if os.path.isfile(p):
+                    chromedriver_path = p
+                    break
+
+        if chromedriver_path:
+            logger.info(f"Chromedriver trouvé: {chromedriver_path}")
         else:
-            logger.warning(
-                "Chrome introuvable — vérifiez que Chrome/Chromium est installé "
-                "ou définissez la variable d'environnement CHROME_BIN"
-            )
+            logger.warning("Chromedriver introuvable — UC va tenter de le télécharger")
 
         # Auto-detect Chrome version to avoid mismatch
         chrome_version = self._get_chrome_version()
         logger.info(f"Utilisation de Chrome version {chrome_version or 'auto'}")
 
-        driver = uc.Chrome(options=options, version_main=chrome_version)
-        driver.set_page_load_timeout(self.page_load_timeout)
+        try:
+            driver = uc.Chrome(
+                options=options,
+                version_main=chrome_version,
+                driver_executable_path=chromedriver_path,
+                no_sandbox=True,
+            )
+        except Exception as e:
+            logger.warning(f"undetected-chromedriver a échoué: {e}")
+            logger.info("Fallback vers Selenium standard...")
+            from selenium import webdriver
+            from selenium.webdriver.chrome.service import Service
 
+            service = Service(executable_path=chromedriver_path) if chromedriver_path else Service()
+            driver = webdriver.Chrome(options=options, service=service)
+
+        driver.set_page_load_timeout(self.page_load_timeout)
         return driver
 
     def _ensure_driver(self) -> uc.Chrome:
