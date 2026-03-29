@@ -63,11 +63,16 @@ def create_app() -> Flask:
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
+    # Inject admin_username into all templates (used by navbar in base.html)
+    @app.context_processor
+    def inject_admin():
+        return {"admin_username": os.environ.get("ADMIN_USERNAME", "admin")}
+
     # Register blueprints
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(web_bp)
 
-    logger.info("SeLoger API Platform — démarrée")
+    logger.info("Appart Tracker — démarré")
     return app
 
 
@@ -416,6 +421,19 @@ def delete_search_web(search_id: int):
         current_app.storage.delete_search(search_id)
         flash("Recherche supprimée", "success")
     return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/admin")
+@require_login
+def admin():
+    from flask import current_app
+    admin_username = os.environ.get("ADMIN_USERNAME", "admin")
+    if g.user["username"] != admin_username:
+        flash("Accès refusé", "error")
+        return redirect(url_for("web.dashboard"))
+    stats = current_app.storage.get_admin_stats()
+    users = current_app.storage.get_all_users()
+    return render_template("admin.html", stats=stats, users=users)
 
 
 @web_bp.route("/listings/<int:search_id>")

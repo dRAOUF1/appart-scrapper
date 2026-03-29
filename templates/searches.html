@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Recherches — SeLoger Tracker{% endblock %}
+{% block title %}Recherches — Appart Tracker{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -60,14 +60,6 @@
             <code class="code-url" id="url-{{ s.id }}">{{ base_url }}/api/parse/{{ s.id }}</code>
             <button class="btn btn-sm btn-ghost" onclick="copyText('url-{{ s.id }}')">Copier</button>
         </div>
-
-        <details class="curl-example">
-            <summary>📋 Exemple curl</summary>
-            <pre><code>curl -X POST {{ base_url }}/api/parse/{{ s.id }} \
-  -H "X-API-Token: {{ api_token }}" \
-  -H "Content-Type: text/html" \
-  --data-binary @page_seloger.html</code></pre>
-        </details>
 
         <details class="curl-example">
             <summary>🐍 Exemple Python</summary>

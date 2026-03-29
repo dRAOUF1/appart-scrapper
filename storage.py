@@ -323,6 +323,39 @@ class Storage:
             "new_today": today,
         }
 
+    # ------------------------------------------------------------------
+    # Admin
+    # ------------------------------------------------------------------
+
+    def get_admin_stats(self) -> dict:
+        """Global platform statistics."""
+        users    = self._conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        searches = self._conn.execute("SELECT COUNT(*) AS c FROM searches").fetchone()["c"]
+        listings = self._conn.execute("SELECT COUNT(*) AS c FROM listings").fetchone()["c"]
+        today    = self._conn.execute(
+            "SELECT COUNT(*) AS c FROM search_listings WHERE DATE(found_at) = DATE('now')"
+        ).fetchone()["c"]
+        return {
+            "users": users,
+            "searches": searches,
+            "total_listings": listings,
+            "new_today": today,
+        }
+
+    def get_all_users(self) -> list[dict]:
+        """List all users with their search and listing counts."""
+        rows = self._conn.execute(
+            """SELECT u.id, u.username, u.api_token, u.created_at,
+                      COUNT(DISTINCT s.id)          AS search_count,
+                      COUNT(DISTINCT sl.listing_id) AS listing_count
+               FROM users u
+               LEFT JOIN searches s  ON s.user_id = u.id
+               LEFT JOIN search_listings sl ON sl.search_id = s.id
+               GROUP BY u.id
+               ORDER BY u.created_at DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:

@@ -6,15 +6,43 @@
     <div>
         <a href="{{ url_for('web.searches') }}" class="back-link">← Recherches</a>
         <h1>{{ search.label }}</h1>
-        <p class="text-muted">{{ total }} annonce{{ 's' if total != 1 else '' }} · topic:
-            <code>{{ search.ntfy_topic }}</code></p>
+        <p class="text-muted">{{ total }} annonce{{ 's' if total != 1 else '' }} · source: <span
+                class="badge badge-source">{{ search.source }}</span> · topic: <code>{{ search.ntfy_topic }}</code></p>
     </div>
 </div>
 
+<!-- Filter bar -->
+<div class="filter-bar card">
+    <div class="filter-row">
+        <div class="filter-group">
+            <label>🔎 Recherche</label>
+            <input type="text" id="filter-text" placeholder="Titre, lieu, agence…" oninput="applyFilters()">
+        </div>
+        <div class="filter-group">
+            <label>💶 Prix max (€)</label>
+            <input type="number" id="filter-price" placeholder="ex: 900" oninput="applyFilters()">
+        </div>
+        <div class="filter-group">
+            <label>📐 Surface min (m²)</label>
+            <input type="number" id="filter-surface" placeholder="ex: 30" oninput="applyFilters()">
+        </div>
+        <div class="filter-group">
+            <label>🚪 Pièces min</label>
+            <input type="number" id="filter-rooms" placeholder="ex: 2" min="1" max="10" oninput="applyFilters()">
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="resetFilters()">Réinitialiser</button>
+    </div>
+    <div id="filter-count" class="filter-count text-muted"></div>
+</div>
+
 {% if listings %}
-<div class="listing-grid">
+<div class="listing-grid" id="listing-grid">
     {% for li in listings %}
-    <div class="listing-card">
+    <div class="listing-card" data-title="{{ li.title|lower }}" data-location="{{ li.location|lower }}"
+        data-agency="{{ li.agency|lower }}"
+        data-price="{{ li.price | replace('€','') | replace('/mois','') | replace(' ','') | replace('\u00a0','') }}"
+        data-surface="{{ li.surface | replace('m²','') | replace('m2','') | replace(' ','') }}"
+        data-rooms="{{ li.rooms | replace('pièces','') | replace('pièce','') | replace(' ','') }}">
         {% if li.image_url %}
         <div class="listing-img" style="background-image: url('{{ li.image_url }}')"></div>
         {% else %}
@@ -35,12 +63,22 @@
             <div class="listing-agency">🏢 {{ li.agency }}</div>
             {% endif %}
             <div class="listing-meta">
-                <span class="text-muted text-sm">{{ li.found_at[:10] if li.found_at else '' }}</span>
-                <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir sur SeLoger ↗</a>
+                <span class="text-muted text-sm">
+                    {% if li.found_at %}
+                    {{ li.found_at[:16].replace('T', ' ') }}
+                    {% endif %}
+                </span>
+                <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
             </div>
         </div>
     </div>
     {% endfor %}
+</div>
+
+<div id="no-results" class="empty-state" style="display:none">
+    <div class="empty-icon">🔍</div>
+    <h3>Aucun résultat</h3>
+    <p>Essayez d'ajuster vos filtres.</p>
 </div>
 
 <!-- Pagination -->
@@ -64,4 +102,47 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function applyFilters() {
+        const text = document.getElementById('filter-text').value.toLowerCase();
+        const maxPrice = parseFloat(document.getElementById('filter-price').value) || Infinity;
+        const minSurf = parseFloat(document.getElementById('filter-surface').value) || 0;
+        const minRooms = parseFloat(document.getElementById('filter-rooms').value) || 0;
+
+        const cards = document.querySelectorAll('#listing-grid .listing-card');
+        let visible = 0;
+
+        cards.forEach(card => {
+            const title = card.dataset.title || '';
+            const location = card.dataset.location || '';
+            const agency = card.dataset.agency || '';
+            const price = parseFloat(card.dataset.price) || Infinity;
+            const surface = parseFloat(card.dataset.surface) || 0;
+            const rooms = parseFloat(card.dataset.rooms) || 0;
+
+            const matchText = !text || title.includes(text) || location.includes(text) || agency.includes(text);
+            const matchPrice = price <= maxPrice;
+            const matchSurf = surface >= minSurf;
+            const matchRooms = rooms >= minRooms;
+
+            const show = matchText && matchPrice && matchSurf && matchRooms;
+            card.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        document.getElementById('no-results').style.display = visible === 0 ? 'flex' : 'none';
+        document.getElementById('filter-count').textContent =
+            visible < cards.length ? `${visible} / ${cards.length} annonces affichées` : '';
+    }
+
+    function resetFilters() {
+        ['filter-text', 'filter-price', 'filter-surface', 'filter-rooms'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+        applyFilters();
+    }
+</script>
 {% endblock %}

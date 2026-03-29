@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Admin — Appart Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>⚙ Dashboard Admin</h1>
+    <p class="text-muted">Vue globale de la plateforme</p>
+</div>
+
+<!-- Global stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-value">{{ stats.users }}</div>
+        <div class="stat-label">Utilisateurs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔍</div>
+        <div class="stat-value">{{ stats.searches }}</div>
+        <div class="stat-label">Recherches</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🏠</div>
+        <div class="stat-value">{{ stats.total_listings }}</div>
+        <div class="stat-label">Annonces totales</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">✨</div>
+        <div class="stat-value">{{ stats.new_today }}</div>
+        <div class="stat-label">Nouvelles aujourd'hui</div>
+    </div>
+</div>
+
+<!-- Users table -->
+<div class="card">
+    <h2>👥 Utilisateurs ({{ users|length }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Username</th>
+                    <th>Recherches</th>
+                    <th>Annonces</th>
+                    <th>Inscrit le</th>
+                    <th>Token API</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td class="text-muted">{{ u.id }}</td>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td>{{ u.search_count }}</td>
+                    <td>{{ u.listing_count }}</td>
+                    <td class="text-muted">{{ u.created_at[:16] if u.created_at else '—' }}</td>
+                    <td>
+                        <code class="token-mini" id="tok-{{ u.id }}">{{ u.api_token[:20] }}…</code>
+                        <button class="btn btn-sm btn-ghost"
+                            onclick="copyFull('tok-{{ u.id }}', '{{ u.api_token }}')">Copier</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function copyFull(elementId, fullToken) {
+        navigator.clipboard.writeText(fullToken).then(() => {
+            const btn = event.target;
+            btn.textContent = 'Copié ✓';
+            setTimeout(() => btn.textContent = 'Copier', 2000);
+        });
+    }
+</script>
+{% endblock %}
