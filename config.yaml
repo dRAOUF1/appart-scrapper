@@ -1,42 +1,15 @@
 # ============================================================
-# SeLoger Scraper — Configuration
-# ============================================================
-# Comment utiliser :
-#   1. Va sur https://www.seloger.com/
-#   2. Fais ta recherche avec tes critères (ville, prix, surface, etc.)
-#   3. Copie l'URL de la page de résultats
-#   4. Colle-la dans searches ci-dessous avec un topic ntfy unique
+# SeLoger API Platform — Configuration
 # ============================================================
 
-# Recherches à surveiller
-# Chaque recherche est un couple (url, topic ntfy)
-searches:
-  - url: "https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=House,Apartment&locations=AD08FR31096&locationsInBuildingExcluded=Groundfloor&priceMax=850&priceMin=600&spaceMin=19&order=DateDesc"
-    topic: "logements_alerts111103"
-
-  # Tu peux ajouter d'autres recherches avec des topics différents :
-  # - url: "https://www.seloger.com/list.htm?projects=2&types=1&places=[{cp:75}]"
-  #   topic: "paris-achats"
-
-# Intervalle entre chaque scan (en minutes)
-interval_minutes: 5
-
-# Configuration des notifications ntfy
+# Configuration des notifications ntfy (defauts)
 ntfy:
   server: "https://ntfy.sh"
-  priority: "default"  # low, min, default, high, urgent
-
-# Configuration du navigateur
-browser:
-  headless: true
-  # Temps d'attente max pour le chargement des pages (secondes)
-  page_load_timeout: 30
-  # Délai entre les actions (secondes) — évite la détection
-  action_delay: 2
+  priority: "default"
 
 # Configuration du stockage
 storage:
   db_path: "listings.db"
 
 # Logging
-log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+log_level: "INFO"

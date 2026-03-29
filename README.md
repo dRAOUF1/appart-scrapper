@@ -1,121 +1,85 @@
-# 🏠 SeLoger Scraper
+# 🏠 SeLoger Tracker
 
-Surveille les annonces immobilières sur [SeLoger.com](https://www.seloger.com/) et t'envoie une notification push dès qu'une nouvelle annonce apparaît dans tes critères de recherche.
+Plateforme web pour suivre les annonces immobilières SeLoger. Envoyez les pages HTML de SeLoger à l'API, elle gère le parsing, le stockage, la déduplication et les notifications push via [ntfy.sh](https://ntfy.sh).
 
-## ⚡ Fonctionnalités
+## Fonctionnalités
 
-- 🔍 **Surveillance automatique** — Scanne tes recherches SeLoger à intervalle régulier
-- 📱 **Notifications push** — Alerte instantanée via [ntfy](https://ntfy.sh) (Android/iOS/Desktop)
-- 🛡️ **Anti-détection** — Utilise `undetected-chromedriver` pour éviter le blocage
-- 💾 **Mémoire** — Base SQLite pour ne jamais te notifier deux fois la même annonce
-- 🔄 **Multi-recherches** — Surveille plusieurs URLs de recherche en parallèle
+- **Multi-utilisateur** : chaque utilisateur a son propre espace et ses recherches
+- **API REST** : envoyez du HTML via POST, recevez les annonces parsées en JSON
+- **Notifications push** : alertes instantanées via ntfy pour chaque nouvelle annonce
+- **Frontend web** : dashboard, gestion des recherches, consultation des annonces
+- **Déduplication intelligente** : les annonces sont stockées une seule fois, même entre utilisateurs
 
-## 📦 Installation
+## Démarrage rapide
 
-### Prérequis
-
-- Python 3.10+
-- Google Chrome (ou Chromium) installé
-
-### Setup
+### Installation locale
 
 ```bash
-cd /home/raouf/Bureau/seloger_scrapper
-
-# Créer un environnement virtuel
-python3 -m venv venv
-source venv/bin/activate
-
-# Installer les dépendances
 pip install -r requirements.txt
-```
-
-## ⚙️ Configuration
-
-Édite le fichier `config.yaml` :
-
-### 1. Ajouter tes URLs de recherche
-
-1. Va sur [seloger.com](https://www.seloger.com/)
-2. Fais ta recherche avec tes critères (ville, prix, surface, etc.)
-3. Copie l'URL de la page de résultats
-4. Colle-la dans `config.yaml` :
-
-```yaml
-search_urls:
-  - "https://www.seloger.com/list.htm?projects=2&types=1..."
-  - "https://www.seloger.com/list.htm?projects=1&types=2..."  # Deuxième recherche
-```
-
-### 2. Configurer les notifications
-
-1. Installe l'app **ntfy** sur ton téléphone ([Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy) / [iOS](https://apps.apple.com/app/ntfy/id1625396347))
-2. Choisis un nom de topic unique dans `config.yaml` :
-
-```yaml
-ntfy:
-  topic: "mon-topic-secret-12345"  # Choisis quelque chose d'unique !
-```
-
-3. Abonne-toi à ce topic dans l'app ntfy
-
-### 3. Régler la fréquence
-
-```yaml
-interval_minutes: 5  # Scan toutes les 5 minutes
-```
-
-## 🚀 Utilisation
-
-### Lancer la surveillance continue
-
-```bash
 python main.py
 ```
 
-### Faire un seul scan (debug)
+Le serveur démarre sur `http://localhost:10000`.
+
+### Déploiement Render
+
+1. Créer un **Web Service** sur Render
+2. Utiliser **Docker** comme Runtime
+3. Le Dockerfile gère tout automatiquement
+
+## Usage
+
+### 1. Créer un compte
+
+Allez sur `http://votre-url/login` et entrez un nom d'utilisateur.
+
+### 2. Créer une recherche
+
+Sur la page **Recherches**, créez une recherche avec :
+- **Label** : un nom pour identifier la recherche (ex: "Paris 13e T2")
+- **Topic ntfy** : le topic où envoyer les notifications (ex: "mes-alertes-immo")
+
+### 3. Envoyer du HTML
+
+La page **Recherches** vous génère automatiquement le lien POST et des exemples de code.
 
 ```bash
-python main.py --once
+curl -X POST https://votre-url/api/parse/<search_id> \
+  -H "X-API-Token: <votre-token>" \
+  -H "Content-Type: text/html" \
+  --data-binary @page_seloger.html
 ```
 
-### Tester les notifications
+### 4. Consulter les annonces
 
-```bash
-python main.py --test-notif
+Sur la page **Annonces**, consultez toutes les annonces trouvées avec prix, surface, localisation, photos et liens directs vers SeLoger.
+
+## API Endpoints
+
+| Endpoint | Méthode | Auth | Description |
+|----------|---------|------|-------------|
+| `POST /api/users` | POST | — | Créer un utilisateur |
+| `POST /api/users/login` | POST | — | Se connecter |
+| `POST /api/searches` | POST | token | Créer une recherche |
+| `GET /api/searches` | GET | token | Lister ses recherches |
+| `DELETE /api/searches/<id>` | DELETE | token | Supprimer une recherche |
+| `POST /api/parse/<search_id>` | POST | token | Envoyer du HTML |
+| `GET /api/listings/<search_id>` | GET | token | Consulter les annonces |
+| `GET /api/stats` | GET | token | Statistiques |
+
+Auth via header : `X-API-Token: <token>`
+
+## Structure
+
 ```
-
-### Utiliser un fichier config alternatif
-
-```bash
-python main.py --config ma_config.yaml
+├── main.py          # App Flask (API + Frontend)
+├── parser.py        # Parsing HTML SeLoger
+├── storage.py       # SQLite multi-utilisateur
+├── notifier.py      # Notifications ntfy
+├── config.py        # Chargement config
+├── config.yaml      # Configuration
+├── templates/       # Pages HTML (Jinja2)
+├── static/          # CSS
+├── Dockerfile       # Déploiement
+└── requirements.txt
 ```
-
-## 📁 Structure du projet
-
-```
-seloger_scrapper/
-├── config.yaml        # Configuration (URLs, notifications, etc.)
-├── config.py          # Chargeur de configuration
-├── scraper.py         # Scraper Selenium + undetected-chromedriver
-├── storage.py         # Stockage SQLite des annonces
-├── notifier.py        # Notifications push via ntfy
-├── main.py            # Point d'entrée principal
-├── requirements.txt   # Dépendances Python
-├── listings.db        # Base de données (créée automatiquement)
-└── README.md          # Ce fichier
-```
-
-## 🔧 Dépannage
-
-| Problème | Solution |
-|----------|----------|
-| Chrome ne se lance pas | Vérifie que Chrome/Chromium est installé : `google-chrome --version` |
-| Aucune annonce trouvée | SeLoger a peut-être changé ses sélecteurs CSS. Essaie en mode non-headless : `headless: false` dans config.yaml |
-| Notifications non reçues | Vérifie le topic ntfy, lance `python main.py --test-notif` |
-| Blocage anti-bot | Augmente `action_delay` dans config.yaml (ex: 5 secondes) |
-| Erreur de timeout | Augmente `page_load_timeout` dans config.yaml |
-
-## ⚠️ Avertissement
-
-Ce scraper est conçu pour un usage personnel de surveillance d'annonces. Respecte les conditions d'utilisation de SeLoger.com. N'abuse pas de la fréquence des scans.

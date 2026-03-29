@@ -1,67 +1,40 @@
-#!/usr/bin/env python3
 """
-SeLoger Scraper — Point d'entree principal.
+SeLoger API Platform — Point d'entrée unique.
 
-Surveille les resultats de recherche SeLoger.com et envoie des notifications
-push via ntfy quand de nouvelles annonces apparaissent.
-
-Usage:
-    python main.py                  # Boucle continue
-    python main.py --once           # Un seul scan
-    python main.py --test-notif     # Tester les notifications
-    python main.py --config other.yaml  # Config alternative
+Sert à la fois l'API REST (/api/*) et le frontend web (/) depuis
+un seul processus Flask, compatible Render (un seul web service).
 """
 
 from __future__ import annotations
 
-import argparse
-import signal
+import os
 import sys
 import time
-from pathlib import Path
-import os
-import threading
-from flask import Flask
+from functools import wraps
 
-import schedule
+from flask import (
+    Flask, Blueprint, request, jsonify, render_template,
+    redirect, url_for, session, flash, g,
+)
 from loguru import logger
 
-from config import load_config, AppConfig
+from config import load_config
 from notifier import Notifier
-from scraper import SeLogerScraper
+from parsers import get_parser, list_sources
 from storage import Storage
 
+# ======================================================================
+# App factory
+# ======================================================================
 
-app = Flask(__name__)
+def create_app() -> Flask:
+    config = load_config()
 
-# Optionnel : On masque les logs "werkzeug" de Flask pour 
-# ne pas spammer ta console à chaque ping de Render
-import logging
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
-
-@app.route('/')
-def health_check():
-    return "Scraper is running OK with Flask!", 200
-
-def start_flask_server():
-    # Render definit automatiquement la variable d'environnement PORT
-    port = int(os.environ.get("PORT", 10000))
-    logger.info(f"Serveur Flask demarre sur le port {port} (pour Render)")
-    
-    # host="0.0.0.0" est obligatoire pour que le serveur soit accessible de l'exterieur
-    # use_reloader=False est crucial dans un thread pour eviter que Flask ne lance un 2eme processus
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-
-
-# -- Logging setup --
-
-def setup_logging(log_level: str) -> None:
-    """Configure loguru logging."""
-    logger.remove()  # Remove default handler
+    # Logging
+    logger.remove()
     logger.add(
         sys.stderr,
-        level=log_level,
+        level=config.log_level,
         format=(
             "<green>{time:HH:mm:ss}</green> | "
             "<level>{level: <8}</level> | "
@@ -70,197 +43,428 @@ def setup_logging(log_level: str) -> None:
         ),
         colorize=True,
     )
-    # Also log to file
-    logger.add(
-        "seloger_scraper.log",
-        level="DEBUG",
-        rotation="10 MB",
-        retention="7 days",
-        compression="zip",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {module}:{function} | {message}",
+
+    app = Flask(
+        __name__,
+        template_folder="templates",
+        static_folder="static",
     )
+    app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-
-# -- Core scan function --
-
-def run_scan(config: AppConfig, scraper: SeLogerScraper, storage: Storage, notifier: Notifier) -> None:
-    """Execute a single scan cycle across all searches."""
-    total_new = 0
-    total_scanned = 0
-
-    for search in config.searches:
-        search_url = search.url
-        topic = search.topic
-
-        logger.info(f"{'=' * 60}")
-        logger.info(f"Scan [{topic}]: {search_url[:80]}...")
-
-        try:
-            # Scrape the search results
-            listings = scraper.scrape(search_url)
-            total_scanned += len(listings)
-
-            if not listings:
-                logger.warning(f"[{topic}] Aucune annonce trouvee")
-                continue
-
-            # Filter and save new listings
-            new_listings = storage.save_batch(listings, search_url)
-            total_new += len(new_listings)
-
-            logger.info(
-                f"[{topic}] Resultat: {len(listings)} annonces, "
-                f"{len(new_listings)} nouvelle{'s' if len(new_listings) > 1 else ''}"
-            )
-
-            # Send individual notifications for each new listing
-            for listing in new_listings:
-                logger.info(
-                    f"  NEW {listing.title} -- {listing.price} -- "
-                    f"{listing.location} -- {listing.agency} -- {listing.url}"
-                )
-                notifier.notify_new_listing(topic, listing)
-                time.sleep(0.5)  # Avoid rate limiting
-
-            # Send summary for this search
-            if new_listings:
-                notifier.notify_summary(topic, len(new_listings), len(listings), search_url)
-
-        except Exception as e:
-            logger.error(f"Erreur lors du scan [{topic}]: {e}")
-            continue
-
-    # Stats
-    stats = storage.get_stats()
-    logger.info(f"{'=' * 60}")
-    logger.info(
-        f"Scan termine: {total_scanned} scannees, {total_new} nouvelles | "
-        f"Total en base: {stats['total']} | Nouvelles aujourd'hui: {stats['new_today']}"
-    )
-
-
-# -- Signal handling --
-
-_running = True
-
-
-def _signal_handler(signum, frame):
-    global _running
-    logger.info(f"\nSignal recu ({signum}), arret en cours...")
-    _running = False
-
-
-# -- Main --
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="SeLoger.com -- Surveillance d'annonces immobilieres",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Exemples:
-  python main.py                     Lancer la surveillance continue
-  python main.py --once              Faire un seul scan
-  python main.py --test-notif        Tester les notifications
-  python main.py --config my.yaml    Utiliser un fichier config alternatif
-        """,
-    )
-    parser.add_argument(
-        "--config", "-c",
-        default="config.yaml",
-        help="Chemin vers le fichier de configuration (defaut: config.yaml)",
-    )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Executer un seul scan puis quitter",
-    )
-    parser.add_argument(
-        "--test-notif",
-        action="store_true",
-        help="Envoyer une notification de test puis quitter",
-    )
-    args = parser.parse_args()
-
-    # Load configuration
-    config = load_config(args.config)
-    setup_logging(config.log_level)
-
-    logger.info("=" * 60)
-    logger.info("SeLoger Scraper -- Demarrage")
-    logger.info(f"   Recherches       : {len(config.searches)}")
-    for s in config.searches:
-        logger.info(f"     - [{s.topic}] {s.url[:60]}...")
-    logger.info(f"   Intervalle       : {config.interval_minutes} min")
-    logger.info(f"   ntfy server      : {config.ntfy.server}")
-    logger.info(f"   Headless         : {config.browser.headless}")
-    logger.info("=" * 60)
-
-    # Initialize components
-    notifier = Notifier(
+    # Shared objects stored on app
+    app.config["APP_CONFIG"] = config
+    app.storage = Storage(db_path=config.storage.db_path)
+    app.notifier = Notifier(
         server=config.ntfy.server,
         priority=config.ntfy.priority,
     )
-    storage = Storage(db_path=config.storage.db_path)
 
-    # Test notification mode
-    if args.test_notif:
-        logger.info("Envoi de notifications de test...")
-        for s in config.searches:
-            success = notifier.send_test(s.topic)
-            if success:
-                logger.info(f"  OK Notification envoyee sur [{s.topic}]")
-            else:
-                logger.error(f"  FAIL Echec pour [{s.topic}]")
-        return
+    # Silence werkzeug spam
+    import logging
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-    # Create scraper
-    scraper = SeLogerScraper(
-        headless=config.browser.headless,
-        page_load_timeout=config.browser.page_load_timeout,
-        action_delay=config.browser.action_delay,
+    # Register blueprints
+    app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(web_bp)
+
+    logger.info("SeLoger API Platform — démarrée")
+    return app
+
+
+# ======================================================================
+# API Blueprint  (/api/*)
+# ======================================================================
+
+api_bp = Blueprint("api", __name__)
+
+
+def require_token(f):
+    """Decorator: require X-API-Token header and set g.user."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        from flask import current_app
+        token = request.headers.get("X-API-Token", "")
+        if not token:
+            return jsonify({"error": "Header X-API-Token manquant"}), 401
+        user = current_app.storage.get_user_by_token(token)
+        if not user:
+            return jsonify({"error": "Token invalide"}), 401
+        g.user = user
+        return f(*args, **kwargs)
+    return wrapper
+
+
+# --- Users ---
+
+@api_bp.route("/users", methods=["POST"])
+def create_user():
+    """Create a new user.  Body: {"username": "..."}"""
+    from flask import current_app
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    if not username:
+        return jsonify({"error": "username requis"}), 400
+    try:
+        user = current_app.storage.create_user(username)
+        return jsonify(user), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+
+
+@api_bp.route("/users/login", methods=["POST"])
+def login_user():
+    """Login by username — returns the existing token."""
+    from flask import current_app
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    if not username:
+        return jsonify({"error": "username requis"}), 400
+    user = current_app.storage.get_user_by_username(username)
+    if not user:
+        return jsonify({"error": "Utilisateur introuvable"}), 404
+    return jsonify(user), 200
+
+
+@api_bp.route("/sources", methods=["GET"])
+def get_sources():
+    """List all available parser sources."""
+    return jsonify(list_sources()), 200
+
+
+# --- Searches ---
+
+@api_bp.route("/searches", methods=["POST"])
+@require_token
+def create_search():
+    """Create a search.  Body: {"label": "...", "ntfy_topic": "..."}"""
+    from flask import current_app
+    data = request.get_json(silent=True) or {}
+    label = data.get("label", "").strip()
+    ntfy_topic = data.get("ntfy_topic", "").strip()
+    source = data.get("source", "seloger").strip()
+    if not label or not ntfy_topic:
+        return jsonify({"error": "label et ntfy_topic requis"}), 400
+    # Validate source exists
+    try:
+        get_parser(source)  # will raise if unknown
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    search = current_app.storage.create_search(g.user["id"], label, ntfy_topic, source)
+    return jsonify(search), 201
+
+
+@api_bp.route("/searches", methods=["GET"])
+@require_token
+def list_searches():
+    """List searches for the authenticated user."""
+    from flask import current_app
+    searches = current_app.storage.get_user_searches(g.user["id"])
+    return jsonify(searches), 200
+
+
+@api_bp.route("/searches/<int:search_id>", methods=["DELETE"])
+@require_token
+def delete_search(search_id: int):
+    """Delete a search."""
+    from flask import current_app
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    current_app.storage.delete_search(search_id)
+    return jsonify({"ok": True}), 200
+
+
+# --- Parse ---
+
+@api_bp.route("/parse/<int:search_id>", methods=["POST"])
+@require_token
+def parse_html(search_id: int):
+    """
+    Receive HTML, parse SeLoger listings, save & notify.
+
+    Accepts:
+        Content-Type: text/html  →  raw HTML body
+        Content-Type: multipart/form-data  →  file field 'file'
+    """
+    from flask import current_app
+    storage = current_app.storage
+    notifier = current_app.notifier
+
+    # Auth: check search belongs to user
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    # Resolve parser for this search's source
+    try:
+        parser = get_parser(search["source"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # Get HTML
+    if request.content_type and "multipart/form-data" in request.content_type:
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"error": "Champ 'file' manquant"}), 400
+        html = f.read().decode("utf-8", errors="replace")
+    else:
+        html = request.get_data(as_text=True)
+
+    if not html or len(html) < 100:
+        return jsonify({"error": "HTML vide ou trop court"}), 400
+
+    # Parse
+    listings = parser.parse(html)
+    if not listings:
+        return jsonify({
+            "total_parsed": 0,
+            "new_listings": 0,
+            "listings": [],
+        }), 200
+
+    # Save & link
+    new_listings, already = storage.save_and_link(listings, search_id)
+    topic = search["ntfy_topic"]
+
+    # Notify for new ones
+    for listing in new_listings:
+        notifier.notify_new_listing(topic, listing)
+        time.sleep(0.3)
+
+    if new_listings:
+        notifier.notify_summary(topic, len(new_listings), len(listings))
+
+    logger.info(
+        f"[search:{search_id}] Parsed {len(listings)}, "
+        f"{len(new_listings)} new, {len(already)} already known"
     )
 
-    # Register signal handlers
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
+    return jsonify({
+        "total_parsed": len(listings),
+        "new_listings": len(new_listings),
+        "listings": [
+            {**li.to_dict(), "is_new": True} for li in new_listings
+        ] + [
+            {**li.to_dict(), "is_new": False} for li in already
+        ],
+    }), 200
 
-    try:
-        if args.once:
-            # Single scan mode
-            logger.info("Mode scan unique (--once)")
-            run_scan(config, scraper, storage, notifier)
+
+# --- Listings ---
+
+@api_bp.route("/listings/<int:search_id>", methods=["GET"])
+@require_token
+def get_listings(search_id: int):
+    """Get listings for a search (paginated)."""
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    limit = min(int(request.args.get("limit", 50)), 200)
+    offset = int(request.args.get("offset", 0))
+
+    listings = storage.get_listings_for_search(search_id, limit=limit, offset=offset)
+    total = storage.count_listings_for_search(search_id)
+
+    return jsonify({
+        "search": search,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "listings": listings,
+    }), 200
+
+
+# --- Stats ---
+
+@api_bp.route("/stats", methods=["GET"])
+@require_token
+def get_stats():
+    """Get user statistics."""
+    from flask import current_app
+    stats = current_app.storage.get_user_stats(g.user["id"])
+    return jsonify(stats), 200
+
+
+# ======================================================================
+# Web Frontend Blueprint  (/)
+# ======================================================================
+
+web_bp = Blueprint(
+    "web", __name__,
+    template_folder="templates",
+    static_folder="static",
+)
+
+
+def require_login(f):
+    """Decorator: redirect to login if no session."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("web.login"))
+        from flask import current_app
+        user = current_app.storage.get_user_by_token(session.get("api_token", ""))
+        if not user:
+            session.clear()
+            return redirect(url_for("web.login"))
+        g.user = user
+        return f(*args, **kwargs)
+    return wrapper
+
+
+@web_bp.route("/")
+def index():
+    if "user_id" in session:
+        return redirect(url_for("web.dashboard"))
+    return redirect(url_for("web.login"))
+
+
+@web_bp.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        from flask import current_app
+        username = request.form.get("username", "").strip()
+        if not username:
+            flash("Nom d'utilisateur requis", "error")
+            return render_template("login.html")
+
+        # Try to find existing user, otherwise create
+        user = current_app.storage.get_user_by_username(username)
+        if not user:
+            try:
+                user = current_app.storage.create_user(username)
+                flash(f"Compte créé ! Votre token API : {user['api_token']}", "success")
+            except ValueError:
+                flash("Erreur lors de la création du compte", "error")
+                return render_template("login.html")
+
+        session["user_id"] = user["id"]
+        session["username"] = user["username"]
+        session["api_token"] = user["api_token"]
+        return redirect(url_for("web.dashboard"))
+
+    return render_template("login.html")
+
+
+@web_bp.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("web.login"))
+
+
+@web_bp.route("/dashboard")
+@require_login
+def dashboard():
+    from flask import current_app
+    stats = current_app.storage.get_user_stats(g.user["id"])
+    searches = current_app.storage.get_user_searches(g.user["id"])
+
+    # Get recent listings across all searches
+    recent = []
+    for s in searches[:5]:
+        listings = current_app.storage.get_listings_for_search(s["id"], limit=3)
+        for li in listings:
+            li["search_label"] = s["label"]
+            recent.append(li)
+    recent.sort(key=lambda x: x.get("found_at", ""), reverse=True)
+
+    return render_template(
+        "dashboard.html",
+        stats=stats,
+        searches=searches,
+        recent=recent[:10],
+        api_token=session.get("api_token"),
+    )
+
+
+@web_bp.route("/searches", methods=["GET", "POST"])
+@require_login
+def searches():
+    from flask import current_app
+    sources = list_sources()
+    if request.method == "POST":
+        label = request.form.get("label", "").strip()
+        ntfy_topic = request.form.get("ntfy_topic", "").strip()
+        source = request.form.get("source", "seloger").strip()
+        if label and ntfy_topic:
+            current_app.storage.create_search(g.user["id"], label, ntfy_topic, source)
+            flash(f"Recherche « {label} » créée !", "success")
         else:
-            # Continuous monitoring mode
-            logger.info(
-                f"Mode continu -- scan toutes les {config.interval_minutes} minutes. "
-                "Ctrl+C pour arreter."
-            )
+            flash("Label et topic ntfy requis", "error")
+        return redirect(url_for("web.searches"))
 
-            # Lancement flask
-            server_thread = threading.Thread(target=start_flask_server, daemon=True)
-            server_thread.start()
-            ##############
-            
-            # Run immediately on start
-            run_scan(config, scraper, storage, notifier)
+    all_searches = current_app.storage.get_user_searches(g.user["id"])
+    base_url = request.url_root.rstrip("/")
+    return render_template(
+        "searches.html",
+        searches=all_searches,
+        api_token=session.get("api_token"),
+        base_url=base_url,
+        sources=sources,
+    )
 
-            # Schedule recurring scans
-            schedule.every(config.interval_minutes).minutes.do(
-                run_scan, config, scraper, storage, notifier
-            )
 
-            while _running:
-                schedule.run_pending()
-                time.sleep(1)
+@web_bp.route("/searches/<int:search_id>/delete", methods=["POST"])
+@require_login
+def delete_search_web(search_id: int):
+    from flask import current_app
+    search = current_app.storage.get_search(search_id)
+    if search and search["user_id"] == g.user["id"]:
+        current_app.storage.delete_search(search_id)
+        flash("Recherche supprimée", "success")
+    return redirect(url_for("web.searches"))
 
-    except KeyboardInterrupt:
-        logger.info("\nInterruption clavier, arret...")
-    finally:
-        scraper.close()
-        stats = storage.get_stats()
-        logger.info(f"Total annonces en base : {stats['total']}")
-        logger.info("SeLoger Scraper -- Arrete")
 
+@web_bp.route("/listings/<int:search_id>")
+@require_login
+def listings(search_id: int):
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    page = int(request.args.get("page", 1))
+    per_page = 20
+    offset = (page - 1) * per_page
+
+    all_listings = storage.get_listings_for_search(search_id, limit=per_page, offset=offset)
+    total = storage.count_listings_for_search(search_id)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return render_template(
+        "listings.html",
+        search=search,
+        listings=all_listings,
+        total=total,
+        page=page,
+        total_pages=total_pages,
+    )
+
+
+# ======================================================================
+# Health check (root-level for Render)
+# ======================================================================
+
+# The web_bp already handles "/" via index(), which redirects.
+# Render pings "/" expecting 200; the redirect (302) works, but we also
+# expose a dedicated /health that returns plain 200.
+
+@web_bp.route("/health")
+def health():
+    return "OK", 200
+
+
+# ======================================================================
+# Entry point
+# ======================================================================
 
 if __name__ == "__main__":
-    main()
+    app = create_app()
+    port = int(os.environ.get("PORT", 10000))
+    logger.info(f"Serveur Flask sur le port {port}")
+    app.run(host="0.0.0.0", port=port, debug=False)

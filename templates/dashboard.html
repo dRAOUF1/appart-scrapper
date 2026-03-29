@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — SeLoger Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p class="text-muted">Vue d'ensemble de votre suivi immobilier</p>
+</div>
+
+<!-- Stats cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">🔍</div>
+        <div class="stat-value">{{ stats.searches }}</div>
+        <div class="stat-label">Recherches actives</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🏠</div>
+        <div class="stat-value">{{ stats.total_listings }}</div>
+        <div class="stat-label">Annonces totales</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">✨</div>
+        <div class="stat-value">{{ stats.new_today }}</div>
+        <div class="stat-label">Nouvelles aujourd'hui</div>
+    </div>
+</div>
+
+<!-- API Token -->
+<div class="card token-card">
+    <h2>🔑 Votre Token API</h2>
+    <p class="text-muted">Utilisez ce token dans vos scripts pour envoyer du HTML à l'API.</p>
+    <div class="token-display">
+        <code id="api-token">{{ api_token }}</code>
+        <button class="btn btn-sm btn-ghost" onclick="copyToken()">Copier</button>
+    </div>
+</div>
+
+<!-- Recent listings -->
+{% if recent %}
+<div class="section">
+    <h2>Dernières annonces trouvées</h2>
+    <div class="listing-grid">
+        {% for li in recent %}
+        <div class="listing-card">
+            {% if li.image_url %}
+            <div class="listing-img" style="background-image: url('{{ li.image_url }}')"></div>
+            {% else %}
+            <div class="listing-img listing-img-placeholder">🏠</div>
+            {% endif %}
+            <div class="listing-body">
+                <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
+                <div class="listing-title">{{ li.title[:80] if li.title else 'Annonce' }}</div>
+                <div class="listing-details">
+                    {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
+                    {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
+                    {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
+                </div>
+                {% if li.agency %}
+                <div class="listing-agency">{{ li.agency }}</div>
+                {% endif %}
+                <div class="listing-meta">
+                    <span class="badge">{{ li.search_label }}</span>
+                    <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">📭</div>
+    <h3>Aucune annonce pour le moment</h3>
+    <p>Créez une recherche et envoyez des pages HTML pour commencer.</p>
+    <a href="{{ url_for('web.searches') }}" class="btn btn-primary">Créer une recherche</a>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function copyToken() {
+        const token = document.getElementById('api-token').textContent;
+        navigator.clipboard.writeText(token).then(() => {
+            const btn = event.target;
+            btn.textContent = 'Copié ✓';
+            setTimeout(() => btn.textContent = 'Copier', 2000);
+        });
+    }
+</script>
+{% endblock %}

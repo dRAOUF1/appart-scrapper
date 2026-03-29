@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ search.label }} — Annonces{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="{{ url_for('web.searches') }}" class="back-link">← Recherches</a>
+        <h1>{{ search.label }}</h1>
+        <p class="text-muted">{{ total }} annonce{{ 's' if total != 1 else '' }} · topic:
+            <code>{{ search.ntfy_topic }}</code></p>
+    </div>
+</div>
+
+{% if listings %}
+<div class="listing-grid">
+    {% for li in listings %}
+    <div class="listing-card">
+        {% if li.image_url %}
+        <div class="listing-img" style="background-image: url('{{ li.image_url }}')"></div>
+        {% else %}
+        <div class="listing-img listing-img-placeholder">🏠</div>
+        {% endif %}
+        <div class="listing-body">
+            <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
+            <div class="listing-title">{{ li.title[:100] if li.title else 'Annonce' }}</div>
+            <div class="listing-details">
+                {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
+                {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
+                {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
+            </div>
+            {% if li.description %}
+            <p class="listing-description">{{ li.description[:200] }}</p>
+            {% endif %}
+            {% if li.agency %}
+            <div class="listing-agency">🏢 {{ li.agency }}</div>
+            {% endif %}
+            <div class="listing-meta">
+                <span class="text-muted text-sm">{{ li.found_at[:10] if li.found_at else '' }}</span>
+                <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir sur SeLoger ↗</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}" class="btn btn-sm btn-ghost">← Précédent</a>
+    {% endif %}
+    <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %} <a href="?page={{ page + 1 }}" class="btn btn-sm btn-ghost">Suivant →</a>
+        {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">📭</div>
+    <h3>Aucune annonce</h3>
+    <p>Envoyez des pages HTML à votre lien POST pour remplir cette recherche.</p>
+    <a href="{{ url_for('web.searches') }}" class="btn btn-primary">Voir le lien POST</a>
+</div>
+{% endif %}
+
+{% endblock %}
