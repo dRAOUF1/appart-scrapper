@@ -2,12 +2,27 @@
 {% block title %}Admin — Appart Tracker{% endblock %}
 
 {% block content %}
-<div class="page-header">
-    <h1>⚙ Dashboard Admin</h1>
-    <p class="text-muted">Vue globale de la plateforme</p>
+<div class="admin-header">
+    <h1>Panel Admin</h1>
+    <span class="alert-badge info">Connecté en tant que {{ session.get('username') }}</span>
 </div>
 
-<!-- Global stats -->
+<!-- Tab Navigation -->
+<nav class="admin-tabs">
+    <a href="{{ url_for('web.admin', tab='dashboard') }}" class="admin-tab {% if active_tab == 'dashboard' %}active{% endif %}">Dashboard</a>
+    <a href="{{ url_for('web.admin_users') }}" class="admin-tab {% if active_tab == 'users' %}active{% endif %}">Utilisateurs</a>
+    <a href="{{ url_for('web.admin_searches') }}" class="admin-tab {% if active_tab == 'searches' %}active{% endif %}">Recherches</a>
+    <a href="{{ url_for('web.admin_listings') }}" class="admin-tab {% if active_tab == 'listings' %}active{% endif %}">Annonces</a>
+    <a href="{{ url_for('web.admin_database') }}" class="admin-tab {% if active_tab == 'database' %}active{% endif %}">Base de données</a>
+    <a href="{{ url_for('web.admin_logs') }}" class="admin-tab {% if active_tab == 'logs' %}active{% endif %}">Logs</a>
+</nav>
+
+<!-- ============================================================
+     DASHBOARD TAB
+     ============================================================ -->
+{% if active_tab == 'dashboard' or not active_tab %}
+
+<!-- Global Stats -->
 <div class="stats-grid">
     <div class="stat-card">
         <div class="stat-icon">👥</div>
@@ -29,35 +44,272 @@
         <div class="stat-value">{{ stats.new_today }}</div>
         <div class="stat-label">Nouvelles aujourd'hui</div>
     </div>
+    <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-value">{{ stats.avg_listings_per_search }}</div>
+        <div class="stat-label">Moy. annonces/recherche</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔗</div>
+        <div class="stat-value">{{ stats.search_listings }}</div>
+        <div class="stat-label">Liens recherche-annonce</div>
+    </div>
 </div>
 
-<!-- Users table -->
+<!-- Alerts -->
+{% if stats.orphan_listings > 0 or stats.users_without_searches > 0 %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2>⚠️ Alertes</h2>
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+        {% if stats.orphan_listings > 0 %}
+        <span class="alert-badge warning">📭 {{ stats.orphan_listings }} annonce(s) orpheline(s)</span>
+        {% endif %}
+        {% if stats.users_without_searches > 0 %}
+        <span class="alert-badge info">👤 {{ stats.users_without_searches }} utilisateur(s) sans recherche</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Activity 7 Days -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <h2>📈 Activité — 7 derniers jours</h2>
+    {% if stats.activity_7d %}
+    <div class="activity-bar" style="margin-bottom: 1.5rem;">
+        {% set max_count = stats.activity_7d | map(attribute='count') | max %}
+        {% for day in stats.activity_7d %}
+        <div class="bar" style="height: {{ (day.count / max_count * 100) if max_count > 0 else 0 }}%">
+            <span class="bar-value">{{ day.count }}</span>
+            <span class="bar-label">{{ day.day.strftime('%d/%m') if day.day else '—' }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted text-sm">Aucune activité récente</p>
+    {% endif %}
+</div>
+
+<!-- Top Users + Top Searches -->
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>🏆 Top Utilisateurs</h3>
+        {% if stats.top_users %}
+        {% for u in stats.top_users %}
+        <div class="detail-row">
+            <span class="detail-label">{{ u.username }}</span>
+            <span class="detail-value">{{ u.listing_count }} annonces</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted text-sm">Aucune donnée</p>
+        {% endif %}
+    </div>
+    <div class="detail-card">
+        <h3>🔥 Top Recherches</h3>
+        {% if stats.top_searches %}
+        {% for s in stats.top_searches %}
+        <div class="detail-row">
+            <span class="detail-label">{{ s.label }} <span class="text-muted text-sm">({{ s.username }})</span></span>
+            <span class="detail-value">{{ s.listing_count }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted text-sm">Aucune donnée</p>
+        {% endif %}
+    </div>
+    <div class="detail-card">
+        <h3>📦 Sources</h3>
+        {% if stats.sources_breakdown %}
+        {% for src in stats.sources_breakdown %}
+        <div class="detail-row">
+            <span class="detail-label"><span class="badge badge-source">{{ src.source }}</span></span>
+            <span class="detail-value">{{ src.cnt }} recherches</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted text-sm">Aucune donnée</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Quick Actions -->
 <div class="card">
-    <h2>👥 Utilisateurs ({{ users|length }})</h2>
+    <h2>⚡ Actions rapides</h2>
+    <div class="action-bar">
+        <form method="POST" action="{{ url_for('web.admin_cleanup') }}" class="inline-form" onsubmit="return confirm('Supprimer les annonces de plus de 4 jours ?')">
+            <button type="submit" class="btn btn-primary">🧹 Nettoyer annonces (>4j)</button>
+        </form>
+        {% if stats.orphan_listings > 0 %}
+        <form method="POST" action="{{ url_for('web.admin_cleanup_orphan') }}" class="inline-form" onsubmit="return confirm('Supprimer {{ stats.orphan_listings }} annonce(s) orpheline(s) ?')">
+            <button type="submit" class="btn btn-danger">🗑 Supprimer orphelines ({{ stats.orphan_listings }})</button>
+        </form>
+        {% endif %}
+        <a href="{{ url_for('web.admin_logs') }}" class="btn btn-ghost">📋 Voir les logs</a>
+    </div>
+</div>
+
+{% endif %}
+
+<!-- ============================================================
+     USERS TAB
+     ============================================================ -->
+{% if active_tab == 'users' %}
+
+{% if user_detail %}
+<!-- User Detail View -->
+<a href="{{ url_for('web.admin_users') }}" class="back-link">← Retour aux utilisateurs</a>
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>👤 Informations</h3>
+        <div class="detail-row">
+            <span class="detail-label">ID</span>
+            <span class="detail-value">#{{ user_detail.id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Username</span>
+            <span class="detail-value">{{ user_detail.username }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Inscrit le</span>
+            <span class="detail-value">{{ user_detail.created_at.strftime('%d/%m/%Y %H:%M') if user_detail.created_at else '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Recherches</span>
+            <span class="detail-value">{{ user_detail.search_count }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Annonces</span>
+            <span class="detail-value">{{ user_detail.listing_count }}</span>
+        </div>
+    </div>
+    <div class="detail-card">
+        <h3>🔑 Token API</h3>
+        <div class="token-display" style="margin-top: 0.5rem;">
+            <code id="user-token">{{ user_detail.api_token }}</code>
+            <button class="btn btn-sm btn-ghost" onclick="copyToken('user-token')">Copier</button>
+        </div>
+        <form method="POST" action="{{ url_for('web.admin_reset_token', user_id=user_detail.id) }}" class="inline-form" style="margin-top: 1rem;" onsubmit="return confirm('Réinitialiser le token API ? L\'ancien token ne fonctionnera plus.')">
+            <button type="submit" class="btn btn-danger btn-sm">🔄 Réinitialiser le token</button>
+        </form>
+    </div>
+</div>
+
+{% if user_detail.searches %}
+<div class="card">
+    <h2>🔍 Recherches ({{ user_detail.searches|length }})</h2>
     <div class="table-wrapper">
         <table class="admin-table">
             <thead>
                 <tr>
-                    <th>#</th>
+                    <th>ID</th>
+                    <th>Label</th>
+                    <th>Source</th>
+                    <th>Annonces</th>
+                    <th>Créée le</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in user_detail.searches %}
+                <tr>
+                    <td class="text-muted">#{{ s.id }}</td>
+                    <td><strong>{{ s.label }}</strong></td>
+                    <td><span class="badge badge-source">{{ s.source }}</span></td>
+                    <td>{{ s.listing_count }}</td>
+                    <td class="text-muted">{{ s.created_at.strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if user_detail.recent_listings %}
+<div class="card">
+    <h2>🏠 Dernières annonces ({{ user_detail.recent_listings|length }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Titre</th>
+                    <th>Prix</th>
+                    <th>Localisation</th>
+                    <th>Recherche</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for li in user_detail.recent_listings %}
+                <tr>
+                    <td>{{ li.title[:60] if li.title else '—' }}</td>
+                    <td>{{ li.price or '—' }}</td>
+                    <td>{{ li.location or '—' }}</td>
+                    <td><span class="badge">{{ li.search_label }}</span></td>
+                    <td class="text-muted">{{ li.first_seen.strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('web.admin_delete_user', user_id=user_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer définitivement l\'utilisateur {{ user_detail.username }} et toutes ses données ?')">
+        <button type="submit" class="btn btn-danger">🗑 Supprimer cet utilisateur</button>
+    </form>
+</div>
+
+{% else %}
+<!-- Users List View -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">👥 Utilisateurs ({{ user_count }})</h2>
+        <form method="GET" action="{{ url_for('web.admin_users') }}" style="display: flex; gap: 0.5rem;">
+            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+        </form>
+    </div>
+
+    <!-- Create User -->
+    <details style="margin-bottom: 1rem;">
+        <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0;">+ Créer un utilisateur</summary>
+        <form method="POST" action="{{ url_for('web.admin_create_user') }}" style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+            <input type="text" name="username" placeholder="Nom d'utilisateur" required style="padding: 0.5rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem; flex: 1; max-width: 300px;">
+            <button type="submit" class="btn btn-sm btn-primary">Créer</button>
+        </form>
+    </details>
+
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th></th>
                     <th>Username</th>
                     <th>Recherches</th>
                     <th>Annonces</th>
                     <th>Inscrit le</th>
                     <th>Token API</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for u in users %}
                 <tr>
-                    <td class="text-muted">{{ u.id }}</td>
+                    <td><div class="user-avatar">{{ u.username[0].upper() }}</div></td>
                     <td><strong>{{ u.username }}</strong></td>
                     <td>{{ u.search_count }}</td>
                     <td>{{ u.listing_count }}</td>
-                    <td class="text-muted">{{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '—' }}</td>
+                    <td class="text-muted">{{ u.created_at.strftime('%d/%m/%Y') if u.created_at else '—' }}</td>
                     <td>
-                        <code class="token-mini" id="tok-{{ u.id }}">{{ u.api_token[:20] }}…</code>
-                        <button class="btn btn-sm btn-ghost"
-                            onclick="copyFull('tok-{{ u.id }}', '{{ u.api_token }}')">Copier</button>
+                        <code class="token-mini" id="tok-{{ u.id }}">{{ u.api_token[:16] }}…</code>
+                        <button class="btn btn-sm btn-ghost" onclick="copyToken('tok-{{ u.id }}', '{{ u.api_token }}')">Copier</button>
+                    </td>
+                    <td>
+                        <a href="{{ url_for('web.admin_user_detail', user_id=u.id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('web.admin_delete_user', user_id=u.id) }}" class="inline-form" onsubmit="return confirm('Supprimer {{ u.username }} ?')">
+                            <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
+                        </form>
                     </td>
                 </tr>
                 {% endfor %}
@@ -65,12 +317,588 @@
         </table>
     </div>
 </div>
+{% endif %}
+
+{% endif %}
+
+<!-- ============================================================
+     SEARCHES TAB
+     ============================================================ -->
+{% if active_tab == 'searches' %}
+
+{% if search_detail %}
+<!-- Search Detail View -->
+<a href="{{ url_for('web.admin_searches') }}" class="back-link">← Retour aux recherches</a>
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>🔍 Détails de la recherche</h3>
+        <div class="detail-row">
+            <span class="detail-label">ID</span>
+            <span class="detail-value">#{{ search_detail.id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Label</span>
+            <span class="detail-value">{{ search_detail.label }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Source</span>
+            <span class="detail-value"><span class="badge badge-source">{{ search_detail.source }}</span></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Topic ntfy</span>
+            <span class="detail-value">{{ search_detail.ntfy_topic }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Utilisateur</span>
+            <span class="detail-value">{{ search_detail.username }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Annonces liées</span>
+            <span class="detail-value">{{ search_detail.total_listings }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Créée le</span>
+            <span class="detail-value">{{ search_detail.created_at.strftime('%d/%m/%Y %H:%M') if search_detail.created_at else '—' }}</span>
+        </div>
+    </div>
+</div>
+
+{% if search_detail.recent_listings %}
+<div class="card">
+    <h2>🏠 Dernières annonces ({{ search_detail.recent_listings|length }} / {{ search_detail.total_listings }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Titre</th>
+                    <th>Prix</th>
+                    <th>Surface</th>
+                    <th>Localisation</th>
+                    <th>Ajoutée le</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for li in search_detail.recent_listings %}
+                <tr>
+                    <td>{{ li.title[:60] if li.title else '—' }}</td>
+                    <td>{{ li.price or '—' }}</td>
+                    <td>{{ li.surface or '—' }}</td>
+                    <td>{{ li.location or '—' }}</td>
+                    <td class="text-muted">{{ li.found_at.strftime('%d/%m/%Y %H:%M') if li.found_at else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('web.admin_delete_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer la recherche « {{ search_detail.label }} » ?')">
+        <button type="submit" class="btn btn-danger">🗑 Supprimer cette recherche</button>
+    </form>
+</div>
+
+{% else %}
+<!-- Searches List View -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">🔍 Recherches ({{ search_count }})</h2>
+        <form method="GET" action="{{ url_for('web.admin_searches') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" name="user" placeholder="Par utilisateur..." value="{{ user_filter }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+            <input type="text" name="source" placeholder="Par source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+            {% if user_filter or source_filter %}
+            <a href="{{ url_for('web.admin_searches') }}" class="btn btn-sm btn-ghost">Reset</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Label</th>
+                    <th>Utilisateur</th>
+                    <th>Source</th>
+                    <th>Annonces</th>
+                    <th>Topic ntfy</th>
+                    <th>Créée le</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in searches %}
+                <tr>
+                    <td class="text-muted">#{{ s.id }}</td>
+                    <td><strong>{{ s.label }}</strong></td>
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-avatar" style="width: 28px; height: 28px; font-size: 0.7rem;">{{ s.username[0].upper() }}</div>
+                            {{ s.username }}
+                        </div>
+                    </td>
+                    <td><span class="badge badge-source">{{ s.source }}</span></td>
+                    <td>{{ s.listing_count }}</td>
+                    <td><code class="token-mini">{{ s.ntfy_topic }}</code></td>
+                    <td class="text-muted">{{ s.created_at.strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
+                    <td>
+                        <a href="{{ url_for('web.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('web.admin_delete_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Supprimer « {{ s.label }} » ?')">
+                            <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not searches %}
+                <tr><td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">Aucune recherche trouvée</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+
+<!-- ============================================================
+     LISTINGS TAB
+     ============================================================ -->
+{% if active_tab == 'listings' %}
+
+{% if listing_detail %}
+<!-- Listing Detail View -->
+<a href="{{ url_for('web.admin_listings') }}" class="back-link">← Retour aux annonces</a>
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>🏠 Détails de l'annonce</h3>
+        <div class="detail-row">
+            <span class="detail-label">ID</span>
+            <span class="detail-value" style="font-size: 0.75rem;">{{ listing_detail.listing_id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Titre</span>
+            <span class="detail-value">{{ listing_detail.title or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Prix</span>
+            <span class="detail-value">{{ listing_detail.price or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Surface</span>
+            <span class="detail-value">{{ listing_detail.surface or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Pièces</span>
+            <span class="detail-value">{{ listing_detail.rooms or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Localisation</span>
+            <span class="detail-value">{{ listing_detail.location or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Source</span>
+            <span class="detail-value"><span class="badge badge-source">{{ listing_detail.source or '—' }}</span></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Agence</span>
+            <span class="detail-value">{{ listing_detail.agency or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Détectée le</span>
+            <span class="detail-value">{{ listing_detail.first_seen.strftime('%d/%m/%Y %H:%M') if listing_detail.first_seen else '—' }}</span>
+        </div>
+    </div>
+    <div class="detail-card">
+        <h3>🔗 Recherches liées ({{ listing_detail.linked_searches|length }})</h3>
+        {% if listing_detail.linked_searches %}
+        {% for ls in listing_detail.linked_searches %}
+        <div class="detail-row">
+            <span class="detail-label">{{ ls.label }} <span class="text-muted text-sm">({{ ls.username }})</span></span>
+            <span class="detail-value"><span class="badge badge-source">{{ ls.source }}</span></span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <span class="alert-badge warning">Orpheline — aucune recherche liée</span>
+        {% endif %}
+    </div>
+</div>
+
+{% if listing_detail.url %}
+<div class="card">
+    <h2>🔗 URL originale</h2>
+    <a href="{{ listing_detail.url }}" target="_blank" class="btn btn-primary">Voir l'annonce ↗</a>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('web.admin_delete_listing', listing_id=listing_detail.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
+        <button type="submit" class="btn btn-danger">🗑 Supprimer cette annonce</button>
+    </form>
+</div>
+
+{% else %}
+<!-- Listings List View -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">🏠 Annonces ({{ total }})</h2>
+        <form method="GET" action="{{ url_for('web.admin_listings') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+            <input type="text" name="source" placeholder="Source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+            {% if search_term or source_filter %}
+            <a href="{{ url_for('web.admin_listings') }}" class="btn btn-sm btn-ghost">Reset</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% if orphan_count > 0 %}
+    <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <span class="alert-badge warning">📭 {{ orphan_count }} annonce(s) orpheline(s)</span>
+        <form method="POST" action="{{ url_for('web.admin_cleanup_orphan') }}" class="inline-form" onsubmit="return confirm('Supprimer {{ orphan_count }} annonce(s) orpheline(s) ?')">
+            <button type="submit" class="btn btn-sm btn-danger">Nettoyer orphelines</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Titre</th>
+                    <th>Prix</th>
+                    <th>Surface</th>
+                    <th>Localisation</th>
+                    <th>Source</th>
+                    <th>Liée à</th>
+                    <th>Détectée le</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for li in listings %}
+                <tr>
+                    <td><strong>{{ li.title[:50] if li.title else '—' }}</strong></td>
+                    <td>{{ li.price or '—' }}</td>
+                    <td>{{ li.surface or '—' }}</td>
+                    <td>{{ li.location or '—' }}</td>
+                    <td><span class="badge badge-source">{{ li.source or '—' }}</span></td>
+                    <td>{{ li.linked_searches }} recherche(s)</td>
+                    <td class="text-muted">{{ li.first_seen.strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
+                    <td>
+                        <a href="{{ url_for('web.admin_listing_detail', listing_id=li.listing_id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('web.admin_delete_listing', listing_id=li.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
+                            <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not listings %}
+                <tr><td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">Aucune annonce trouvée</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('web.admin_listings', page=page-1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost">← Précédent</a>
+        {% endif %}
+        <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('web.admin_listings', page=page+1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost">Suivant →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endif %}
+
+<!-- ============================================================
+     DATABASE TAB
+     ============================================================ -->
+{% if active_tab == 'database' %}
+
+<!-- DB Overview -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">💾</div>
+        <div class="stat-value" style="font-size: 1.5rem;">{{ db_stats.db_size }}</div>
+        <div class="stat-label">Taille totale DB</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📋</div>
+        <div class="stat-value">{{ db_stats.tables|length }}</div>
+        <div class="stat-label">Tables</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔗</div>
+        <div class="stat-value">{{ db_stats.indexes|length }}</div>
+        <div class="stat-label">Index</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔌</div>
+        <div class="stat-value">{{ connections|length + 1 }}</div>
+        <div class="stat-label">Connexions actives</div>
+    </div>
+</div>
+
+<!-- Tables -->
+<div class="card">
+    <h2>📋 Tables</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Table</th>
+                    <th>Lignes</th>
+                    <th>Taille données</th>
+                    <th>Taille totale</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in db_stats.tables %}
+                <tr>
+                    <td><strong>{{ t.table_name }}</strong></td>
+                    <td>{{ "{:,}".format(t.row_count) }}</td>
+                    <td>{{ t.data_size }}</td>
+                    <td>{{ t.total_size }}</td>
+                    <td>
+                        <a href="{{ url_for('web.admin_table_detail', table_name=t.table_name) }}" class="btn btn-sm btn-ghost">Détails</a>
+                        <form method="POST" action="{{ url_for('web.admin_truncate_table') }}" class="inline-form" onsubmit="return confirm('Vider la table « {{ t.table_name }} » ? Cette action est irréversible.')">
+                            <input type="hidden" name="table_name" value="{{ t.table_name }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Vider</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Table Detail -->
+{% if table_details %}
+<div class="card">
+    <h2>📐 Détails de la table « {{ table_name }} »</h2>
+    <div class="detail-grid">
+        <div class="detail-card">
+            <h3>Colonnes ({{ table_details.columns|length }})</h3>
+            <div class="table-wrapper">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>Nom</th><th>Type</th><th>Nullable</th><th>Défaut</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for c in table_details.columns %}
+                        <tr>
+                            <td><strong>{{ c.column_name }}</strong></td>
+                            <td><code>{{ c.data_type }}</code></td>
+                            <td>{{ 'Oui' if c.is_nullable == 'YES' else 'Non' }}</td>
+                            <td class="text-muted">{{ c.column_default or '—' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="detail-card">
+            <h3>Index ({{ table_details.indexes|length }})</h3>
+            {% for idx in table_details.indexes %}
+            <div style="margin-bottom: 0.5rem;">
+                <code class="text-sm">{{ idx.indexname }}</code>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="detail-card">
+            <h3>Contraintes ({{ table_details.constraints|length }})</h3>
+            {% for c in table_details.constraints %}
+            <div style="margin-bottom: 0.5rem;">
+                <strong>{{ c.constraint_name }}</strong> <span class="badge">{{ c.constraint_type }}</span>
+                <div class="text-muted text-sm">{{ c.definition }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="detail-row" style="margin-top: 1rem;">
+        <span class="detail-label">Taille totale</span>
+        <span class="detail-value">{{ table_details.total_size }}</span>
+    </div>
+</div>
+{% endif %}
+
+<!-- Active Connections -->
+{% if connections %}
+<div class="card">
+    <h2>🔌 Connexions actives ({{ connections|length }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>PID</th>
+                    <th>Utilisateur</th>
+                    <th>Application</th>
+                    <th>Client</th>
+                    <th>État</th>
+                    <th>Depuis</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in connections %}
+                <tr>
+                    <td>{{ c.pid }}</td>
+                    <td>{{ c.usename }}</td>
+                    <td>{{ c.application_name or '—' }}</td>
+                    <td>{{ c.client_addr or '—' }}</td>
+                    <td><span class="badge">{{ c.state }}</span></td>
+                    <td class="text-muted">{{ c.backend_start.strftime('%H:%M:%S') if c.backend_start else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- SQL Query Editor -->
+<div class="card">
+    <h2>💻 Exécuter une requête SQL</h2>
+    <p class="text-muted text-sm" style="margin-bottom: 1rem;">Attention : toutes les requêtes sont autorisées (INSERT, UPDATE, DELETE, DROP...). Soyez prudent.</p>
+    <form method="POST" action="{{ url_for('web.admin_execute_query') }}">
+        <div class="query-editor">
+            <textarea name="sql" placeholder="SELECT * FROM users LIMIT 10;">{% if query_sql %}{{ query_sql }}{% endif %}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">▶ Exécuter</button>
+    </form>
+
+    {% if query_result is defined %}
+    <div class="query-result">
+        <p class="text-muted text-sm" style="margin-bottom: 0.5rem;">{{ query_row_count }} ligne(s) retournée(s)</p>
+        {% if query_result %}
+        <table>
+            <thead>
+                <tr>
+                    {% for key in query_result[0].keys() %}
+                    <th>{{ key }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in query_result %}
+                <tr>
+                    {% for val in row.values() %}
+                    <td>{{ val }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">Aucun résultat</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% endif %}
+
+<!-- ============================================================
+     LOGS TAB
+     ============================================================ -->
+{% if active_tab == 'logs' %}
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">📋 Logs d'activité ({{ total_logs }})</h2>
+        <form method="POST" action="{{ url_for('web.admin_purge_logs') }}" class="inline-form" onsubmit="return confirm('Supprimer les logs de plus de X jours ?')">
+            <input type="number" name="days" value="30" min="1" max="365" style="width: 70px; padding: 0.3rem 0.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.8rem;">
+            <button type="submit" class="btn btn-sm btn-danger">Purger anciens logs</button>
+        </form>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" action="{{ url_for('web.admin_logs') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <select name="action" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+            <option value="">Toutes les actions</option>
+            <option value="user_deleted" {% if action_filter == 'user_deleted' %}selected{% endif %}>user_deleted</option>
+            <option value="user_created" {% if action_filter == 'user_created' %}selected{% endif %}>user_created</option>
+            <option value="user_token_reset" {% if action_filter == 'user_token_reset' %}selected{% endif %}>user_token_reset</option>
+            <option value="search_deleted" {% if action_filter == 'search_deleted' %}selected{% endif %}>search_deleted</option>
+            <option value="listing_deleted" {% if action_filter == 'listing_deleted' %}selected{% endif %}>listing_deleted</option>
+            <option value="orphan_cleanup" {% if action_filter == 'orphan_cleanup' %}selected{% endif %}>orphan_cleanup</option>
+            <option value="cleanup_executed" {% if action_filter == 'cleanup_executed' %}selected{% endif %}>cleanup_executed</option>
+            <option value="db_query" {% if action_filter == 'db_query' %}selected{% endif %}>db_query</option>
+            <option value="table_truncated" {% if action_filter == 'table_truncated' %}selected{% endif %}>table_truncated</option>
+        </select>
+        <input type="date" name="date_from" value="{{ date_from }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+        <input type="date" name="date_to" value="{{ date_to }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+        <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+        {% if action_filter or date_from or date_to %}
+        <a href="{{ url_for('web.admin_logs') }}" class="btn btn-sm btn-ghost">Reset</a>
+        {% endif %}
+    </form>
+
+    {% if logs %}
+    {% for log in logs %}
+    <div class="log-entry">
+        <span class="log-icon">
+            {% if 'delete' in log.action %}🗑
+            {% elif 'create' in log.action %}➕
+            {% elif 'reset' in log.action %}🔄
+            {% elif 'cleanup' in log.action or 'purge' in log.action %}🧹
+            {% elif 'query' in log.action %}💻
+            {% elif 'truncate' in log.action %}⚠️
+            {% else %}📝
+            {% endif %}
+        </span>
+        <div class="log-content">
+            <div class="log-action"><span class="badge">{{ log.action }}</span></div>
+            {% if log.details %}
+            <div class="log-details">{{ log.details[:150] }}{% if log.details|length > 150 %}…{% endif %}</div>
+            {% endif %}
+        </div>
+        <div class="log-meta">
+            {% if log.performed_by %}
+            <div>par <strong>{{ log.performed_by }}</strong></div>
+            {% endif %}
+            <div>{{ log.created_at.strftime('%d/%m/%Y %H:%M') if log.created_at else '—' }}</div>
+        </div>
+    </div>
+    {% endfor %}
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('web.admin_logs', page=page-1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost">← Précédent</a>
+        {% endif %}
+        <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('web.admin_logs', page=page+1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost">Suivant →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>Aucun log</h3>
+        <p>Les actions admin apparaîtront ici.</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-    function copyFull(elementId, fullToken) {
-        navigator.clipboard.writeText(fullToken).then(() => {
+    function copyToken(elementId, fullToken) {
+        const text = fullToken || document.getElementById(elementId).textContent;
+        navigator.clipboard.writeText(text).then(() => {
             const btn = event.target;
             btn.textContent = 'Copié ✓';
             setTimeout(() => btn.textContent = 'Copier', 2000);

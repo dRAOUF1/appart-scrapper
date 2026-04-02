@@ -128,6 +128,26 @@ class Storage:
                     ON searches(user_id);
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS admin_logs (
+                    id            SERIAL PRIMARY KEY,
+                    action        TEXT NOT NULL,
+                    details       TEXT,
+                    performed_by  TEXT,
+                    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_admin_logs_created
+                    ON admin_logs(created_at);
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_admin_logs_action
+                    ON admin_logs(action);
+            """)
+
         self._conn.commit()
         logger.debug("Tables PostgreSQL initialisées")
 
@@ -413,6 +433,524 @@ class Storage:
         if deleted:
             logger.info(f"Supprimé {deleted} anciennes annonces (>{days} jours)")
         return deleted
+
+    def delete_listing(self, listing_id: str) -> bool:
+        """Delete a single listing by ID. Cascades to search_listings."""
+        with self._conn.cursor() as cur:
+            cur.execute("DELETE FROM listings WHERE listing_id = %s", (listing_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def get_orphan_listings_count(self) -> int:
+        """Count listings not linked to any search."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(*) AS cnt FROM listings l
+                   LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id
+                   WHERE sl.listing_id IS NULL"""
+            )
+            return cur.fetchone()[0]
+
+    def delete_orphan_listings(self) -> int:
+        """Delete all listings not linked to any search. Returns count."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """DELETE FROM listings WHERE listing_id IN (
+                    SELECT l.listing_id FROM listings l
+                    LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id
+                    WHERE sl.listing_id IS NULL
+                )"""
+            )
+            self._conn.commit()
+            deleted = cur.rowcount
+        if deleted:
+            logger.info(f"Supprimé {deleted} annonces orphelines")
+        return deleted
+
+    def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
+        """Get all listings with pagination and filters."""
+        query = """SELECT l.*, COUNT(sl.search_id) AS linked_searches
+                   FROM listings l
+                   LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id"""
+        conditions = []
+        params = []
+
+        if search_term:
+            conditions.append("(l.title ILIKE %s OR l.location ILIKE %s OR l.description ILIKE %s)")
+            params.extend([f"%{search_term}%", f"%{search_term}%", f"%{search_term}%"])
+        if source_filter:
+            conditions.append("l.source = %s")
+            params.append(source_filter)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " GROUP BY l.listing_id ORDER BY l.first_seen DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            return [dict(r) for r in cur.fetchall()]
+
+    def count_all_listings(self, search_term="", source_filter="") -> int:
+        """Count all listings with filters."""
+        query = "SELECT COUNT(DISTINCT l.listing_id) AS cnt FROM listings l"
+        conditions = []
+        params = []
+
+        if search_term:
+            conditions.append("(l.title ILIKE %s OR l.location ILIKE %s OR l.description ILIKE %s)")
+            params.extend([f"%{search_term}%", f"%{search_term}%", f"%{search_term}%"])
+        if source_filter:
+            conditions.append("l.source = %s")
+            params.append(source_filter)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        with self._conn.cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone()[0]
+
+    def get_listing_detail(self, listing_id: str) -> Optional[dict]:
+        """Get a single listing with its linked searches."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM listings WHERE listing_id = %s", (listing_id,))
+            listing = cur.fetchone()
+            if not listing:
+                return None
+            result = dict(listing)
+
+            cur.execute(
+                """SELECT s.id, s.label, s.source, u.username
+                   FROM search_listings sl
+                   JOIN searches s ON s.id = sl.search_id
+                   JOIN users u ON u.id = s.user_id
+                   WHERE sl.listing_id = %s""",
+                (listing_id,),
+            )
+            result["linked_searches"] = [dict(r) for r in cur.fetchall()]
+            return result
+
+    def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
+        """Get all searches with user info and listing counts."""
+        query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.created_at,
+                          u.id AS user_id, u.username,
+                          COUNT(sl.listing_id) AS listing_count
+                   FROM searches s
+                   JOIN users u ON u.id = s.user_id
+                   LEFT JOIN search_listings sl ON sl.search_id = s.id"""
+        conditions = []
+        params = []
+
+        if user_filter:
+            conditions.append("u.username ILIKE %s")
+            params.append(f"%{user_filter}%")
+        if source_filter:
+            conditions.append("s.source = %s")
+            params.append(source_filter)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " GROUP BY s.id, u.id ORDER BY s.created_at DESC"
+
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_search_detail(self, search_id: int) -> Optional[dict]:
+        """Get a search with full details including user info and recent listings."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT s.*, u.username
+                   FROM searches s
+                   JOIN users u ON u.id = s.user_id
+                   WHERE s.id = %s""",
+                (search_id,),
+            )
+            search = cur.fetchone()
+            if not search:
+                return None
+            result = dict(search)
+
+            cur.execute(
+                """SELECT l.*, sl.found_at
+                   FROM listings l
+                   JOIN search_listings sl ON sl.listing_id = l.listing_id
+                   WHERE sl.search_id = %s
+                   ORDER BY sl.found_at DESC LIMIT 10""",
+                (search_id,),
+            )
+            result["recent_listings"] = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM search_listings WHERE search_id = %s",
+                (search_id,),
+            )
+            result["total_listings"] = cur.fetchone()["cnt"]
+            return result
+
+    def delete_search_admin(self, search_id: int) -> bool:
+        """Delete a search as admin. Returns True if deleted."""
+        with self._conn.cursor() as cur:
+            cur.execute("DELETE FROM searches WHERE id = %s", (search_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def delete_user(self, user_id: int) -> bool:
+        """Delete a user and all associated data (cascades)."""
+        with self._conn.cursor() as cur:
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def reset_user_token(self, user_id: int) -> str:
+        """Generate a new API token for a user. Returns the new token."""
+        new_token = secrets.token_urlsafe(32)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET api_token = %s WHERE id = %s",
+                (new_token, user_id),
+            )
+            self._conn.commit()
+        return new_token
+
+    def get_user_detail(self, user_id: int) -> Optional[dict]:
+        """Get a user with full stats and recent activity."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, username, api_token, created_at FROM users WHERE id = %s",
+                (user_id,),
+            )
+            user = cur.fetchone()
+            if not user:
+                return None
+            result = dict(user)
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM searches WHERE user_id = %s",
+                (user_id,),
+            )
+            result["search_count"] = cur.fetchone()["cnt"]
+
+            cur.execute(
+                """SELECT COUNT(DISTINCT sl.listing_id) AS cnt
+                   FROM search_listings sl
+                   JOIN searches s ON s.id = sl.search_id
+                   WHERE s.user_id = %s""",
+                (user_id,),
+            )
+            result["listing_count"] = cur.fetchone()["cnt"]
+
+            cur.execute(
+                """SELECT s.id, s.label, s.source, s.created_at,
+                          COUNT(sl.listing_id) AS listing_count
+                   FROM searches s
+                   LEFT JOIN search_listings sl ON sl.search_id = s.id
+                   WHERE s.user_id = %s
+                   GROUP BY s.id
+                   ORDER BY s.created_at DESC""",
+                (user_id,),
+            )
+            result["searches"] = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT l.title, l.price, l.location, l.first_seen, s.label AS search_label
+                   FROM search_listings sl
+                   JOIN searches s ON s.id = sl.search_id
+                   JOIN listings l ON l.listing_id = sl.listing_id
+                   WHERE s.user_id = %s
+                   ORDER BY sl.found_at DESC LIMIT 10""",
+                (user_id,),
+            )
+            result["recent_listings"] = [dict(r) for r in cur.fetchall()]
+            return result
+
+    def get_enhanced_admin_stats(self) -> dict:
+        """Get comprehensive admin statistics."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM users")
+            users = cur.fetchone()["c"]
+
+            cur.execute("SELECT COUNT(*) AS c FROM searches")
+            searches = cur.fetchone()["c"]
+
+            cur.execute("SELECT COUNT(*) AS c FROM listings")
+            listings = cur.fetchone()["c"]
+
+            cur.execute("SELECT COUNT(*) AS c FROM search_listings")
+            search_listings = cur.fetchone()["c"]
+
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM search_listings WHERE DATE(found_at) = CURRENT_DATE"
+            )
+            today = cur.fetchone()["c"]
+
+            cur.execute(
+                """SELECT COUNT(DISTINCT l.listing_id) AS c FROM listings l
+                   LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id
+                   WHERE sl.listing_id IS NULL"""
+            )
+            orphans = cur.fetchone()["c"]
+
+            cur.execute(
+                "SELECT COALESCE(AVG(cnt), 0) AS avg_listings FROM (SELECT COUNT(*) AS cnt FROM search_listings GROUP BY search_id) sub"
+            )
+            avg_listings_per_search = round(cur.fetchone()["avg_listings"], 1)
+
+            cur.execute(
+                """SELECT u.username, COUNT(DISTINCT sl.listing_id) AS listing_count
+                   FROM users u
+                   JOIN searches s ON s.user_id = u.id
+                   JOIN search_listings sl ON sl.search_id = s.id
+                   GROUP BY u.id, u.username
+                   ORDER BY listing_count DESC LIMIT 5"""
+            )
+            top_users = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT s.id, s.label, u.username, COUNT(sl.listing_id) AS listing_count
+                   FROM searches s
+                   JOIN users u ON u.id = s.user_id
+                   JOIN search_listings sl ON sl.search_id = s.id
+                   GROUP BY s.id, u.username
+                   ORDER BY listing_count DESC LIMIT 5"""
+            )
+            top_searches = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT DATE(sl.found_at) AS day, COUNT(DISTINCT sl.listing_id) AS count
+                   FROM search_listings sl
+                   WHERE sl.found_at >= CURRENT_DATE - INTERVAL '7 days'
+                   GROUP BY DATE(sl.found_at)
+                   ORDER BY day"""
+            )
+            activity_7d = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT source, COUNT(*) AS cnt FROM searches
+                   GROUP BY source ORDER BY cnt DESC"""
+            )
+            sources_breakdown = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM users WHERE id NOT IN (SELECT DISTINCT user_id FROM searches)"
+            )
+            users_without_searches = cur.fetchone()["c"]
+
+        return {
+            "users": users,
+            "searches": searches,
+            "total_listings": listings,
+            "search_listings": search_listings,
+            "new_today": today,
+            "orphan_listings": orphans,
+            "avg_listings_per_search": avg_listings_per_search,
+            "top_users": top_users,
+            "top_searches": top_searches,
+            "activity_7d": activity_7d,
+            "sources_breakdown": sources_breakdown,
+            "users_without_searches": users_without_searches,
+        }
+
+    def log_admin_action(self, action: str, details: str = "", performed_by: str = "") -> None:
+        """Log an admin action."""
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO admin_logs (action, details, performed_by) VALUES (%s, %s, %s)",
+                    (action, details, performed_by),
+                )
+                self._conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to log admin action: {e}")
+
+    def get_admin_logs(self, limit=50, offset=0, action_filter="", date_from="", date_to="") -> list[dict]:
+        """Get admin activity logs."""
+        query = "SELECT * FROM admin_logs"
+        conditions = []
+        params = []
+
+        if action_filter:
+            conditions.append("action = %s")
+            params.append(action_filter)
+        if date_from:
+            conditions.append("created_at >= %s")
+            params.append(date_from)
+        if date_to:
+            conditions.append("created_at <= %s")
+            params.append(date_to)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            return [dict(r) for r in cur.fetchall()]
+
+    def count_admin_logs(self, action_filter="", date_from="", date_to="") -> int:
+        """Count admin logs with filters."""
+        query = "SELECT COUNT(*) AS cnt FROM admin_logs"
+        conditions = []
+        params = []
+
+        if action_filter:
+            conditions.append("action = %s")
+            params.append(action_filter)
+        if date_from:
+            conditions.append("created_at >= %s")
+            params.append(date_from)
+        if date_to:
+            conditions.append("created_at <= %s")
+            params.append(date_to)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        with self._conn.cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone()[0]
+
+    def purge_old_logs(self, days: int = 30) -> int:
+        """Delete logs older than N days. Returns count."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM admin_logs WHERE created_at < NOW() - INTERVAL '{days} days'"
+            )
+            self._conn.commit()
+            deleted = cur.rowcount
+        if deleted:
+            logger.info(f"Purgé {deleted} anciens logs admin")
+        return deleted
+
+    def get_db_stats(self) -> dict:
+        """Get database size and per-table statistics."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT pg_size_pretty(pg_database_size(current_database())) AS size")
+            db_size = cur.fetchone()["size"]
+
+            cur.execute(
+                """SELECT relname AS table_name,
+                          n_live_tup AS row_count,
+                          pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+                          pg_size_pretty(pg_relation_size(relid)) AS data_size
+                   FROM pg_stat_user_tables
+                   ORDER BY pg_total_relation_size(relid) DESC"""
+            )
+            tables = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT schemaname, tablename, indexname
+                   FROM pg_indexes
+                   WHERE schemaname = 'public'
+                   ORDER BY tablename, indexname"""
+            )
+            raw_indexes = cur.fetchall()
+
+            indexes = []
+            for idx in raw_indexes:
+                idx_dict = dict(idx)
+                cur.execute(
+                    "SELECT pg_size_pretty(pg_relation_size(%s::regclass)) AS size",
+                    (idx_dict["indexname"],),
+                )
+                size_row = cur.fetchone()
+                idx_dict["index_size"] = size_row["size"] if size_row else "N/A"
+                indexes.append(idx_dict)
+
+        return {
+            "db_size": db_size,
+            "tables": tables,
+            "indexes": indexes,
+        }
+
+    def get_table_details(self, table_name: str) -> dict:
+        """Get columns, constraints, and indexes for a specific table."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT column_name, data_type, is_nullable, column_default,
+                          character_maximum_length
+                   FROM information_schema.columns
+                   WHERE table_name = %s AND table_schema = 'public'
+                   ORDER BY ordinal_position""",
+                (table_name,),
+            )
+            columns = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT indexname, indexdef
+                   FROM pg_indexes
+                   WHERE tablename = %s AND schemaname = 'public'""",
+                (table_name,),
+            )
+            indexes = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                """SELECT conname AS constraint_name, contype AS constraint_type,
+                          pg_get_constraintdef(oid) AS definition
+                   FROM pg_constraint
+                   WHERE conrelid = %s::regclass""",
+                (table_name,),
+            )
+            constraints = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                "SELECT pg_size_pretty(pg_total_relation_size(%s::regclass)) AS total_size",
+                (table_name,),
+            )
+            size_row = cur.fetchone()
+            total_size = size_row["total_size"] if size_row else "N/A"
+
+        return {
+            "columns": columns,
+            "indexes": indexes,
+            "constraints": constraints,
+            "total_size": total_size,
+        }
+
+    def execute_query(self, sql: str) -> tuple[list[dict], int, Optional[str]]:
+        """Execute a SQL query. Returns (rows, row_count, error)."""
+        try:
+            with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                self._conn.commit()
+                if cur.description:
+                    rows = cur.fetchall()
+                    row_count = cur.rowcount
+                    return [dict(r) for r in rows], row_count, None
+                else:
+                    return [], cur.rowcount, None
+        except Exception as e:
+            self._conn.rollback()
+            return [], 0, str(e)
+
+    def get_active_connections(self) -> list[dict]:
+        """Get active PostgreSQL connections."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT pid, usename, application_name, client_addr,
+                          backend_start, state, query, query_start
+                   FROM pg_stat_activity
+                   WHERE datname = current_database() AND pid != pg_backend_pid()
+                   ORDER BY backend_start"""
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def truncate_table(self, table_name: str) -> bool:
+        """Truncate a table. Returns True if successful."""
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(f"TRUNCATE TABLE {table_name} CASCADE")
+                self._conn.commit()
+                return True
+        except Exception as e:
+            self._conn.rollback()
+            logger.error(f"Failed to truncate {table_name}: {e}")
+            return False
 
     def close(self) -> None:
         """Close the database connection."""
