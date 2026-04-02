@@ -11,6 +11,12 @@ import os
 import sys
 import time
 from functools import wraps
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env file before anything else
+load_dotenv(Path(__file__).parent / ".env")
 
 from flask import (
     Flask, Blueprint, request, jsonify, render_template,
@@ -53,7 +59,7 @@ def create_app() -> Flask:
 
     # Shared objects stored on app
     app.config["APP_CONFIG"] = config
-    app.storage = Storage(db_path=config.storage.db_path)
+    app.storage = Storage(database_url=config.database.database_url)
     app.notifier = Notifier(
         server=config.ntfy.server,
         priority=config.ntfy.priority,

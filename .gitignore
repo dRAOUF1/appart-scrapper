@@ -1,6 +1,6 @@
 venv/*
 browser_profile_uc/*
 **/__pycache__/*
-listings.db
+.env
 seloger_scraper.log
-.gitignore
+.opencode

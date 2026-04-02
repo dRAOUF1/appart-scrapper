@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -16,27 +17,36 @@ class NtfyConfig(BaseModel):
     priority: str = "default"
 
 
-class StorageConfig(BaseModel):
-    """SQLite storage configuration."""
-    db_path: str = "listings.db"
+class DatabaseConfig(BaseModel):
+    """PostgreSQL database configuration."""
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/appart"
 
 
 class AppConfig(BaseModel):
     """Root application configuration."""
     ntfy: NtfyConfig = Field(default_factory=NtfyConfig)
-    storage: StorageConfig = Field(default_factory=StorageConfig)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     log_level: str = "INFO"
 
 
 def load_config(config_path: str | Path = "config.yaml") -> AppConfig:
-    """Load and validate configuration from a YAML file."""
+    """Load and validate configuration from a YAML file.
+
+    Environment variable DATABASE_URL overrides config.yaml.
+    """
     config_path = Path(config_path)
     if not config_path.exists():
         logger.warning(f"Config introuvable ({config_path}), utilisation des défauts")
-        return AppConfig()
+        raw = {}
+    else:
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+    # Override database_url with env var if present
+    env_db_url = os.environ.get("DATABASE_URL")
+    if env_db_url:
+        raw["database"] = {"database_url": env_db_url}
+        logger.info("DATABASE_URL chargé depuis les variables d'environnement")
 
     try:
         config = AppConfig(**raw)

@@ -8,8 +8,8 @@ ntfy:
   priority: "default"
 
 # Configuration du stockage
-storage:
-  db_path: "listings.db"
+database:
+  database_url: "postgresql://postgres:postgres@localhost:5432/appart"
 
 # Logging
 log_level: "INFO"
