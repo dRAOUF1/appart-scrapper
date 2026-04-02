@@ -90,7 +90,7 @@ def create_app() -> Flask:
 
         def scheduler_loop():
             while True:
-                time.sleep(4 * 24 * 60 * 60)  # 4 jours en secondes
+                time.sleep(24 * 60 * 60)  # 1 jour en secondes
                 try:
                     deleted = app.storage.delete_old_listings(days=4)
                     if deleted:
