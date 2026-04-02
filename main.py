@@ -20,7 +20,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from flask import (
     Flask, Blueprint, request, jsonify, render_template,
-    redirect, url_for, session, flash, g,
+    redirect, url_for, session, flash, g, current_app,
 )
 from loguru import logger
 
@@ -73,6 +73,46 @@ def create_app() -> Flask:
     @app.context_processor
     def inject_admin():
         return {"admin_username": os.environ.get("ADMIN_USERNAME", "admin")}
+
+    # Run cleanup at startup
+    def run_startup_cleanup():
+        try:
+            deleted = app.storage.delete_old_listings(days=4)
+            if deleted:
+                logger.info(f"Startup cleanup: {deleted} anciennes annonces supprimées")
+        except Exception as e:
+            logger.error(f"Erreur lors du cleanup au démarrage: {e}")
+
+    # Start background scheduler for periodic cleanup (every 4 days)
+    def start_cleanup_scheduler():
+        import threading
+        import time
+
+        def scheduler_loop():
+            while True:
+                time.sleep(4 * 24 * 60 * 60)  # 4 jours en secondes
+                try:
+                    deleted = app.storage.delete_old_listings(days=4)
+                    if deleted:
+                        logger.info(f"Scheduler cleanup: {deleted} anciennes annonces supprimées")
+                except Exception as e:
+                    logger.error(f"Erreur lors du cleanup planifié: {e}")
+
+        t = threading.Thread(target=scheduler_loop, daemon=True)
+        t.start()
+
+    # Only run startup cleanup and scheduler in the first worker
+    # Use a file lock to prevent duplicate execution across Gunicorn workers
+    lock_file = "/tmp/appart_cleanup_started"
+    if not os.path.exists(lock_file):
+        try:
+            with open(lock_file, "w") as f:
+                f.write(str(os.getpid()))
+            run_startup_cleanup()
+            start_cleanup_scheduler()
+            logger.info("Cleanup scheduler démarré (toutes les 4 jours)")
+        except Exception as e:
+            logger.error(f"Erreur lors du démarrage du scheduler: {e}")
 
     # Register blueprints
     app.register_blueprint(api_bp, url_prefix="/api")
@@ -294,9 +334,19 @@ def get_listings(search_id: int):
 @require_token
 def get_stats():
     """Get user statistics."""
-    from flask import current_app
     stats = current_app.storage.get_user_stats(g.user["id"])
     return jsonify(stats), 200
+
+
+# --- Cleanup ---
+
+@api_bp.route("/cleanup", methods=["POST"])
+@require_token
+def cleanup_listings():
+    """Delete listings older than 4 days."""
+    days = int(request.args.get("days", 4))
+    deleted = current_app.storage.delete_old_listings(days=days)
+    return jsonify({"deleted": deleted, "days": days}), 200
 
 
 # ======================================================================
@@ -481,6 +531,16 @@ def listings(search_id: int):
 @web_bp.route("/health")
 def health():
     return "OK", 200
+
+
+@web_bp.route("/cleanup", methods=["POST"])
+@require_login
+def cleanup_web():
+    """Web route to trigger cleanup from dashboard."""
+    days = int(request.form.get("days", 4))
+    deleted = current_app.storage.delete_old_listings(days=days)
+    flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
+    return redirect(url_for("web.dashboard"))
 
 
 # ======================================================================

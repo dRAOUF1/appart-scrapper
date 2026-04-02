@@ -36,6 +36,15 @@
     </div>
 </div>
 
+<!-- Cleanup -->
+<div class="card">
+    <h2>🧹 Nettoyage des annonces</h2>
+    <p class="text-muted">Les annonces sont automatiquement supprimées après 4 jours.</p>
+    <form method="POST" action="{{ url_for('web.cleanup') }}" onsubmit="return confirm('Supprimer toutes les annonces de plus de 4 jours ?')">
+        <button type="submit" class="btn btn-primary">Nettoyer maintenant</button>
+    </form>
+</div>
+
 <!-- Recent listings -->
 {% if recent %}
 <div class="section">

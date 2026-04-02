@@ -402,6 +402,18 @@ class Storage:
             rows = cur.fetchall()
             return [dict(r) for r in rows]
 
+    def delete_old_listings(self, days: int = 4) -> int:
+        """Delete listings older than N days. Returns count of deleted listings."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM listings WHERE first_seen < NOW() - INTERVAL '{days} days'",
+            )
+            self._conn.commit()
+            deleted = cur.rowcount
+        if deleted:
+            logger.info(f"Supprimé {deleted} anciennes annonces (>{days} jours)")
+        return deleted
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:
