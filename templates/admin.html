@@ -53,7 +53,7 @@
                     <td><strong>{{ u.username }}</strong></td>
                     <td>{{ u.search_count }}</td>
                     <td>{{ u.listing_count }}</td>
-                    <td class="text-muted">{{ u.created_at[:16] if u.created_at else '—' }}</td>
+                    <td class="text-muted">{{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '—' }}</td>
                     <td>
                         <code class="token-mini" id="tok-{{ u.id }}">{{ u.api_token[:20] }}…</code>
                         <button class="btn btn-sm btn-ghost"
