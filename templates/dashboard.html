@@ -70,6 +70,11 @@
                 {% endif %}
                 <div class="listing-meta">
                     <span class="badge">{{ li.search_label }}</span>
+                    {% if li.creation_date|parse_iso_date %}
+                    <span class="text-muted text-sm">Publiée le {{ li.creation_date|parse_iso_date.strftime('%d/%m/%Y') }}</span>
+                    {% elif li.found_at %}
+                    <span class="text-muted text-sm">{{ li.found_at.strftime('%d/%m/%Y') }}</span>
+                    {% endif %}
                     <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
                 </div>
             </div>

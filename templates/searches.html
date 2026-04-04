@@ -82,10 +82,10 @@
 <!-- Existing searches -->
 {% if searches %}
 <div class="section">
-    <h2>Recherches actives ({{ searches|length }})</h2>
+    <h2>Recherches ({{ searches|length }})</h2>
     <div class="search-grid">
     {% for s in searches %}
-    <div class="search-card-v2">
+    <div class="search-card-v2{% if not s.is_active %} search-card-inactive{% endif %}">
         <!-- Card header -->
         <div class="search-card-header">
             <div class="search-card-title">
@@ -94,11 +94,19 @@
                     <span class="badge badge-source">{{ s.source }}</span>
                     <span class="badge">{{ s.listing_count }} annonce{{ 's' if s.listing_count != 1 else '' }}</span>
                     <span class="badge badge-accent">⏱ {{ s.scrape_interval or 5 }}min</span>
+                    {% if s.is_active %}
+                    <span class="badge badge-active">Actif</span>
+                    {% else %}
+                    <span class="badge badge-inactive">Inactif</span>
+                    {% endif %}
                 </div>
             </div>
             <!-- Status indicator -->
             <div class="search-status">
-                {% if s.last_scraped %}
+                {% if not s.is_active %}
+                    <span class="status-dot status-disabled"></span>
+                    <span class="status-text">Désactivé</span>
+                {% elif s.last_scraped %}
                     {% set minutes_ago = ((now() - s.last_scraped).total_seconds() / 60) | int if now else 999 %}
                     {% if minutes_ago < (s.scrape_interval or 5) %}
                         <span class="status-dot status-active"></span>
@@ -145,6 +153,17 @@
 
         <!-- Actions -->
         <div class="search-card-actions">
+            <form method="POST" action="{{ url_for('web.toggle_search_active_web', search_id=s.id) }}">
+                <button type="submit" class="action-btn {% if s.is_active %}action-pause{% else %}action-scrape{% endif %}" title="{% if s.is_active %}Désactiver{% else %}Activer{% endif %}">
+                    {% if s.is_active %}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                    <span>Pause</span>
+                    {% else %}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <span>Activer</span>
+                    {% endif %}
+                </button>
+            </form>
             <a href="{{ url_for('web.listings', search_id=s.id) }}" class="action-btn" title="Voir les annonces">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                 <span>Annonces</span>

@@ -1059,6 +1059,15 @@ code {
     border-color: rgba(108, 92, 231, 0.4);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
+.search-card-inactive {
+    opacity: 0.6;
+    border-color: rgba(92, 96, 120, 0.4);
+}
+.search-card-inactive:hover {
+    opacity: 0.8;
+    border-color: rgba(108, 92, 231, 0.3);
+    box-shadow: none;
+}
 
 .search-card-header {
     display: flex;
@@ -1079,6 +1088,14 @@ code {
 .badge-accent {
     background: rgba(0, 206, 201, 0.15);
     color: var(--accent);
+}
+.badge-active {
+    background: rgba(0, 184, 148, 0.15);
+    color: var(--success);
+}
+.badge-inactive {
+    background: rgba(231, 76, 60, 0.15);
+    color: var(--danger);
 }
 
 /* Status indicator */
@@ -1109,6 +1126,11 @@ code {
     font-size: 0.75rem;
     color: var(--text-muted);
     white-space: nowrap;
+}
+
+.status-disabled {
+    background: var(--danger);
+    box-shadow: 0 0 8px rgba(231, 76, 60, 0.4);
 }
 
 @keyframes pulse-green {
@@ -1183,6 +1205,11 @@ code {
     border-color: var(--danger);
     background: rgba(231, 76, 60, 0.1);
     color: var(--danger);
+}
+.action-pause:hover {
+    border-color: var(--warning);
+    background: rgba(253, 203, 110, 0.1);
+    color: var(--warning);
 }
 
 /* Log status badges */

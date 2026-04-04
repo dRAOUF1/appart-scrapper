@@ -66,6 +66,18 @@ def create_app() -> Flask:
         priority=config.ntfy.priority,
     )
 
+    from datetime import datetime
+
+    @app.template_filter("parse_iso_date")
+    def parse_iso_date(value):
+        if not value:
+            return None
+        try:
+            value = value.replace("Z", "+00:00")
+            return datetime.fromisoformat(value)
+        except (ValueError, AttributeError):
+            return None
+
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -118,6 +130,8 @@ def create_app() -> Flask:
             for user in all_users:
                 searches = flask_app.storage.get_user_searches(user["id"])
                 for s in searches:
+                    if not s.get("is_active", True):
+                        continue
                     criteria = s.get("criteria", {})
                     if not criteria or not isinstance(criteria, dict):
                         continue
@@ -378,6 +392,19 @@ def update_criteria(search_id: int):
     if "scrape_interval" in data:
         current_app.storage.update_scrape_interval(search_id, data["scrape_interval"])
     return jsonify({"ok": True}), 200
+
+
+@api_bp.route("/searches/<int:search_id>/toggle-active", methods=["POST"])
+@require_token
+def toggle_search_active(search_id: int):
+    from flask import current_app
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    new_value = current_app.storage.toggle_search_active(search_id)
+    if new_value is None:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    return jsonify({"ok": True, "is_active": new_value}), 200
 
 
 @api_bp.route("/scrape/<int:search_id>", methods=["POST"])
@@ -648,6 +675,24 @@ def update_interval_web(search_id: int):
         interval = 1
     storage.update_scrape_interval(search_id, interval)
     flash(f"Intervalle mis à jour : {interval} minutes", "success")
+    return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/toggle-active", methods=["POST"])
+@require_login
+def toggle_search_active_web(search_id: int):
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+    new_value = storage.toggle_search_active(search_id)
+    if new_value is None:
+        flash("Recherche introuvable", "error")
+    else:
+        status = "activée" if new_value else "désactivée"
+        flash(f"Recherche {status}", "success")
     return redirect(url_for("web.searches"))
 
 

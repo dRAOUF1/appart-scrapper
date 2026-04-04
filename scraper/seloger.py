@@ -222,6 +222,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 main_desc = item.get("mainDescription", {})
                 tags = item.get("tags", {})
                 raw_data = item.get("rawData", {})
+                gallery = item.get("gallery", {})
                 media = item.get("media", {})
 
                 surface_data = raw_data.get("surface", {})
@@ -243,7 +244,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                     "district": location.get("district"),
                     "zipCode": location.get("zipCode"),
                     "url": item.get("url", ""),
-                    "photos": media.get("photos", []),
+                    "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
                     "agency": card_provider.get("title"),
                     "isPrivate": provider.get("isPrivateOwner", False),
                     "phone": provider.get("phoneNumbers", []),

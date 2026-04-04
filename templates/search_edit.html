@@ -27,6 +27,27 @@
     </div>
 </div>
 
+<!-- Active/Inactive toggle -->
+<div class="card">
+    <h2>⏯️ État de la recherche</h2>
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            {% if search.is_active %}
+            <p style="color: var(--success); font-weight: 600;">✅ Recherche active — Le scraping s'exécute selon l'intervalle configuré.</p>
+            {% else %}
+            <p style="color: var(--danger); font-weight: 600;">⏸️ Recherche inactive — Le scraping est suspendu.</p>
+            {% endif %}
+        </div>
+        <form method="POST" action="{{ url_for('web.toggle_search_active_web', search_id=search.id) }}">
+            {% if search.is_active %}
+            <button type="submit" class="btn btn-warning">⏸️ Désactiver</button>
+            {% else %}
+            <button type="submit" class="btn btn-success">▶️ Activer</button>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
 <!-- Edit form -->
 <div class="card">
     <h2>⚙️ Paramètres de la recherche</h2>

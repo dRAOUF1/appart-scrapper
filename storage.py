@@ -288,6 +288,9 @@ class Storage:
             cur.execute("""
                 ALTER TABLE searches ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP;
             """)
+            cur.execute("""
+                ALTER TABLE searches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+            """)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scrape_logs (
@@ -382,13 +385,13 @@ class Storage:
     # Searches
     # ------------------------------------------------------------------
 
-    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5) -> dict:
+    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True) -> dict:
         """Create a search configuration for a user."""
         criteria_json = json.dumps(criteria or {})
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria, scrape_interval) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                (user_id, label, ntfy_topic, source, criteria_json, scrape_interval),
+                "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria, scrape_interval, is_active) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (user_id, label, ntfy_topic, source, criteria_json, scrape_interval, is_active),
             )
             row = cur.fetchone()
             self._conn.commit()
@@ -400,6 +403,7 @@ class Storage:
                 "source": source,
                 "criteria": criteria or {},
                 "scrape_interval": scrape_interval,
+                "is_active": is_active,
             }
 
     def update_search_criteria(self, search_id: int, criteria: dict) -> bool:
@@ -413,7 +417,7 @@ class Storage:
             self._conn.commit()
             return cur.rowcount > 0
 
-    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None) -> bool:
+    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None) -> bool:
         """Update multiple fields of a search at once."""
         fields = []
         params = []
@@ -429,6 +433,9 @@ class Storage:
         if scrape_interval is not None:
             fields.append("scrape_interval = %s")
             params.append(scrape_interval)
+        if is_active is not None:
+            fields.append("is_active = %s")
+            params.append(is_active)
         if not fields:
             return False
         params.extend([search_id, user_id])
@@ -465,7 +472,7 @@ class Storage:
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
-                          s.scrape_interval, s.last_scraped, s.created_at,
+                          s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
                           COUNT(sl.listing_id) AS listing_count
                    FROM searches s
                    LEFT JOIN search_listings sl ON sl.search_id = s.id
@@ -487,7 +494,7 @@ class Storage:
         """Get a single search by id (including user_id for auth checks)."""
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, user_id, label, ntfy_topic, source, criteria, scrape_interval, last_scraped, created_at FROM searches WHERE id = %s",
+                "SELECT id, user_id, label, ntfy_topic, source, criteria, scrape_interval, last_scraped, created_at, is_active FROM searches WHERE id = %s",
                 (search_id,),
             )
             row = cur.fetchone()
@@ -505,10 +512,21 @@ class Storage:
             self._conn.commit()
             return cur.rowcount > 0
 
+    def toggle_search_active(self, search_id: int) -> bool | None:
+        """Toggle is_active for a search. Returns new value or None if not found."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "UPDATE searches SET is_active = NOT is_active WHERE id = %s RETURNING is_active",
+                (search_id,),
+            )
+            row = cur.fetchone()
+            self._conn.commit()
+            return row["is_active"] if row else None
+
     def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
         """Get all searches with user info and listing counts."""
         query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
-                          s.scrape_interval, s.last_scraped, s.created_at,
+                          s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
                           u.id AS user_id, u.username,
                           COUNT(sl.listing_id) AS listing_count
                    FROM searches s
