@@ -289,6 +289,31 @@ class Storage:
                 ALTER TABLE searches ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP;
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scrape_logs (
+                    id              SERIAL PRIMARY KEY,
+                    search_id       INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
+                    started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at    TIMESTAMP,
+                    status          TEXT NOT NULL,
+                    listings_found  INTEGER DEFAULT 0,
+                    new_listings    INTEGER DEFAULT 0,
+                    error_message   TEXT,
+                    details         JSONB DEFAULT '{}',
+                    duration_sec    FLOAT
+                );
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
+                    ON scrape_logs(search_id);
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
+                    ON scrape_logs(started_at DESC);
+            """)
+
         self._conn.commit()
         logger.debug("Tables PostgreSQL initialisées")
 
@@ -367,6 +392,33 @@ class Storage:
             cur.execute(
                 "UPDATE searches SET criteria = %s WHERE id = %s",
                 (criteria_json, search_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None) -> bool:
+        """Update multiple fields of a search at once."""
+        fields = []
+        params = []
+        if label is not None:
+            fields.append("label = %s")
+            params.append(label)
+        if ntfy_topic is not None:
+            fields.append("ntfy_topic = %s")
+            params.append(ntfy_topic)
+        if criteria is not None:
+            fields.append("criteria = %s")
+            params.append(json.dumps(criteria))
+        if scrape_interval is not None:
+            fields.append("scrape_interval = %s")
+            params.append(scrape_interval)
+        if not fields:
+            return False
+        params.extend([search_id, user_id])
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE searches SET {', '.join(fields)} WHERE id = %s AND user_id = %s",
+                params,
             )
             self._conn.commit()
             return cur.rowcount > 0
@@ -503,6 +555,86 @@ class Storage:
             )
             result["total_listings"] = cur.fetchone()["cnt"]
             return result
+
+    # ------------------------------------------------------------------
+    # Scrape Logs
+    # ------------------------------------------------------------------
+
+    def create_scrape_log(self, search_id: int, status: str, listings_found: int = 0, new_listings: int = 0, error_message: str = "", details: dict | None = None, started_at = None) -> int:
+        """Create a scrape log entry. Returns the log id."""
+        import datetime
+        now = started_at or datetime.datetime.utcnow()
+        completed_at = datetime.datetime.utcnow()
+        duration = (completed_at - now).total_seconds() if started_at else 0
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """INSERT INTO scrape_logs
+                   (search_id, started_at, completed_at, status, listings_found, new_listings, error_message, details, duration_sec)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   RETURNING id""",
+                (search_id, now, completed_at, status, listings_found, new_listings, error_message, json.dumps(details or {}), duration),
+            )
+            row = cur.fetchone()
+            self._conn.commit()
+            return row["id"]
+
+    def get_scrape_logs(self, search_id: int, limit: int = 50, offset: int = 0, status_filter: str = "") -> list[dict]:
+        """Get scrape logs for a search."""
+        query = "SELECT * FROM scrape_logs WHERE search_id = %s"
+        params = [search_id]
+        if status_filter:
+            query += " AND status = %s"
+            params.append(status_filter)
+        query += " ORDER BY started_at DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            result = []
+            for r in cur.fetchall():
+                d = dict(r)
+                if isinstance(d.get("details"), str):
+                    d["details"] = json.loads(d["details"])
+                result.append(d)
+            return result
+
+    def count_scrape_logs(self, search_id: int, status_filter: str = "") -> int:
+        """Count scrape logs for a search."""
+        query = "SELECT COUNT(*) AS cnt FROM scrape_logs WHERE search_id = %s"
+        params = [search_id]
+        if status_filter:
+            query += " AND status = %s"
+            params.append(status_filter)
+        with self._conn.cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone()[0]
+
+    def get_scrape_stats(self, search_id: int) -> dict:
+        """Get scrape statistics for a search."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT COUNT(*) AS total,
+                          COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+                          COUNT(*) FILTER (WHERE status = 'error') AS error_count,
+                          COUNT(*) FILTER (WHERE status = 'partial') AS partial_count,
+                          COALESCE(AVG(listings_found), 0) AS avg_listings,
+                          COALESCE(AVG(new_listings), 0) AS avg_new,
+                          COALESCE(AVG(duration_sec), 0) AS avg_duration
+                   FROM scrape_logs WHERE search_id = %s""",
+                (search_id,),
+            )
+            row = cur.fetchone()
+
+            cur.execute(
+                """SELECT status, started_at, error_message
+                   FROM scrape_logs WHERE search_id = %s
+                   ORDER BY started_at DESC LIMIT 1""",
+                (search_id,),
+            )
+            last = cur.fetchone()
+
+        stats = dict(row) if row else {}
+        stats["last_scrape"] = dict(last) if last else None
+        return stats
 
     # ------------------------------------------------------------------
     # Listings

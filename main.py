@@ -71,7 +71,11 @@ def create_app() -> Flask:
 
     @app.context_processor
     def inject_admin():
-        return {"admin_username": os.environ.get("ADMIN_USERNAME", "admin")}
+        import datetime
+        return {
+            "admin_username": os.environ.get("ADMIN_USERNAME", "admin"),
+            "now": datetime.datetime.utcnow,
+        }
 
     def run_startup_cleanup():
         try:
@@ -168,6 +172,9 @@ def create_app() -> Flask:
 
 def _execute_scrape(app, search_id: int, user_id: int) -> int:
     """Execute un scrape pour une search donnée. Retourne le nombre de nouvelles annonces."""
+    import datetime
+    started_at = datetime.datetime.utcnow()
+
     with app.app_context():
         storage = app.storage
         notifier = app.notifier
@@ -179,24 +186,45 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
         criteria = search.get("criteria", {})
         if not criteria or not criteria.get("placeIds"):
             logger.warning(f"[search:{search_id}] Critères vides, skip")
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message="Critères vides ou placeIds manquant",
+                started_at=started_at,
+            )
             return 0
 
         try:
             parser = get_parser(search["source"])
         except ValueError as e:
             logger.error(f"[search:{search_id}] Parser inconnu: {e}")
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message=f"Parser inconnu: {e}",
+                started_at=started_at,
+            )
             return 0
 
         try:
             listings = parser.scrape(criteria)
         except Exception as e:
-            logger.error(f"[search:{search_id}] Erreur scraping: {e}")
+            err_msg = str(e)
+            logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
             storage.update_last_scraped(search_id)
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message=err_msg,
+                started_at=started_at,
+            )
             return 0
 
         if not listings:
             logger.info(f"[search:{search_id}] Aucune annonce trouvée")
             storage.update_last_scraped(search_id)
+            storage.create_scrape_log(
+                search_id, "success",
+                listings_found=0, new_listings=0,
+                started_at=started_at,
+            )
             return 0
 
         new_listings, already = storage.save_and_link(listings, search_id)
@@ -209,6 +237,15 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
 
         if new_listings:
             notifier.notify_summary(topic, len(new_listings), len(listings))
+
+        status = "success" if new_listings else "partial"
+        storage.create_scrape_log(
+            search_id, status,
+            listings_found=len(listings),
+            new_listings=len(new_listings),
+            details={"already_known": len(already)},
+            started_at=started_at,
+        )
 
         logger.info(
             f"[search:{search_id}] Scraped {len(listings)}, "
@@ -597,6 +634,96 @@ def update_interval_web(search_id: int):
     storage.update_scrape_interval(search_id, interval)
     flash(f"Intervalle mis à jour : {interval} minutes", "success")
     return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/edit", methods=["GET", "POST"])
+@require_login
+def edit_search(search_id: int):
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    if request.method == "POST":
+        label = request.form.get("label", "").strip()
+        ntfy_topic = request.form.get("ntfy_topic", "").strip()
+        search_url = request.form.get("search_url", "").strip()
+        scrape_interval = int(request.form.get("scrape_interval", 5))
+
+        criteria = {}
+        if search_url:
+            from scraper.seloger import parse_search_url
+            criteria = parse_search_url(search_url)
+            if not criteria.get("placeIds"):
+                flash("L'URL ne contient pas de lieu valide", "error")
+                return render_template("search_edit.html", search=search)
+        else:
+            place_ids = request.form.get("place_ids", "").strip()
+            price_min = request.form.get("price_min", "").strip()
+            price_max = request.form.get("price_max", "").strip()
+            space_min = request.form.get("space_min", "").strip()
+            distribution = request.form.get("distribution", "Rent")
+            estate_type = request.form.get("estate_type", "Apartment")
+
+            if place_ids:
+                criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
+                criteria["location"] = {"placeIds": criteria["placeIds"]}
+            if price_min:
+                criteria["priceMin"] = int(price_min)
+            if price_max:
+                criteria["priceMax"] = int(price_max)
+            if space_min:
+                criteria["spaceMin"] = int(space_min)
+            criteria["distributionTypes"] = [distribution]
+            criteria["estateTypes"] = [estate_type]
+
+        if label and ntfy_topic and criteria.get("placeIds"):
+            storage.update_search(
+                search_id, g.user["id"],
+                label=label, ntfy_topic=ntfy_topic,
+                criteria=criteria, scrape_interval=scrape_interval,
+            )
+            flash("Recherche mise à jour !", "success")
+            return redirect(url_for("web.searches"))
+        else:
+            flash("Label, topic ntfy et au moins un lieu requis", "error")
+
+    stats = storage.get_scrape_stats(search_id)
+    return render_template("search_edit.html", search=search, stats=stats)
+
+
+@web_bp.route("/searches/<int:search_id>/logs", methods=["GET"])
+@require_login
+def search_logs(search_id: int):
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    page = int(request.args.get("page", 1))
+    per_page = 30
+    offset = (page - 1) * per_page
+    status_filter = request.args.get("status", "")
+
+    logs = storage.get_scrape_logs(search_id, limit=per_page, offset=offset, status_filter=status_filter)
+    total = storage.count_scrape_logs(search_id, status_filter=status_filter)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    stats = storage.get_scrape_stats(search_id)
+
+    return render_template(
+        "search_logs.html",
+        search=search,
+        logs=logs,
+        total=total,
+        page=page,
+        total_pages=total_pages,
+        status_filter=status_filter,
+        stats=stats,
+    )
 
 
 def require_admin(f):

@@ -16,10 +16,21 @@ from curl_cffi import requests as curl_requests
 import lzstring
 from loguru import logger
 
+BFF_ONLY_KEYS = {
+    "placeIds", "priceMin", "priceMax", "spaceMin", "spaceMax",
+    "rooms", "bedrooms", "distributionTypes", "estateTypes",
+    "locationsInBuildingExcluded",
+}
+
 BFF_API = "https://www.seloger.com/serp-bff/search"
 SEARCH_URL = "https://www.seloger.com/classified-search"
 
 MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+
+def clean_criteria_for_bff(criteria: dict) -> dict:
+    """Nettoie les critères pour ne garder que les clés acceptées par l'API BFF."""
+    return {k: v for k, v in criteria.items() if k in BFF_ONLY_KEYS}
 
 
 def parse_search_url(url: str) -> dict:
@@ -103,7 +114,7 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
 
     while page <= max_pages:
         payload = {
-            "criteria": {**criteria},
+            "criteria": clean_criteria_for_bff(criteria),
             "paging": {"page": page, "size": page_size},
         }
 

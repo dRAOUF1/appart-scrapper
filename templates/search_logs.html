@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Logs — {{ search.label }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="{{ url_for('web.searches') }}" class="back-link">← Retour aux recherches</a>
+    <h1>📋 Logs — {{ search.label }}</h1>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid stats-grid-5">
+    <div class="stat-card stat-sm">
+        <div class="stat-value">{{ stats.total or 0 }}</div>
+        <div class="stat-label">Scrapes totaux</div>
+    </div>
+    <div class="stat-card stat-sm">
+        <div class="stat-value" style="color: var(--success);">{{ stats.success_count or 0 }}</div>
+        <div class="stat-label">Succès</div>
+    </div>
+    <div class="stat-card stat-sm">
+        <div class="stat-value" style="color: var(--danger);">{{ stats.error_count or 0 }}</div>
+        <div class="stat-label">Erreurs</div>
+    </div>
+    <div class="stat-card stat-sm">
+        <div class="stat-value">{{ "%.1f"|format(stats.avg_listings or 0) }}</div>
+        <div class="stat-label">Moy. annonces</div>
+    </div>
+    <div class="stat-card stat-sm">
+        <div class="stat-value">{{ "%.0f"|format(stats.avg_duration or 0) }}s</div>
+        <div class="stat-label">Durée moyenne</div>
+    </div>
+</div>
+
+<!-- Last scrape info -->
+{% if stats.last_scrape %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <span class="log-status-badge status-{{ stats.last_scrape.status }}">
+            {% if stats.last_scrape.status == 'success' %}✅
+            {% elif stats.last_scrape.status == 'error' %}❌
+            {% else %}⚠️{% endif %}
+            {{ stats.last_scrape.status }}
+        </span>
+        <span class="text-muted">Dernier scrape : {{ stats.last_scrape.started_at.strftime('%d/%m/%Y %H:%M:%S') }}</span>
+        {% if stats.last_scrape.error_message %}
+        <span class="text-muted" style="color: var(--danger);">Erreur : {{ stats.last_scrape.error_message[:100] }}</span>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <span style="color: var(--text-muted); font-size: 0.85rem;">Filtrer :</span>
+        <a href="{{ url_for('web.search_logs', search_id=search.id) }}"
+           class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-ghost{% endif %}">Tous ({{ stats.total or 0 }})</a>
+        <a href="{{ url_for('web.search_logs', search_id=search.id, status='success') }}"
+           class="btn btn-sm {% if status_filter == 'success' %}btn-success{% else %}btn-ghost{% endif %}">✅ Succès</a>
+        <a href="{{ url_for('web.search_logs', search_id=search.id, status='error') }}"
+           class="btn btn-sm {% if status_filter == 'error' %}btn-danger{% else %}btn-ghost{% endif %}">❌ Erreurs</a>
+        <a href="{{ url_for('web.search_logs', search_id=search.id, status='partial') }}"
+           class="btn btn-sm {% if status_filter == 'partial' %}btn-warning{% else %}btn-ghost{% endif %}">⚠️ Partiels</a>
+    </div>
+</div>
+
+<!-- Logs table -->
+{% if logs %}
+<div class="card">
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Statut</th>
+                    <th>Durée</th>
+                    <th>Annonces trouvées</th>
+                    <th>Nouvelles</th>
+                    <th>Erreur</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr class="log-row log-row-{{ log.status }}">
+                    <td>
+                        <div style="font-weight: 600;">{{ log.started_at.strftime('%d/%m/%Y') }}</div>
+                        <div class="text-muted" style="font-size: 0.8rem;">{{ log.started_at.strftime('%H:%M:%S') }}</div>
+                    </td>
+                    <td>
+                        <span class="log-status-badge status-{{ log.status }}">
+                            {% if log.status == 'success' %}✅ Succès
+                            {% elif log.status == 'error' %}❌ Erreur
+                            {% else %}⚠️ Partiel{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        {% if log.duration_sec %}
+                            {{ "%.1f"|format(log.duration_sec) }}s
+                        {% else %}—{% endif %}
+                    </td>
+                    <td style="font-weight: 600;">{{ log.listings_found or 0 }}</td>
+                    <td>
+                        {% if log.new_listings and log.new_listings > 0 %}
+                            <span style="color: var(--success); font-weight: 600;">+{{ log.new_listings }}</span>
+                        {% else %}
+                            <span class="text-muted">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if log.error_message %}
+                            <span class="text-muted" style="font-size: 0.8rem;" title="{{ log.error_message }}">
+                                {{ log.error_message[:80] }}{% if log.error_message|length > 80 %}…{% endif %}
+                            </span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('web.search_logs', search_id=search.id, page=page-1, status=status_filter) }}" class="btn btn-sm btn-ghost">← Précédent</a>
+        {% endif %}
+        <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('web.search_logs', search_id=search.id, page=page+1, status=status_filter) }}" class="btn btn-sm btn-ghost">Suivant →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">📭</div>
+    <h3>Aucun log</h3>
+    <p>Les logs de scraping apparaîtront ici après le premier scrape.</p>
+    <a href="{{ url_for('web.scrape_search_web', search_id=search.id) }}" class="btn btn-primary"
+       onclick="return confirm('Lancer le scraping maintenant ?')">🔄 Lancer un scrape</a>
+</div>
+{% endif %}
+
+{% endblock %}
