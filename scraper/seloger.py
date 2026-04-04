@@ -1,7 +1,7 @@
 """SeLoger scraper — API BFF + classified-search avec LZ-string.
 
-Contourne DataDome avec SeleniumBase CDP Mode (Chrome headless avec
-Chrome DevTools Protocol). WebDriver déconnecté pendant les checks anti-bot.
+Contourne DataDome avec Camoufox (navigateur Firefox anti-detect avec
+spoofing au niveau C++). Fingerprints injectés nativement, indétectables.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
-from curl_cffi import requests as curl_requests
 import lzstring
 from loguru import logger
 
@@ -25,73 +24,6 @@ BFF_ONLY_KEYS = {
 
 BFF_API = "https://www.seloger.com/serp-bff/search"
 SEARCH_URL = "https://www.seloger.com/classified-search"
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-]
-
-SEC_CH_UA = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'
-SEC_CH_UA_MOBILE = "?0"
-SEC_CH_UA_PLATFORM = '"macOS"'
-
-
-def _random_delay(min_s: float = 1.5, max_s: float = 4.0) -> None:
-    time.sleep(random.uniform(min_s, max_s))
-
-
-def _build_realistic_headers(ua: str | None = None) -> dict:
-    chosen_ua = ua or random.choice(USER_AGENTS)
-    return {
-        "User-Agent": chosen_ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Sec-Ch-Ua": SEC_CH_UA,
-        "Sec-Ch-Ua-Mobile": SEC_CH_UA_MOBILE,
-        "Sec-Ch-Ua-Platform": SEC_CH_UA_PLATFORM,
-        "Cache-Control": "max-age=0",
-        "Pragma": "no-cache",
-    }
-
-
-def _warmup_session(session, ua: str) -> bool:
-    try:
-        warmup_headers = _build_realistic_headers(ua)
-        resp = session.get("https://www.seloger.com/", headers=warmup_headers, timeout=20)
-        _random_delay(1.0, 2.5)
-
-        if resp.status_code == 200:
-            dd_cookie = session.cookies.get("datadome", domain=".seloger.com")
-            if dd_cookie:
-                logger.debug(f"  Cookie DataDome obtenu: {dd_cookie[:20]}...")
-                return True
-            logger.debug("  Pas de cookie DataDome trouvé après warmup")
-        elif resp.status_code == 403:
-            logger.debug("  Warmup bloqué (403), on tente quand même...")
-        return resp.status_code == 200
-    except Exception as e:
-        logger.debug(f"  Erreur warmup: {e}")
-        return False
-
-
-def _is_datadome_blocked(html: str) -> bool:
-    patterns = [
-        r'<title>403\s+Forbidden</title>',
-        r'Please enable cookies',
-        r'access denied',
-    ]
-    html_lower = html.lower()
-    return any(re.search(p, html_lower) for p in patterns)
 
 
 def _build_search_url(criteria: dict, order: str | None = None) -> str:
@@ -193,10 +125,10 @@ def parse_search_url(url: str) -> dict:
 
 
 def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tuple[list, int]:
-    """Récupère TOUS les IDs via l'API BFF (fonctionne toujours, jamais bloqué)."""
+    """Récupère TOUS les IDs via l'API BFF."""
     session = requests.Session()
     session.headers.update({
-        "User-Agent": random.choice(USER_AGENTS),
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "fr-FR,fr;q=0.9",
         "Content-Type": "application/json",
@@ -235,9 +167,9 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
     """Récupère les données détaillées depuis le HTML compressé.
 
-    Utilise SeleniumBase CDP Mode pour bypass DataDome:
-    - Chrome headless avec Chrome DevTools Protocol
-    - WebDriver déconnecté pendant les checks anti-bot
+    Utilise Camoufox (Firefox anti-detect) pour bypass DataDome:
+    - Spoofing fingerprints au niveau C++ (indétectable)
+    - Humanize: mouvements de souris réalistes
     - Résolution automatique des challenges JS
     - Backoff exponentiel avec jitter
     """
@@ -253,24 +185,29 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             else:
                 logger.info(f"  Tentative 1/{max_retries}...")
 
-            from seleniumbase import SB
+            from camoufox.sync_api import Camoufox
 
-            with SB(uc=True, test=True, locale="fr", headless=True) as sb:
+            with Camoufox(headless=True, humanize=True, geoip=False) as browser:
+                page = browser.new_page()
                 logger.debug(f"  Navigation vers classified-search...")
-                sb.activate_cdp_mode(url)
+                page.goto(url, wait_until="networkidle", timeout=30000)
 
-                wait_time = random.uniform(5, 10)
-                logger.debug(f"  Attente résolution challenges JS ({wait_time:.1f}s)...")
-                sb.sleep(wait_time)
+                wait_time = random.uniform(5000, 10000)
+                logger.debug(f"  Attente résolution challenges JS ({wait_time/1000:.1f}s)...")
+                page.wait_for_timeout(wait_time)
 
-                html = sb.cdp.get_page_source()
+                html = page.content()
 
-                if _is_datadome_blocked(html):
+                if "403 Forbidden" in html or "access denied" in html.lower():
                     logger.warning(f"    Page de blocage détectée")
                     continue
 
                 if "__UFRN_FETCHER__" not in html:
                     logger.warning(f"    Pas de données trouvées dans le HTML")
+                    logger.debug(f"    HTML length: {len(html)} chars")
+                    title_match = re.search(r'<title>(.*?)</title>', html, re.DOTALL)
+                    if title_match:
+                        logger.debug(f"    Page title: {title_match.group(1)}")
                     continue
 
                 match = re.search(
