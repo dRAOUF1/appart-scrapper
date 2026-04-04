@@ -10,3 +10,4 @@ psycopg2-binary>=2.9.0
 python-dotenv>=1.0.0
 curl_cffi>=0.6.0
 lzstring>=1.0.4
+seleniumbase>=4.20.0

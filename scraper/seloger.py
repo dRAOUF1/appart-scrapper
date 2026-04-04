@@ -1,7 +1,7 @@
 """SeLoger scraper — API BFF + classified-search avec LZ-string.
 
-Contourne DataDome avec curl_cffi (impersonation Safari TLS fingerprint)
-+ gestion cookies DataDome, headers réalistes, rotation UA, delays.
+Contourne DataDome avec SeleniumBase CDP Mode (Chrome headless avec
+Chrome DevTools Protocol). WebDriver déconnecté pendant les checks anti-bot.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import json
 import random
 import re
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 from curl_cffi import requests as curl_requests
@@ -86,15 +86,41 @@ def _warmup_session(session, ua: str) -> bool:
 
 def _is_datadome_blocked(html: str) -> bool:
     patterns = [
-        r'datadome',
-        r'captcha',
-        r'blocked',
         r'<title>403\s+Forbidden</title>',
         r'Please enable cookies',
         r'access denied',
     ]
     html_lower = html.lower()
     return any(re.search(p, html_lower) for p in patterns)
+
+
+def _build_search_url(criteria: dict, order: str | None = None) -> str:
+    params = {}
+    if criteria.get("distributionTypes"):
+        params["distributionTypes"] = criteria["distributionTypes"]
+    if criteria.get("estateTypes"):
+        params["estateTypes"] = criteria["estateTypes"]
+    if criteria.get("placeIds"):
+        params["locations"] = criteria["placeIds"]
+    if criteria.get("priceMin"):
+        params["priceMin"] = criteria["priceMin"]
+    if criteria.get("priceMax"):
+        params["priceMax"] = criteria["priceMax"]
+    if criteria.get("spaceMin"):
+        params["spaceMin"] = criteria["spaceMin"]
+    if criteria.get("spaceMax"):
+        params["spaceMax"] = criteria["spaceMax"]
+    if criteria.get("rooms"):
+        params["rooms"] = criteria["rooms"]
+    if criteria.get("bedrooms"):
+        params["bedrooms"] = criteria["bedrooms"]
+    if order:
+        params["order"] = order
+    if criteria.get("locationsInBuildingExcluded"):
+        params["locationsInBuildingExcluded"] = criteria["locationsInBuildingExcluded"]
+
+    query = urlencode(params, doseq=True)
+    return f"{SEARCH_URL}?{query}"
 
 
 def clean_criteria_for_bff(criteria: dict) -> dict:
@@ -209,149 +235,125 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
     """Récupère les données détaillées depuis le HTML compressé.
 
-    Utilise curl_cffi avec impersonation Safari17 + anti-DataDome:
-    - Warmup session avec cookie DataDome
-    - Headers réalistes de navigateur
-    - Rotation User-Agents
-    - Delays réalistes
+    Utilise SeleniumBase CDP Mode pour bypass DataDome:
+    - Chrome headless avec Chrome DevTools Protocol
+    - WebDriver déconnecté pendant les checks anti-bot
+    - Résolution automatique des challenges JS
     - Backoff exponentiel avec jitter
     """
-    params = {
-        "distributionTypes": criteria.get("distributionTypes", []),
-        "estateTypes": criteria.get("estateTypes", []),
-        "locations": criteria.get("placeIds", []),
-        "priceMin": criteria.get("priceMin", ""),
-        "priceMax": criteria.get("priceMax", ""),
-        "spaceMin": criteria.get("spaceMin", ""),
-    }
-    if order:
-        params["order"] = order
-    if criteria.get("locationsInBuildingExcluded"):
-        params["locationsInBuildingExcluded"] = criteria["locationsInBuildingExcluded"]
+    url = _build_search_url(criteria, order)
+    logger.debug(f"  URL de recherche: {url[:120]}...")
 
     for attempt in range(max_retries):
-        session = None
         try:
             if attempt > 0:
-                wait = (2 ** attempt) + random.uniform(0.5, 2.0)
+                wait = (2 ** attempt) + random.uniform(1.0, 3.0)
                 logger.info(f"  Tentative {attempt + 1}/{max_retries} (attente {wait:.1f}s)...")
                 time.sleep(wait)
             else:
                 logger.info(f"  Tentative 1/{max_retries}...")
 
-            ua = random.choice(USER_AGENTS)
-            session = curl_requests.Session(impersonate="safari17_0")
-            session.headers.update(_build_realistic_headers(ua))
+            from seleniumbase import SB
 
-            logger.debug(f"  Warmup avec UA: {ua[:60]}...")
-            _warmup_session(session, ua)
+            with SB(uc=True, test=True, locale="fr", headless=True) as sb:
+                logger.debug(f"  Navigation vers classified-search...")
+                sb.activate_cdp_mode(url)
 
-            resp = session.get(SEARCH_URL, params=params, timeout=20)
+                wait_time = random.uniform(5, 10)
+                logger.debug(f"  Attente résolution challenges JS ({wait_time:.1f}s)...")
+                sb.sleep(wait_time)
 
-            if resp.status_code == 403:
-                logger.warning(f"    Bloqué (403) — IP temporairement limitée par DataDome")
-                continue
+                html = sb.cdp.get_page_source()
 
-            if resp.status_code == 200 and _is_datadome_blocked(resp.text):
-                logger.warning(f"    Page de challenge DataDome détectée")
-                continue
-
-            resp.raise_for_status()
-
-            if "__UFRN_FETCHER__" not in resp.text:
-                logger.warning(f"    Pas de données trouvées")
-                continue
-
-            match = re.search(
-                r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
-                resp.text, re.DOTALL,
-            )
-            if not match:
-                logger.warning(f"    Format HTML inattendu")
-                continue
-
-            raw = match.group(1)
-            decoded = raw.encode("utf-8").decode("unicode_escape")
-            outer = json.loads(decoded)
-            encoded = outer["data"]["classified-serp-init-data"]
-
-            lzs = lzstring.LZString()
-            decompressed = lzs.decompressFromBase64(encoded)
-            if not decompressed:
-                logger.warning(f"    Échec décodage LZ-string")
-                continue
-
-            data = json.loads(decompressed)
-            page_props = data.get("pageProps", {})
-            classified_ids = page_props.get("classifieds", [])
-            classifieds_data = page_props.get("classifiedsData", {})
-
-            listings = []
-            for listing_id in classified_ids:
-                item = classifieds_data.get(listing_id, {})
-                if not item:
+                if _is_datadome_blocked(html):
+                    logger.warning(f"    Page de blocage détectée")
                     continue
 
-                hf = item.get("hardFacts", {})
-                price_info = hf.get("price", {})
-                location = item.get("location", {}).get("address", {})
-                metadata = item.get("metadata", {})
-                provider = item.get("provider", {})
-                card_provider = item.get("cardProvider", {})
-                main_desc = item.get("mainDescription", {})
-                tags = item.get("tags", {})
-                raw_data = item.get("rawData", {})
-                gallery = item.get("gallery", {})
-                media = item.get("media", {})
+                if "__UFRN_FETCHER__" not in html:
+                    logger.warning(f"    Pas de données trouvées dans le HTML")
+                    continue
 
-                surface_data = raw_data.get("surface", {})
-                surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data
+                match = re.search(
+                    r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
+                    html, re.DOTALL,
+                )
+                if not match:
+                    logger.warning(f"    Format HTML inattendu")
+                    continue
 
-                listings.append({
-                    "id": listing_id,
-                    "legacyId": metadata.get("legacyId"),
-                    "title": hf.get("title", ""),
-                    "headline": main_desc.get("headline", ""),
-                    "description": main_desc.get("description", ""),
-                    "price": price_info.get("formatted"),
-                    "priceValue": raw_data.get("price"),
-                    "priceDetails": price_info.get("additionalInformation"),
-                    "surface": surface_value,
-                    "rooms": raw_data.get("nbroom"),
-                    "propertyType": raw_data.get("propertyTypeLabel"),
-                    "city": location.get("city"),
-                    "district": location.get("district"),
-                    "zipCode": location.get("zipCode"),
-                    "url": item.get("url", ""),
-                    "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
-                    "agency": card_provider.get("title"),
-                    "isPrivate": provider.get("isPrivateOwner", False),
-                    "phone": provider.get("phoneNumbers", []),
-                    "epc": item.get("energyClass", ""),
-                    "ges": item.get("gesClass", ""),
-                    "isNew": tags.get("isNew", False),
-                    "isExclusive": tags.get("isExclusive", False),
-                    "has3DVisit": tags.get("has3DVisit", False),
-                    "creationDate": metadata.get("creationDate"),
-                    "updateDate": metadata.get("updateDate"),
-                    "keyfacts": hf.get("keyfacts", []),
-                })
+                raw = match.group(1)
+                decoded = raw.encode("utf-8").decode("unicode_escape")
+                outer = json.loads(decoded)
+                encoded = outer["data"]["classified-serp-init-data"]
 
-            logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
-            return listings
+                lzs = lzstring.LZString()
+                decompressed = lzs.decompressFromBase64(encoded)
+                if not decompressed:
+                    logger.warning(f"    Échec décodage LZ-string")
+                    continue
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"    Erreur réseau: {e}")
-            continue
+                data = json.loads(decompressed)
+                page_props = data.get("pageProps", {})
+                classified_ids = page_props.get("classifieds", [])
+                classifieds_data = page_props.get("classifiedsData", {})
+
+                listings = []
+                for listing_id in classified_ids:
+                    item = classifieds_data.get(listing_id, {})
+                    if not item:
+                        continue
+
+                    hf = item.get("hardFacts", {})
+                    price_info = hf.get("price", {})
+                    location = item.get("location", {}).get("address", {})
+                    metadata = item.get("metadata", {})
+                    provider = item.get("provider", {})
+                    card_provider = item.get("cardProvider", {})
+                    main_desc = item.get("mainDescription", {})
+                    tags = item.get("tags", {})
+                    raw_data = item.get("rawData", {})
+                    gallery = item.get("gallery", {})
+                    media = item.get("media", {})
+
+                    surface_data = raw_data.get("surface", {})
+                    surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data
+
+                    listings.append({
+                        "id": listing_id,
+                        "legacyId": metadata.get("legacyId"),
+                        "title": hf.get("title", ""),
+                        "headline": main_desc.get("headline", ""),
+                        "description": main_desc.get("description", ""),
+                        "price": price_info.get("formatted"),
+                        "priceValue": raw_data.get("price"),
+                        "priceDetails": price_info.get("additionalInformation"),
+                        "surface": surface_value,
+                        "rooms": raw_data.get("nbroom"),
+                        "propertyType": raw_data.get("propertyTypeLabel"),
+                        "city": location.get("city"),
+                        "district": location.get("district"),
+                        "zipCode": location.get("zipCode"),
+                        "url": item.get("url", ""),
+                        "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
+                        "agency": card_provider.get("title"),
+                        "isPrivate": provider.get("isPrivateOwner", False),
+                        "phone": provider.get("phoneNumbers", []),
+                        "epc": item.get("energyClass", ""),
+                        "ges": item.get("gesClass", ""),
+                        "isNew": tags.get("isNew", False),
+                        "isExclusive": tags.get("isExclusive", False),
+                        "has3DVisit": tags.get("has3DVisit", False),
+                        "creationDate": metadata.get("creationDate"),
+                        "updateDate": metadata.get("updateDate"),
+                        "keyfacts": hf.get("keyfacts", []),
+                    })
+
+                logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
+                return listings
+
         except Exception as e:
             logger.error(f"    Erreur: {e}")
             continue
-        finally:
-            if session:
-                try:
-                    session.close()
-                except Exception:
-                    pass
 
     raise ValueError("Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome. Attends 15-30 minutes et réessaie.")
 
