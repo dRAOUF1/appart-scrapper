@@ -551,6 +551,7 @@ def scrape_search_web(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
+    user_id = g.user["id"]
     lock = _scrape_locks.setdefault(search_id, threading.Lock())
     if not lock.acquire(blocking=False):
         flash("Scraping déjà en cours pour cette recherche", "warning")
@@ -558,7 +559,7 @@ def scrape_search_web(search_id: int):
 
     def run():
         try:
-            _execute_scrape(current_app, search_id, g.user["id"])
+            _execute_scrape(current_app, search_id, user_id)
         finally:
             lock.release()
 
