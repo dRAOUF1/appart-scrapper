@@ -300,7 +300,8 @@ class Storage:
                     new_listings    INTEGER DEFAULT 0,
                     error_message   TEXT,
                     details         JSONB DEFAULT '{}',
-                    duration_sec    FLOAT
+                    duration_sec    FLOAT,
+                    raw_logs        TEXT
                 );
             """)
 
@@ -312,6 +313,10 @@ class Storage:
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
                     ON scrape_logs(started_at DESC);
+            """)
+
+            cur.execute("""
+                ALTER TABLE scrape_logs ADD COLUMN IF NOT EXISTS raw_logs TEXT;
             """)
 
         self._conn.commit()
@@ -635,6 +640,38 @@ class Storage:
         stats = dict(row) if row else {}
         stats["last_scrape"] = dict(last) if last else None
         return stats
+
+    def update_scrape_log_raw(self, log_id: int, raw_logs: str) -> bool:
+        """Save raw log text to a scrape log entry."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE scrape_logs SET raw_logs = %s WHERE id = %s",
+                (raw_logs, log_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def get_scrape_log_raw(self, log_id: int, user_id: int | None = None) -> dict | None:
+        """Get raw logs for a scrape log entry."""
+        query = "SELECT id, search_id, status, started_at, completed_at, raw_logs FROM scrape_logs WHERE id = %s"
+        params = [log_id]
+        if user_id is not None:
+            query += " AND search_id IN (SELECT id FROM searches WHERE user_id = %s)"
+            params.append(user_id)
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_latest_scrape_log_id(self, search_id: int) -> int | None:
+        """Get the most recent scrape log id for a search."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM scrape_logs WHERE search_id = %s ORDER BY started_at DESC LIMIT 1",
+                (search_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
     # ------------------------------------------------------------------
     # Listings

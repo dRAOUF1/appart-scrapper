@@ -7,6 +7,21 @@
     <h1>📋 Logs — {{ search.label }}</h1>
 </div>
 
+<!-- Live panel -->
+<div class="card live-panel" id="live-panel" style="display: none;">
+    <div class="live-header">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span class="live-dot"></span>
+            <span class="live-label">LIVE</span>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <button id="btn-pause" class="btn btn-sm btn-ghost" onclick="togglePause()">⏸ Pause</button>
+            <button class="btn btn-sm btn-ghost" onclick="closeLive()">✕ Fermer</button>
+        </div>
+    </div>
+    <div class="log-viewer" id="live-viewer"></div>
+</div>
+
 <!-- Stats -->
 <div class="stats-grid stats-grid-5">
     <div class="stat-card stat-sm">
@@ -36,9 +51,7 @@
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <span class="log-status-badge status-{{ stats.last_scrape.status }}">
-            {% if stats.last_scrape.status == 'success' %}✅
-            {% elif stats.last_scrape.status == 'error' %}❌
-            {% else %}⚠️{% endif %}
+            {% if stats.last_scrape.status == 'success' %}✅{% elif stats.last_scrape.status == 'error' %}❌{% else %}⚠️{% endif %}
             {{ stats.last_scrape.status }}
         </span>
         <span class="text-muted">Dernier scrape : {{ stats.last_scrape.started_at.strftime('%d/%m/%Y %H:%M:%S') }}</span>
@@ -74,9 +87,10 @@
                     <th>Date</th>
                     <th>Statut</th>
                     <th>Durée</th>
-                    <th>Annonces trouvées</th>
+                    <th>Annonces</th>
                     <th>Nouvelles</th>
                     <th>Erreur</th>
+                    <th>Logs</th>
                 </tr>
             </thead>
             <tbody>
@@ -94,26 +108,24 @@
                         </span>
                     </td>
                     <td>
-                        {% if log.duration_sec %}
-                            {{ "%.1f"|format(log.duration_sec) }}s
-                        {% else %}—{% endif %}
+                        {% if log.duration_sec %}{{ "%.1f"|format(log.duration_sec) }}s{% else %}—{% endif %}
                     </td>
                     <td style="font-weight: 600;">{{ log.listings_found or 0 }}</td>
                     <td>
                         {% if log.new_listings and log.new_listings > 0 %}
                             <span style="color: var(--success); font-weight: 600;">+{{ log.new_listings }}</span>
-                        {% else %}
-                            <span class="text-muted">0</span>
-                        {% endif %}
+                        {% else %}<span class="text-muted">0</span>{% endif %}
                     </td>
                     <td>
                         {% if log.error_message %}
                             <span class="text-muted" style="font-size: 0.8rem;" title="{{ log.error_message }}">
-                                {{ log.error_message[:80] }}{% if log.error_message|length > 80 %}…{% endif %}
+                                {{ log.error_message[:60] }}{% if log.error_message|length > 60 %}…{% endif %}
                             </span>
-                        {% else %}
-                            <span class="text-muted">—</span>
-                        {% endif %}
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('web.search_log_raw', search_id=search.id, log_id=log.id) }}"
+                           class="btn btn-sm btn-ghost" title="Voir les logs bruts">📄 Voir</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -143,4 +155,71 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let liveOffset = 0;
+    let liveInterval = null;
+    let isPaused = false;
+
+    function checkLiveScrape() {
+        fetch("{{ url_for('web.search_logs_live', search_id=search.id) }}?offset=0")
+            .then(r => r.json())
+            .then(data => {
+                if (data.has_content) {
+                    document.getElementById('live-panel').style.display = 'block';
+                    startLivePolling();
+                }
+            })
+            .catch(() => {});
+    }
+
+    function startLivePolling() {
+        if (liveInterval) return;
+        liveInterval = setInterval(pollLogs, 2000);
+        pollLogs();
+    }
+
+    function pollLogs() {
+        if (isPaused) return;
+        fetch("{{ url_for('web.search_logs_live', search_id=search.id) }}?offset=" + liveOffset)
+            .then(r => r.json())
+            .then(data => {
+                if (data.text) {
+                    const viewer = document.getElementById('live-viewer');
+                    viewer.innerHTML += highlightLogs(data.text);
+                    viewer.scrollTop = viewer.scrollHeight;
+                    liveOffset = data.offset;
+                }
+            })
+            .catch(() => {});
+    }
+
+    function highlightLogs(text) {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/^(.*?\| ERROR \|.*)$/gm, '<span class="log-error">$1</span>')
+            .replace(/^(.*?\| WARNING \|.*)$/gm, '<span class="log-warning">$1</span>')
+            .replace(/^(.*?\| INFO \|.*)$/gm, '<span class="log-info">$1</span>')
+            .replace(/^(.*?\| DEBUG \|.*)$/gm, '<span class="log-debug">$1</span>')
+            .replace(/\n/g, '<br>');
+    }
+
+    function togglePause() {
+        isPaused = !isPaused;
+        document.getElementById('btn-pause').textContent = isPaused ? '▶️ Reprendre' : '⏸ Pause';
+    }
+
+    function closeLive() {
+        document.getElementById('live-panel').style.display = 'none';
+        if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+        liveOffset = 0;
+    }
+
+    // Check for active scrape on page load
+    checkLiveScrape();
+</script>
 {% endblock %}

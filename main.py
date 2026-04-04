@@ -173,85 +173,98 @@ def create_app() -> Flask:
 def _execute_scrape(app, search_id: int, user_id: int) -> int:
     """Execute un scrape pour une search donnée. Retourne le nombre de nouvelles annonces."""
     import datetime
+    from log_manager import SearchLogManager
+
     started_at = datetime.datetime.utcnow()
+    log_mgr = SearchLogManager(search_id)
+    log_mgr.start()
 
-    with app.app_context():
-        storage = app.storage
-        notifier = app.notifier
+    try:
+        with app.app_context():
+            storage = app.storage
+            notifier = app.notifier
 
-        search = storage.get_search(search_id)
-        if not search or search["user_id"] != user_id:
-            return 0
+            search = storage.get_search(search_id)
+            if not search or search["user_id"] != user_id:
+                return 0
 
-        criteria = search.get("criteria", {})
-        if not criteria or not criteria.get("placeIds"):
-            logger.warning(f"[search:{search_id}] Critères vides, skip")
-            storage.create_scrape_log(
-                search_id, "error",
-                error_message="Critères vides ou placeIds manquant",
-                started_at=started_at,
-            )
-            return 0
+            criteria = search.get("criteria", {})
+            if not criteria or not criteria.get("placeIds"):
+                logger.warning(f"[search:{search_id}] Critères vides, skip")
+                storage.create_scrape_log(
+                    search_id, "error",
+                    error_message="Critères vides ou placeIds manquant",
+                    started_at=started_at,
+                )
+                return 0
 
-        try:
-            parser = get_parser(search["source"])
-        except ValueError as e:
-            logger.error(f"[search:{search_id}] Parser inconnu: {e}")
-            storage.create_scrape_log(
-                search_id, "error",
-                error_message=f"Parser inconnu: {e}",
-                started_at=started_at,
-            )
-            return 0
+            try:
+                parser = get_parser(search["source"])
+            except ValueError as e:
+                logger.error(f"[search:{search_id}] Parser inconnu: {e}")
+                storage.create_scrape_log(
+                    search_id, "error",
+                    error_message=f"Parser inconnu: {e}",
+                    started_at=started_at,
+                )
+                return 0
 
-        try:
-            listings = parser.scrape(criteria)
-        except Exception as e:
-            err_msg = str(e)
-            logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
+            try:
+                listings = parser.scrape(criteria)
+            except Exception as e:
+                err_msg = str(e)
+                logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
+                storage.update_last_scraped(search_id)
+                storage.create_scrape_log(
+                    search_id, "error",
+                    error_message=err_msg,
+                    started_at=started_at,
+                )
+                return 0
+
+            if not listings:
+                logger.info(f"[search:{search_id}] Aucune annonce trouvée")
+                storage.update_last_scraped(search_id)
+                storage.create_scrape_log(
+                    search_id, "success",
+                    listings_found=0, new_listings=0,
+                    started_at=started_at,
+                )
+                return 0
+
+            new_listings, already = storage.save_and_link(listings, search_id)
             storage.update_last_scraped(search_id)
-            storage.create_scrape_log(
-                search_id, "error",
-                error_message=err_msg,
+            topic = search["ntfy_topic"]
+
+            for listing in new_listings:
+                notifier.notify_new_listing(topic, listing)
+                time.sleep(0.3)
+
+            if new_listings:
+                notifier.notify_summary(topic, len(new_listings), len(listings))
+
+            status = "success" if new_listings else "partial"
+            log_id = storage.create_scrape_log(
+                search_id, status,
+                listings_found=len(listings),
+                new_listings=len(new_listings),
+                details={"already_known": len(already)},
                 started_at=started_at,
             )
-            return 0
 
-        if not listings:
-            logger.info(f"[search:{search_id}] Aucune annonce trouvée")
-            storage.update_last_scraped(search_id)
-            storage.create_scrape_log(
-                search_id, "success",
-                listings_found=0, new_listings=0,
-                started_at=started_at,
+            raw_logs = log_mgr.stop()
+            storage.update_scrape_log_raw(log_id, raw_logs)
+            log_mgr.cleanup_old_logs()
+
+            logger.info(
+                f"[search:{search_id}] Scraped {len(listings)}, "
+                f"{len(new_listings)} new, {len(already)} already known"
             )
-            return 0
+            return len(new_listings)
 
-        new_listings, already = storage.save_and_link(listings, search_id)
-        storage.update_last_scraped(search_id)
-        topic = search["ntfy_topic"]
-
-        for listing in new_listings:
-            notifier.notify_new_listing(topic, listing)
-            time.sleep(0.3)
-
-        if new_listings:
-            notifier.notify_summary(topic, len(new_listings), len(listings))
-
-        status = "success" if new_listings else "partial"
-        storage.create_scrape_log(
-            search_id, status,
-            listings_found=len(listings),
-            new_listings=len(new_listings),
-            details={"already_known": len(already)},
-            started_at=started_at,
-        )
-
-        logger.info(
-            f"[search:{search_id}] Scraped {len(listings)}, "
-            f"{len(new_listings)} new, {len(already)} already known"
-        )
-        return len(new_listings)
+    except Exception:
+        log_mgr.stop()
+        raise
 
 
 # ======================================================================
@@ -724,6 +737,89 @@ def search_logs(search_id: int):
         status_filter=status_filter,
         stats=stats,
     )
+
+
+@web_bp.route("/searches/<int:search_id>/logs/live", methods=["GET"])
+@require_login
+def search_logs_live(search_id: int):
+    """Polling endpoint: returns new log lines since offset."""
+    from flask import current_app
+    from log_manager import SearchLogManager
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Not found"}), 404
+
+    offset = int(request.args.get("offset", 0))
+    log_mgr = SearchLogManager(search_id)
+    new_text, new_offset = log_mgr.read_tail(offset)
+
+    return jsonify({
+        "text": new_text,
+        "offset": new_offset,
+        "has_content": bool(new_text),
+    })
+
+
+@web_bp.route("/searches/<int:search_id>/logs/<int:log_id>/raw", methods=["GET"])
+@require_login
+def search_log_raw(search_id: int, log_id: int):
+    """View raw logs for a specific scrape entry."""
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    log_entry = storage.get_scrape_log_raw(log_id, g.user["id"])
+    if not log_entry:
+        flash("Log introuvable", "error")
+        return redirect(url_for("web.search_logs", search_id=search_id))
+
+    return render_template(
+        "search_log_raw.html",
+        search=search,
+        log_entry=log_entry,
+    )
+
+
+@web_bp.route("/searches/<int:search_id>/logs/<int:log_id>/download", methods=["GET"])
+@require_login
+def search_log_download(search_id: int, log_id: int):
+    """Download raw log file for a scrape entry."""
+    from flask import current_app, send_file
+    from log_manager import SearchLogManager
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Not found"}), 404
+
+    log_entry = storage.get_scrape_log_raw(log_id, g.user["id"])
+    if not log_entry:
+        return jsonify({"error": "Log not found"}), 404
+
+    if log_entry.get("raw_logs"):
+        from io import BytesIO
+        buf = BytesIO(log_entry["raw_logs"].encode("utf-8"))
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name=f"search_{search_id}_log_{log_id}.log",
+        )
+
+    log_mgr = SearchLogManager(search_id)
+    if log_mgr.file_exists():
+        return send_file(
+            log_mgr.log_file,
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name=f"search_{search_id}_log_{log_id}.log",
+        )
+
+    return "No logs available", 404
 
 
 def require_admin(f):

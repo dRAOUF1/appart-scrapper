@@ -3,4 +3,6 @@ browser_profile_uc/*
 **/__pycache__/*
 .env
 seloger_scraper.log
-.opencode
+.opencodelogs/
+
+logs/
