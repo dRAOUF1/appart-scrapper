@@ -73,7 +73,7 @@ class BaseParser(ABC):
         """
         ...
 
-    def scrape(self, criteria: dict) -> list[Listing]:
+    def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """
         Scrape listings directly from the source using API/HTTP calls.
 
@@ -81,6 +81,7 @@ class BaseParser(ABC):
 
         Args:
             criteria: Search criteria dict (placeIds, priceMin, etc.)
+            use_bff: Whether to use the BFF API for full pagination.
 
         Returns:
             List of Listing objects.

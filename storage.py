@@ -319,6 +319,18 @@ class Storage:
                 ALTER TABLE scrape_logs ADD COLUMN IF NOT EXISTS raw_logs TEXT;
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+            """)
+
+            cur.execute("""
+                INSERT INTO app_settings (key, value) VALUES ('use_bff_api', 'true')
+                ON CONFLICT (key) DO NOTHING;
+            """)
+
         self._conn.commit()
         logger.debug("Tables PostgreSQL initialisées")
 
@@ -672,6 +684,28 @@ class Storage:
             )
             row = cur.fetchone()
             return row[0] if row else None
+
+    # ------------------------------------------------------------------
+    # App Settings
+    # ------------------------------------------------------------------
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        """Get an app setting by key."""
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
+            row = cur.fetchone()
+            return row[0] if row else default
+
+    def set_setting(self, key: str, value: str) -> bool:
+        """Set an app setting (insert or update)."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO app_settings (key, value) VALUES (%s, %s)
+                   ON CONFLICT (key) DO UPDATE SET value = %s""",
+                (key, value, value),
+            )
+            self._conn.commit()
+            return True
 
     # ------------------------------------------------------------------
     # Listings

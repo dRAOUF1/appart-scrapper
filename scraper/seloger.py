@@ -270,13 +270,18 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
     raise ValueError("Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome. Attends 15-30 minutes et réessaie.")
 
 
-def scrape(criteria: dict) -> tuple[list[dict], list, int]:
+def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]:
     """Exécute le scraping complet : données détaillées + IDs.
+
+    Args:
+        criteria: Critères de recherche SeLoger
+        use_bff: Si True, utilise l'API BFF pour récupérer tous les IDs.
+                 Si False, se limite aux résultats de classified-search.
 
     Returns:
         (detailed_listings, all_ids, total_count)
     """
-    logger.info(f"[SeLoger] Début du scraping avec critères: {criteria}")
+    logger.info(f"[SeLoger] Début du scraping avec critères: {criteria} (BFF={'oui' if use_bff else 'non'})")
 
     detailed = []
     try:
@@ -287,14 +292,20 @@ def scrape(criteria: dict) -> tuple[list[dict], list, int]:
 
     all_ids = []
     total = len(detailed)
-    try:
-        all_ids, total = get_all_ids(criteria)
-        logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces")
-    except Exception as e:
-        logger.error(f"[SeLoger] Échec BFF: {e}")
-        if detailed:
-            all_ids = [l["id"] for l in detailed]
-            total = len(detailed)
-            logger.info(f"[SeLoger] Fallback: {len(all_ids)} IDs depuis les détails")
+
+    if use_bff:
+        try:
+            all_ids, total = get_all_ids(criteria)
+            logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces")
+        except Exception as e:
+            logger.error(f"[SeLoger] Échec BFF: {e}")
+            if detailed:
+                all_ids = [l["id"] for l in detailed]
+                total = len(detailed)
+                logger.info(f"[SeLoger] Fallback: {len(all_ids)} IDs depuis les détails")
+    else:
+        all_ids = [l["id"] for l in detailed]
+        total = len(detailed)
+        logger.info(f"[SeLoger] BFF désactivé : {len(all_ids)} IDs depuis les détails uniquement")
 
     return detailed, all_ids, total

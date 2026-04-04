@@ -198,6 +198,8 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
                 )
                 return 0
 
+            use_bff = storage.get_setting("use_bff_api", "true") == "true"
+
             try:
                 parser = get_parser(search["source"])
             except ValueError as e:
@@ -210,7 +212,7 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
                 return 0
 
             try:
-                listings = parser.scrape(criteria)
+                listings = parser.scrape(criteria, use_bff=use_bff)
             except Exception as e:
                 err_msg = str(e)
                 logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
@@ -846,6 +848,7 @@ def admin():
     tab = request.args.get("tab", "dashboard")
     storage = current_app.storage
     stats = storage.get_enhanced_admin_stats()
+    stats["bff_enabled"] = storage.get_setting("use_bff_api", "true") == "true"
     return render_template("admin.html", stats=stats, active_tab=tab)
 
 
@@ -1111,6 +1114,18 @@ def admin_cleanup():
     deleted = storage.delete_old_listings(days=days)
     storage.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
+    return redirect(url_for("web.admin"))
+
+
+@web_bp.route("/admin/settings/toggle-bff", methods=["POST"])
+@require_admin
+def admin_toggle_bff():
+    storage = current_app.storage
+    current = storage.get_setting("use_bff_api", "true")
+    new_val = "false" if current == "true" else "true"
+    storage.set_setting("use_bff_api", new_val)
+    storage.log_admin_action("bff_toggled", f"BFF API {'disabled' if new_val == 'false' else 'enabled'}", g.user["username"])
+    flash(f"API BFF {'désactivée' if new_val == 'false' else 'activée'}", "success")
     return redirect(url_for("web.admin"))
 
 

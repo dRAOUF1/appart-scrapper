@@ -66,11 +66,11 @@ class SeLogerParser(BaseParser):
     SOURCE_NAME = "SeLoger"
     SOURCE_DESCRIPTION = "SeLoger.com — Scraping automatique via API"
 
-    def scrape(self, criteria: dict) -> list[Listing]:
+    def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """Execute le scraping avec les critères donnés et retourne les listings."""
         from scraper.seloger import scrape as do_scrape
 
-        detailed, all_ids, total = do_scrape(criteria)
+        detailed, all_ids, total = do_scrape(criteria, use_bff=use_bff)
 
         if not detailed:
             logger.warning(f"[SeLoger] Aucune donnée détaillée, fallback sur IDs seuls")
