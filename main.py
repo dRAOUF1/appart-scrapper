@@ -166,54 +166,55 @@ def create_app() -> Flask:
     return app
 
 
-def _execute_scrape(flask_app, search_id: int, user_id: int) -> int:
+def _execute_scrape(app, search_id: int, user_id: int) -> int:
     """Execute un scrape pour une search donnée. Retourne le nombre de nouvelles annonces."""
-    storage = flask_app.storage
-    notifier = flask_app.notifier
+    with app.app_context():
+        storage = app.storage
+        notifier = app.notifier
 
-    search = storage.get_search(search_id)
-    if not search or search["user_id"] != user_id:
-        return 0
+        search = storage.get_search(search_id)
+        if not search or search["user_id"] != user_id:
+            return 0
 
-    criteria = search.get("criteria", {})
-    if not criteria or not criteria.get("placeIds"):
-        logger.warning(f"[search:{search_id}] Critères vides, skip")
-        return 0
+        criteria = search.get("criteria", {})
+        if not criteria or not criteria.get("placeIds"):
+            logger.warning(f"[search:{search_id}] Critères vides, skip")
+            return 0
 
-    try:
-        parser = get_parser(search["source"])
-    except ValueError as e:
-        logger.error(f"[search:{search_id}] Parser inconnu: {e}")
-        return 0
+        try:
+            parser = get_parser(search["source"])
+        except ValueError as e:
+            logger.error(f"[search:{search_id}] Parser inconnu: {e}")
+            return 0
 
-    try:
-        listings = parser.scrape(criteria)
-    except Exception as e:
-        logger.error(f"[search:{search_id}] Erreur scraping: {e}")
+        try:
+            listings = parser.scrape(criteria)
+        except Exception as e:
+            logger.error(f"[search:{search_id}] Erreur scraping: {e}")
+            storage.update_last_scraped(search_id)
+            return 0
+
+        if not listings:
+            logger.info(f"[search:{search_id}] Aucune annonce trouvée")
+            storage.update_last_scraped(search_id)
+            return 0
+
+        new_listings, already = storage.save_and_link(listings, search_id)
         storage.update_last_scraped(search_id)
-        return 0
+        topic = search["ntfy_topic"]
 
-    if not listings:
-        logger.info(f"[search:{search_id}] Aucune annonce trouvée")
-        storage.update_last_scraped(search_id)
-        return 0
+        for listing in new_listings:
+            notifier.notify_new_listing(topic, listing)
+            time.sleep(0.3)
 
-    new_listings, already = storage.save_and_link(listings, search_id)
-    storage.update_last_scraped(search_id)
-    topic = search["ntfy_topic"]
+        if new_listings:
+            notifier.notify_summary(topic, len(new_listings), len(listings))
 
-    for listing in new_listings:
-        notifier.notify_new_listing(topic, listing)
-        time.sleep(0.3)
-
-    if new_listings:
-        notifier.notify_summary(topic, len(new_listings), len(listings))
-
-    logger.info(
-        f"[search:{search_id}] Scraped {len(listings)}, "
-        f"{len(new_listings)} new, {len(already)} already known"
-    )
-    return len(new_listings)
+        logger.info(
+            f"[search:{search_id}] Scraped {len(listings)}, "
+            f"{len(new_listings)} new, {len(already)} already known"
+        )
+        return len(new_listings)
 
 
 # ======================================================================
@@ -552,6 +553,7 @@ def scrape_search_web(search_id: int):
         return redirect(url_for("web.searches"))
 
     user_id = g.user["id"]
+    app = current_app._get_current_object()
     lock = _scrape_locks.setdefault(search_id, threading.Lock())
     if not lock.acquire(blocking=False):
         flash("Scraping déjà en cours pour cette recherche", "warning")
@@ -559,7 +561,7 @@ def scrape_search_web(search_id: int):
 
     def run():
         try:
-            _execute_scrape(current_app, search_id, user_id)
+            _execute_scrape(app, search_id, user_id)
         finally:
             lock.release()
 
