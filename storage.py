@@ -122,8 +122,9 @@ class Storage:
         self._init_db()
 
     def _init_db(self) -> None:
-        """Create all tables."""
+        """Create all tables. Uses advisory lock to prevent deadlocks with multiple workers."""
         with self._conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(987654321)")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id          SERIAL PRIMARY KEY,
