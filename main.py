@@ -490,26 +490,36 @@ def searches():
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
         source = request.form.get("source", "seloger").strip()
-        place_ids = request.form.get("place_ids", "").strip()
-        price_min = request.form.get("price_min", "").strip()
-        price_max = request.form.get("price_max", "").strip()
-        space_min = request.form.get("space_min", "").strip()
-        distribution = request.form.get("distribution", "Rent")
-        estate_type = request.form.get("estate_type", "Apartment")
+        search_url = request.form.get("search_url", "").strip()
         scrape_interval = int(request.form.get("scrape_interval", 5))
 
         criteria = {}
-        if place_ids:
-            criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
-            criteria["location"] = {"placeIds": criteria["placeIds"]}
-        if price_min:
-            criteria["priceMin"] = int(price_min)
-        if price_max:
-            criteria["priceMax"] = int(price_max)
-        if space_min:
-            criteria["spaceMin"] = int(space_min)
-        criteria["distributionTypes"] = [distribution]
-        criteria["estateTypes"] = [estate_type]
+
+        if search_url:
+            from scraper.seloger import parse_search_url
+            criteria = parse_search_url(search_url)
+            if not criteria.get("placeIds"):
+                flash("L'URL ne contient pas de lieu valide (locations=...)", "error")
+                return redirect(url_for("web.searches"))
+        else:
+            place_ids = request.form.get("place_ids", "").strip()
+            price_min = request.form.get("price_min", "").strip()
+            price_max = request.form.get("price_max", "").strip()
+            space_min = request.form.get("space_min", "").strip()
+            distribution = request.form.get("distribution", "Rent")
+            estate_type = request.form.get("estate_type", "Apartment")
+
+            if place_ids:
+                criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
+                criteria["location"] = {"placeIds": criteria["placeIds"]}
+            if price_min:
+                criteria["priceMin"] = int(price_min)
+            if price_max:
+                criteria["priceMax"] = int(price_max)
+            if space_min:
+                criteria["spaceMin"] = int(space_min)
+            criteria["distributionTypes"] = [distribution]
+            criteria["estateTypes"] = [estate_type]
 
         if label and ntfy_topic and criteria.get("placeIds"):
             current_app.storage.create_search(
@@ -517,7 +527,7 @@ def searches():
             )
             flash(f"Recherche « {label} » créée !", "success")
         else:
-            flash("Label, topic ntfy et au moins un placeId requis", "error")
+            flash("Label, topic ntfy et au moins un lieu requis", "error")
         return redirect(url_for("web.searches"))
 
     all_searches = current_app.storage.get_user_searches(g.user["id"])

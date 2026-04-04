@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-header">
     <h1>Mes Recherches</h1>
-    <p class="text-muted">Configurez vos recherches et le serveur scrape automatiquement SeLoger pour vous.</p>
+    <p class="text-muted">Collez l'URL d'une recherche SeLoger et le serveur scrape automatiquement.</p>
 </div>
 
 <!-- Create search form -->
@@ -22,26 +22,28 @@
                 <small class="form-help">Les notifications seront envoyées sur <code>ntfy.sh/votre-topic</code></small>
             </div>
             <div class="form-group">
-                <label for="source">Source</label>
-                <select id="source" name="source">
-                    {% for s in sources %}
-                    <option value="{{ s.id }}">{{ s.name }} — {{ s.description }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group">
                 <label for="scrape_interval">Intervalle de scrape (min)</label>
                 <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
                 <small class="form-help">Le serveur scrape toutes les X minutes automatiquement</small>
             </div>
         </div>
 
+        <div class="form-group" style="margin-top: 1rem;">
+            <label for="search_url">URL de recherche SeLoger <span style="color: var(--danger)">*</span></label>
+            <input type="url" id="search_url" name="search_url"
+                placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096&priceMin=600&priceMax=850"
+                required>
+            <small class="form-help">
+                Allez sur <a href="https://www.seloger.com" target="_blank">SeLoger</a>, faites votre recherche, copiez l'URL de la page de résultats.
+            </small>
+        </div>
+
         <details style="margin-top: 1rem;">
-            <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Critères de recherche SeLoger</summary>
+            <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Ou remplir manuellement</summary>
             <div class="form-grid" style="margin-top: 0.75rem;">
                 <div class="form-group">
-                    <label for="place_ids">Place IDs <span style="color: var(--danger)">*</span></label>
-                    <input type="text" id="place_ids" name="place_ids" placeholder="Ex: AD08FR31096" required>
+                    <label for="place_ids">Place IDs</label>
+                    <input type="text" id="place_ids" name="place_ids" placeholder="Ex: AD08FR31096">
                     <small class="form-help">ID(s) de lieu SeLoger (séparés par des virgules)</small>
                 </div>
                 <div class="form-group">
@@ -135,7 +137,7 @@
 <div class="empty-state">
     <div class="empty-icon">🔍</div>
     <h3>Aucune recherche</h3>
-    <p>Créez votre première recherche ci-dessus pour commencer.</p>
+    <p>Collez l'URL d'une recherche SeLoger ci-dessus pour commencer.</p>
 </div>
 {% endif %}
 

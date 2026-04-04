@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from curl_cffi import requests as curl_requests
@@ -19,6 +20,70 @@ BFF_API = "https://www.seloger.com/serp-bff/search"
 SEARCH_URL = "https://www.seloger.com/classified-search"
 
 MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+
+def parse_search_url(url: str) -> dict:
+    """Extrait les critères de recherche d'une URL SeLoger.
+
+    Exemple d'URL :
+    https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment
+        &locations=AD08FR31096&priceMin=600&priceMax=850&spaceMin=19
+
+    Retourne un dict criteria compatible avec scrape().
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+
+    criteria = {}
+
+    if "locations" in params:
+        place_ids = [v for v in params["locations"]]
+        criteria["placeIds"] = place_ids
+        criteria["location"] = {"placeIds": place_ids}
+
+    if "distributionTypes" in params:
+        criteria["distributionTypes"] = params["distributionTypes"]
+
+    if "estateTypes" in params:
+        criteria["estateTypes"] = params["estateTypes"]
+
+    if "priceMin" in params:
+        try:
+            criteria["priceMin"] = int(params["priceMin"][0])
+        except (ValueError, IndexError):
+            pass
+
+    if "priceMax" in params:
+        try:
+            criteria["priceMax"] = int(params["priceMax"][0])
+        except (ValueError, IndexError):
+            pass
+
+    if "spaceMin" in params:
+        try:
+            criteria["spaceMin"] = int(params["spaceMin"][0])
+        except (ValueError, IndexError):
+            pass
+
+    if "spaceMax" in params:
+        try:
+            criteria["spaceMax"] = int(params["spaceMax"][0])
+        except (ValueError, IndexError):
+            pass
+
+    if "rooms" in params:
+        criteria["rooms"] = params["rooms"]
+
+    if "bedrooms" in params:
+        criteria["bedrooms"] = params["bedrooms"]
+
+    if "order" in params:
+        criteria["order"] = params["order"][0]
+
+    if "locationsInBuildingExcluded" in params:
+        criteria["locationsInBuildingExcluded"] = params["locationsInBuildingExcluded"]
+
+    return criteria
 
 
 def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tuple[list, int]:
