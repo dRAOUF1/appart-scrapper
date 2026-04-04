@@ -4,31 +4,78 @@
 {% block content %}
 <div class="page-header">
     <h1>Mes Recherches</h1>
-    <p class="text-muted">Configurez vos recherches et obtenez le lien POST pour votre script.</p>
+    <p class="text-muted">Configurez vos recherches et le serveur scrape automatiquement SeLoger pour vous.</p>
 </div>
 
 <!-- Create search form -->
 <div class="card">
     <h2>➕ Nouvelle recherche</h2>
-    <form method="POST" class="form-inline">
-        <div class="form-group">
-            <label for="label">Label</label>
-            <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
+    <form method="POST">
+        <div class="form-grid">
+            <div class="form-group">
+                <label for="label">Label</label>
+                <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
+            </div>
+            <div class="form-group">
+                <label for="ntfy_topic">Topic ntfy</label>
+                <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
+                <small class="form-help">Les notifications seront envoyées sur <code>ntfy.sh/votre-topic</code></small>
+            </div>
+            <div class="form-group">
+                <label for="source">Source</label>
+                <select id="source" name="source">
+                    {% for s in sources %}
+                    <option value="{{ s.id }}">{{ s.name }} — {{ s.description }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="scrape_interval">Intervalle de scrape (min)</label>
+                <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
+                <small class="form-help">Le serveur scrape toutes les X minutes automatiquement</small>
+            </div>
         </div>
-        <div class="form-group">
-            <label for="ntfy_topic">Topic ntfy</label>
-            <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
-            <small class="form-help">Les notifications seront envoyées sur <code>ntfy.sh/votre-topic</code></small>
-        </div>
-        <div class="form-group">
-            <label for="source">Source</label>
-            <select id="source" name="source">
-                {% for s in sources %}
-                <option value="{{ s.id }}">{{ s.name }} — {{ s.description }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <button type="submit" class="btn btn-primary">Créer la recherche</button>
+
+        <details style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Critères de recherche SeLoger</summary>
+            <div class="form-grid" style="margin-top: 0.75rem;">
+                <div class="form-group">
+                    <label for="place_ids">Place IDs <span style="color: var(--danger)">*</span></label>
+                    <input type="text" id="place_ids" name="place_ids" placeholder="Ex: AD08FR31096" required>
+                    <small class="form-help">ID(s) de lieu SeLoger (séparés par des virgules)</small>
+                </div>
+                <div class="form-group">
+                    <label for="price_min">Prix min (€)</label>
+                    <input type="number" id="price_min" name="price_min" placeholder="600">
+                </div>
+                <div class="form-group">
+                    <label for="price_max">Prix max (€)</label>
+                    <input type="number" id="price_max" name="price_max" placeholder="850">
+                </div>
+                <div class="form-group">
+                    <label for="space_min">Surface min (m²)</label>
+                    <input type="number" id="space_min" name="space_min" placeholder="19">
+                </div>
+                <div class="form-group">
+                    <label for="distribution">Type de transaction</label>
+                    <select id="distribution" name="distribution">
+                        <option value="Rent">Location</option>
+                        <option value="Sale">Achat</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="estate_type">Type de bien</label>
+                    <select id="estate_type" name="estate_type">
+                        <option value="Apartment">Appartement</option>
+                        <option value="House">Maison</option>
+                        <option value="Parking">Parking</option>
+                        <option value="Land">Terrain</option>
+                    </select>
+                </div>
+            </div>
+        </details>
+
+        <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">Créer la recherche</button>
     </form>
 </div>
 
@@ -44,9 +91,19 @@
                 <span class="badge">{{ s.listing_count }} annonce{{ 's' if s.listing_count != 1 else '' }}</span>
                 <span class="badge badge-source">{{ s.source }}</span>
                 <span class="text-muted">· topic: <code>{{ s.ntfy_topic }}</code></span>
+                {% if s.scrape_interval %}
+                <span class="badge" style="background: var(--accent);">⏱ {{ s.scrape_interval }}min</span>
+                {% endif %}
+                {% if s.last_scraped %}
+                <span class="text-muted">· dernier scrape: {{ s.last_scraped.strftime('%H:%M') if s.last_scraped else '—' }}</span>
+                {% endif %}
             </div>
             <div class="search-actions">
                 <a href="{{ url_for('web.listings', search_id=s.id) }}" class="btn btn-sm btn-primary">Voir annonces</a>
+                <form method="POST" action="{{ url_for('web.scrape_search_web', search_id=s.id) }}"
+                    style="display:inline" onsubmit="return confirm('Lancer le scraping maintenant ?')">
+                    <button type="submit" class="btn btn-sm btn-success">🔄 Scrapper</button>
+                </form>
                 <form method="POST" action="{{ url_for('web.delete_search_web', search_id=s.id) }}"
                     style="display:inline" onsubmit="return confirm('Supprimer cette recherche ?')">
                     <button type="submit" class="btn btn-sm btn-danger">Supprimer</button>
@@ -54,30 +111,23 @@
             </div>
         </div>
 
-        <!-- Generated POST link -->
-        <div class="code-block">
-            <div class="code-label">🔗 Lien POST pour votre script :</div>
-            <code class="code-url" id="url-{{ s.id }}">{{ base_url }}/api/parse/{{ s.id }}</code>
-            <button class="btn btn-sm btn-ghost" onclick="copyText('url-{{ s.id }}')">Copier</button>
-        </div>
-
+        <!-- Criteria display -->
+        {% if s.criteria %}
         <details class="curl-example">
-            <summary>🐍 Exemple Python</summary>
-            <pre><code>import requests
-
-with open("page_seloger.html", "r") as f:
-    html = f.read()
-
-resp = requests.post(
-    "{{ base_url }}/api/parse/{{ s.id }}",
-    headers={
-        "X-API-Token": "{{ api_token }}",
-        "Content-Type": "text/html",
-    },
-    data=html,
-)
-print(resp.json())</code></pre>
+            <summary>📋 Critères de recherche</summary>
+            <pre><code>{{ s.criteria | tojson(indent=2) }}</code></pre>
         </details>
+        {% endif %}
+
+        <!-- Update interval -->
+        <div class="code-block">
+            <div class="code-label">⏱ Intervalle de scrape (minutes) :</div>
+            <form method="POST" action="{{ url_for('web.update_interval_web', search_id=s.id) }}" style="display: flex; gap: 0.5rem; align-items: center;">
+                <input type="number" name="scrape_interval" value="{{ s.scrape_interval or 5 }}" min="1" max="1440"
+                    style="width: 80px; padding: 0.3rem 0.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+                <button type="submit" class="btn btn-sm btn-ghost">Mettre à jour</button>
+            </form>
+        </div>
     </div>
     {% endfor %}
 </div>

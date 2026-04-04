@@ -3,19 +3,22 @@ SeLoger API Platform — Point d'entrée unique.
 
 Sert à la fois l'API REST (/api/*) et le frontend web (/) depuis
 un seul processus Flask, compatible Render (un seul web service).
+
+Le scraping est fait côté serveur via les API SeLoger (BFF + classified-search).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
+import threading
 from functools import wraps
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env file before anything else
 load_dotenv(Path(__file__).parent / ".env")
 
 from flask import (
@@ -29,14 +32,13 @@ from notifier import Notifier
 from parsers import get_parser, list_sources
 from storage import Storage
 
-# ======================================================================
-# App factory
-# ======================================================================
+_scrape_locks: dict[int, threading.Lock] = {}
+_scheduler_started = False
+
 
 def create_app() -> Flask:
     config = load_config()
 
-    # Logging
     logger.remove()
     logger.add(
         sys.stderr,
@@ -57,7 +59,6 @@ def create_app() -> Flask:
     )
     app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-    # Shared objects stored on app
     app.config["APP_CONFIG"] = config
     app.storage = Storage(database_url=config.database.database_url)
     app.notifier = Notifier(
@@ -65,16 +66,13 @@ def create_app() -> Flask:
         priority=config.ntfy.priority,
     )
 
-    # Silence werkzeug spam
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-    # Inject admin_username into all templates (used by navbar in base.html)
     @app.context_processor
     def inject_admin():
         return {"admin_username": os.environ.get("ADMIN_USERNAME", "admin")}
 
-    # Run cleanup at startup
     def run_startup_cleanup():
         try:
             deleted = app.storage.delete_old_listings(days=4)
@@ -83,14 +81,10 @@ def create_app() -> Flask:
         except Exception as e:
             logger.error(f"Erreur lors du cleanup au démarrage: {e}")
 
-    # Start background scheduler for periodic cleanup (every 4 days)
     def start_cleanup_scheduler():
-        import threading
-        import time
-
         def scheduler_loop():
             while True:
-                time.sleep(24 * 60 * 60)  # 1 jour en secondes
+                time.sleep(24 * 60 * 60)
                 try:
                     deleted = app.storage.delete_old_listings(days=4)
                     if deleted:
@@ -101,25 +95,125 @@ def create_app() -> Flask:
         t = threading.Thread(target=scheduler_loop, daemon=True)
         t.start()
 
-    # Only run startup cleanup and scheduler in the first worker
-    # Use a file lock to prevent duplicate execution across Gunicorn workers
-    lock_file = "/tmp/appart_cleanup_started"
-    if not os.path.exists(lock_file):
+    def start_scrape_scheduler():
+        def scheduler_loop():
+            while True:
+                time.sleep(60)
+                try:
+                    _run_scheduled_scrapes(app)
+                except Exception as e:
+                    logger.error(f"Erreur scrape scheduler: {e}")
+
+        t = threading.Thread(target=scheduler_loop, daemon=True)
+        t.start()
+        logger.info("Scrape scheduler démarré")
+
+    def _run_scheduled_scrapes(flask_app):
+        with flask_app.app_context():
+            all_users = flask_app.storage.get_all_users()
+            for user in all_users:
+                searches = flask_app.storage.get_user_searches(user["id"])
+                for s in searches:
+                    criteria = s.get("criteria", {})
+                    if not criteria or not isinstance(criteria, dict):
+                        continue
+                    if not criteria.get("placeIds"):
+                        continue
+
+                    interval = s.get("scrape_interval", 5)
+                    last_scraped = s.get("last_scraped")
+
+                    if last_scraped:
+                        from datetime import datetime, timedelta
+                        if isinstance(last_scraped, str):
+                            last_scraped = datetime.fromisoformat(last_scraped)
+                        threshold = datetime.utcnow() - timedelta(minutes=interval)
+                        if last_scraped > threshold:
+                            continue
+
+                    search_id = s["id"]
+                    lock = _scrape_locks.setdefault(search_id, threading.Lock())
+                    if not lock.acquire(blocking=False):
+                        continue
+
+                    try:
+                        _execute_scrape(flask_app, search_id, user["id"])
+                    finally:
+                        lock.release()
+
+    def start_background_tasks():
+        global _scheduler_started
+        lock_file = "/tmp/appart_scheduler_started"
+        if _scheduler_started or os.path.exists(lock_file):
+            return
+        _scheduler_started = True
         try:
             with open(lock_file, "w") as f:
                 f.write(str(os.getpid()))
             run_startup_cleanup()
             start_cleanup_scheduler()
-            logger.info("Cleanup scheduler démarré (toutes les 4 jours)")
+            start_scrape_scheduler()
+            logger.info("Tous les schedulers démarrés")
         except Exception as e:
-            logger.error(f"Erreur lors du démarrage du scheduler: {e}")
+            logger.error(f"Erreur lors du démarrage des schedulers: {e}")
 
-    # Register blueprints
+    start_background_tasks()
+
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(web_bp)
 
-    logger.info("Appart Tracker — démarré")
+    logger.info("Appart Tracker — démarré (mode scraper)")
     return app
+
+
+def _execute_scrape(flask_app, search_id: int, user_id: int) -> int:
+    """Execute un scrape pour une search donnée. Retourne le nombre de nouvelles annonces."""
+    storage = flask_app.storage
+    notifier = flask_app.notifier
+
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != user_id:
+        return 0
+
+    criteria = search.get("criteria", {})
+    if not criteria or not criteria.get("placeIds"):
+        logger.warning(f"[search:{search_id}] Critères vides, skip")
+        return 0
+
+    try:
+        parser = get_parser(search["source"])
+    except ValueError as e:
+        logger.error(f"[search:{search_id}] Parser inconnu: {e}")
+        return 0
+
+    try:
+        listings = parser.scrape(criteria)
+    except Exception as e:
+        logger.error(f"[search:{search_id}] Erreur scraping: {e}")
+        storage.update_last_scraped(search_id)
+        return 0
+
+    if not listings:
+        logger.info(f"[search:{search_id}] Aucune annonce trouvée")
+        storage.update_last_scraped(search_id)
+        return 0
+
+    new_listings, already = storage.save_and_link(listings, search_id)
+    storage.update_last_scraped(search_id)
+    topic = search["ntfy_topic"]
+
+    for listing in new_listings:
+        notifier.notify_new_listing(topic, listing)
+        time.sleep(0.3)
+
+    if new_listings:
+        notifier.notify_summary(topic, len(new_listings), len(listings))
+
+    logger.info(
+        f"[search:{search_id}] Scraped {len(listings)}, "
+        f"{len(new_listings)} new, {len(already)} already known"
+    )
+    return len(new_listings)
 
 
 # ======================================================================
@@ -130,7 +224,6 @@ api_bp = Blueprint("api", __name__)
 
 
 def require_token(f):
-    """Decorator: require X-API-Token header and set g.user."""
     @wraps(f)
     def wrapper(*args, **kwargs):
         from flask import current_app
@@ -145,11 +238,8 @@ def require_token(f):
     return wrapper
 
 
-# --- Users ---
-
 @api_bp.route("/users", methods=["POST"])
 def create_user():
-    """Create a new user.  Body: {"username": "..."}"""
     from flask import current_app
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
@@ -164,7 +254,6 @@ def create_user():
 
 @api_bp.route("/users/login", methods=["POST"])
 def login_user():
-    """Login by username — returns the existing token."""
     from flask import current_app
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
@@ -178,36 +267,34 @@ def login_user():
 
 @api_bp.route("/sources", methods=["GET"])
 def get_sources():
-    """List all available parser sources."""
     return jsonify(list_sources()), 200
 
-
-# --- Searches ---
 
 @api_bp.route("/searches", methods=["POST"])
 @require_token
 def create_search():
-    """Create a search.  Body: {"label": "...", "ntfy_topic": "..."}"""
     from flask import current_app
     data = request.get_json(silent=True) or {}
     label = data.get("label", "").strip()
     ntfy_topic = data.get("ntfy_topic", "").strip()
     source = data.get("source", "seloger").strip()
+    criteria = data.get("criteria", {})
+    scrape_interval = data.get("scrape_interval", 5)
     if not label or not ntfy_topic:
         return jsonify({"error": "label et ntfy_topic requis"}), 400
-    # Validate source exists
     try:
-        get_parser(source)  # will raise if unknown
+        get_parser(source)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    search = current_app.storage.create_search(g.user["id"], label, ntfy_topic, source)
+    search = current_app.storage.create_search(
+        g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
+    )
     return jsonify(search), 201
 
 
 @api_bp.route("/searches", methods=["GET"])
 @require_token
 def list_searches():
-    """List searches for the authenticated user."""
     from flask import current_app
     searches = current_app.storage.get_user_searches(g.user["id"])
     return jsonify(searches), 200
@@ -216,7 +303,6 @@ def list_searches():
 @api_bp.route("/searches/<int:search_id>", methods=["DELETE"])
 @require_token
 def delete_search(search_id: int):
-    """Delete a search."""
     from flask import current_app
     search = current_app.storage.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
@@ -225,88 +311,50 @@ def delete_search(search_id: int):
     return jsonify({"ok": True}), 200
 
 
-# --- Parse ---
-
-@api_bp.route("/parse/<int:search_id>", methods=["POST"])
+@api_bp.route("/searches/<int:search_id>/criteria", methods=["PUT"])
 @require_token
-def parse_html(search_id: int):
-    """
-    Receive HTML, parse SeLoger listings, save & notify.
+def update_criteria(search_id: int):
+    from flask import current_app
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    data = request.get_json(silent=True) or {}
+    criteria = data.get("criteria")
+    if criteria is not None:
+        current_app.storage.update_search_criteria(search_id, criteria)
+    if "scrape_interval" in data:
+        current_app.storage.update_scrape_interval(search_id, data["scrape_interval"])
+    return jsonify({"ok": True}), 200
 
-    Accepts:
-        Content-Type: text/html  →  raw HTML body
-        Content-Type: multipart/form-data  →  file field 'file'
-    """
+
+@api_bp.route("/scrape/<int:search_id>", methods=["POST"])
+@require_token
+def scrape_search(search_id: int):
     from flask import current_app
     storage = current_app.storage
-    notifier = current_app.notifier
-
-    # Auth: check search belongs to user
     search = storage.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
-    # Resolve parser for this search's source
-    try:
-        parser = get_parser(search["source"])
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    lock = _scrape_locks.setdefault(search_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        return jsonify({"error": "Scraping déjà en cours pour cette recherche"}), 409
 
-    # Get HTML
-    if request.content_type and "multipart/form-data" in request.content_type:
-        f = request.files.get("file")
-        if not f:
-            return jsonify({"error": "Champ 'file' manquant"}), 400
-        html = f.read().decode("utf-8", errors="replace")
-    else:
-        html = request.get_data(as_text=True)
+    def run():
+        try:
+            _execute_scrape(current_app, search_id, g.user["id"])
+        finally:
+            lock.release()
 
-    if not html or len(html) < 100:
-        return jsonify({"error": "HTML vide ou trop court"}), 400
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
 
-    # Parse
-    listings = parser.parse(html)
-    if not listings:
-        return jsonify({
-            "total_parsed": 0,
-            "new_listings": 0,
-            "listings": [],
-        }), 200
+    return jsonify({"message": "Scraping démarré en arrière-plan"}), 202
 
-    # Save & link
-    new_listings, already = storage.save_and_link(listings, search_id)
-    topic = search["ntfy_topic"]
-
-    # Notify for new ones
-    for listing in new_listings:
-        notifier.notify_new_listing(topic, listing)
-        time.sleep(0.3)
-
-    if new_listings:
-        notifier.notify_summary(topic, len(new_listings), len(listings))
-
-    logger.info(
-        f"[search:{search_id}] Parsed {len(listings)}, "
-        f"{len(new_listings)} new, {len(already)} already known"
-    )
-
-    return jsonify({
-        "total_parsed": len(listings),
-        "new_listings": len(new_listings),
-        "listings": [
-            {**li.to_dict(), "is_new": True} for li in new_listings
-        ] + [
-            {**li.to_dict(), "is_new": False} for li in already
-        ],
-    }), 200
-
-
-# --- Listings ---
 
 @api_bp.route("/listings/<int:search_id>", methods=["GET"])
 @require_token
 def get_listings(search_id: int):
-    """Get listings for a search (paginated)."""
     from flask import current_app
     storage = current_app.storage
     search = storage.get_search(search_id)
@@ -328,22 +376,16 @@ def get_listings(search_id: int):
     }), 200
 
 
-# --- Stats ---
-
 @api_bp.route("/stats", methods=["GET"])
 @require_token
 def get_stats():
-    """Get user statistics."""
     stats = current_app.storage.get_user_stats(g.user["id"])
     return jsonify(stats), 200
 
 
-# --- Cleanup ---
-
 @api_bp.route("/cleanup", methods=["POST"])
 @require_token
 def cleanup_listings():
-    """Delete listings older than 4 days."""
     days = int(request.args.get("days", 4))
     deleted = current_app.storage.delete_old_listings(days=days)
     return jsonify({"deleted": deleted, "days": days}), 200
@@ -361,7 +403,6 @@ web_bp = Blueprint(
 
 
 def require_login(f):
-    """Decorator: redirect to login if no session."""
     @wraps(f)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
@@ -392,7 +433,6 @@ def login():
             flash("Nom d'utilisateur requis", "error")
             return render_template("login.html")
 
-        # Try to find existing user, otherwise create
         user = current_app.storage.get_user_by_username(username)
         if not user:
             try:
@@ -423,7 +463,6 @@ def dashboard():
     stats = current_app.storage.get_user_stats(g.user["id"])
     searches = current_app.storage.get_user_searches(g.user["id"])
 
-    # Get recent listings across all searches
     recent = []
     for s in searches[:5]:
         listings = current_app.storage.get_listings_for_search(s["id"], limit=3)
@@ -450,11 +489,34 @@ def searches():
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
         source = request.form.get("source", "seloger").strip()
-        if label and ntfy_topic:
-            current_app.storage.create_search(g.user["id"], label, ntfy_topic, source)
+        place_ids = request.form.get("place_ids", "").strip()
+        price_min = request.form.get("price_min", "").strip()
+        price_max = request.form.get("price_max", "").strip()
+        space_min = request.form.get("space_min", "").strip()
+        distribution = request.form.get("distribution", "Rent")
+        estate_type = request.form.get("estate_type", "Apartment")
+        scrape_interval = int(request.form.get("scrape_interval", 5))
+
+        criteria = {}
+        if place_ids:
+            criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
+            criteria["location"] = {"placeIds": criteria["placeIds"]}
+        if price_min:
+            criteria["priceMin"] = int(price_min)
+        if price_max:
+            criteria["priceMax"] = int(price_max)
+        if space_min:
+            criteria["spaceMin"] = int(space_min)
+        criteria["distributionTypes"] = [distribution]
+        criteria["estateTypes"] = [estate_type]
+
+        if label and ntfy_topic and criteria.get("placeIds"):
+            current_app.storage.create_search(
+                g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
+            )
             flash(f"Recherche « {label} » créée !", "success")
         else:
-            flash("Label et topic ntfy requis", "error")
+            flash("Label, topic ntfy et au moins un placeId requis", "error")
         return redirect(url_for("web.searches"))
 
     all_searches = current_app.storage.get_user_searches(g.user["id"])
@@ -479,8 +541,52 @@ def delete_search_web(search_id: int):
     return redirect(url_for("web.searches"))
 
 
+@web_bp.route("/searches/<int:search_id>/scrape", methods=["POST"])
+@require_login
+def scrape_search_web(search_id: int):
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    lock = _scrape_locks.setdefault(search_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        flash("Scraping déjà en cours pour cette recherche", "warning")
+        return redirect(url_for("web.searches"))
+
+    def run():
+        try:
+            _execute_scrape(current_app, search_id, g.user["id"])
+        finally:
+            lock.release()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    flash("Scraping démarré en arrière-plan !", "success")
+    return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/interval", methods=["POST"])
+@require_login
+def update_interval_web(search_id: int):
+    from flask import current_app
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    interval = int(request.form.get("scrape_interval", 5))
+    if interval < 1:
+        interval = 1
+    storage.update_scrape_interval(search_id, interval)
+    flash(f"Intervalle mis à jour : {interval} minutes", "success")
+    return redirect(url_for("web.searches"))
+
+
 def require_admin(f):
-    """Decorator: require login + admin username."""
     @wraps(f)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
@@ -601,6 +707,32 @@ def admin_delete_search(search_id):
         storage.log_admin_action("search_deleted", f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}", g.user["username"])
         flash(f"Recherche '{search['label']}' supprimée", "success")
     return redirect(url_for("web.admin_searches"))
+
+
+@web_bp.route("/admin/searches/<int:search_id>/scrape", methods=["POST"])
+@require_admin
+def admin_scrape_search(search_id):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.admin_searches"))
+
+    lock = _scrape_locks.setdefault(search_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        flash("Scraping déjà en cours", "warning")
+        return redirect(url_for("web.admin_search_detail", search_id=search_id))
+
+    def run():
+        try:
+            _execute_scrape(current_app, search_id, search["user_id"])
+        finally:
+            lock.release()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    flash("Scraping démarré en arrière-plan !", "success")
+    return redirect(url_for("web.admin_search_detail", search_id=search_id))
 
 
 @web_bp.route("/admin/listings")
@@ -774,14 +906,6 @@ def listings(search_id: int):
     )
 
 
-# ======================================================================
-# Health check (root-level for Render)
-# ======================================================================
-
-# The web_bp already handles "/" via index(), which redirects.
-# Render pings "/" expecting 200; the redirect (302) works, but we also
-# expose a dedicated /health that returns plain 200.
-
 @web_bp.route("/health")
 def health():
     return "OK", 200
@@ -790,16 +914,11 @@ def health():
 @web_bp.route("/cleanup", methods=["POST"])
 @require_login
 def cleanup():
-    """Web route to trigger cleanup from dashboard."""
     days = int(request.form.get("days", 4))
     deleted = current_app.storage.delete_old_listings(days=days)
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
     return redirect(url_for("web.dashboard"))
 
-
-# ======================================================================
-# Entry point
-# ======================================================================
 
 if __name__ == "__main__":
     app = create_app()

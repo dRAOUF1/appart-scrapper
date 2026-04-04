@@ -73,6 +73,20 @@ class BaseParser(ABC):
         """
         ...
 
+    def scrape(self, criteria: dict) -> list[Listing]:
+        """
+        Scrape listings directly from the source using API/HTTP calls.
+
+        Override this method for scrapers that don't need HTML input.
+
+        Args:
+            criteria: Search criteria dict (placeIds, priceMin, etc.)
+
+        Returns:
+            List of Listing objects.
+        """
+        raise NotImplementedError("scrape() not implemented for this source")
+
     def __init_subclass__(cls, **kwargs):
         """Auto-register subclasses that have a SOURCE_ID."""
         super().__init_subclass__(**kwargs)

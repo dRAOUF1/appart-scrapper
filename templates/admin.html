@@ -360,7 +360,25 @@
             <span class="detail-label">Créée le</span>
             <span class="detail-value">{{ search_detail.created_at.strftime('%d/%m/%Y %H:%M') if search_detail.created_at else '—' }}</span>
         </div>
+        {% if search_detail.scrape_interval %}
+        <div class="detail-row">
+            <span class="detail-label">Intervalle scrape</span>
+            <span class="detail-value">{{ search_detail.scrape_interval }} minutes</span>
+        </div>
+        {% endif %}
+        {% if search_detail.last_scraped %}
+        <div class="detail-row">
+            <span class="detail-label">Dernier scrape</span>
+            <span class="detail-value">{{ search_detail.last_scraped.strftime('%d/%m/%Y %H:%M') if search_detail.last_scraped else '—' }}</span>
+        </div>
+        {% endif %}
     </div>
+    {% if search_detail.criteria %}
+    <div class="detail-card">
+        <h3>📋 Critères</h3>
+        <pre style="font-size: 0.75rem; margin-top: 0.5rem;"><code>{{ search_detail.criteria | tojson(indent=2) }}</code></pre>
+    </div>
+    {% endif %}
 </div>
 
 {% if search_detail.recent_listings %}
@@ -394,6 +412,9 @@
 {% endif %}
 
 <div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('web.admin_scrape_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
+        <button type="submit" class="btn btn-success">🔄 Scrapper maintenant</button>
+    </form>
     <form method="POST" action="{{ url_for('web.admin_delete_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer la recherche « {{ search_detail.label }} » ?')">
         <button type="submit" class="btn btn-danger">🗑 Supprimer cette recherche</button>
     </form>
@@ -424,6 +445,8 @@
                     <th>Source</th>
                     <th>Annonces</th>
                     <th>Topic ntfy</th>
+                    <th>Intervalle</th>
+                    <th>Dernier scrape</th>
                     <th>Créée le</th>
                     <th>Actions</th>
                 </tr>
@@ -442,9 +465,14 @@
                     <td><span class="badge badge-source">{{ s.source }}</span></td>
                     <td>{{ s.listing_count }}</td>
                     <td><code class="token-mini">{{ s.ntfy_topic }}</code></td>
+                    <td><span class="badge">{{ s.scrape_interval or 5 }}min</span></td>
+                    <td class="text-muted">{{ s.last_scraped.strftime('%H:%M') if s.last_scraped else '—' }}</td>
                     <td class="text-muted">{{ s.created_at.strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
                     <td>
                         <a href="{{ url_for('web.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('web.admin_scrape_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
+                            <button type="submit" class="btn btn-sm btn-success">🔄</button>
+                        </form>
                         <form method="POST" action="{{ url_for('web.admin_delete_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Supprimer « {{ s.label }} » ?')">
                             <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
                         </form>

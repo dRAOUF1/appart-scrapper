@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from typing import Optional
 
@@ -26,6 +27,24 @@ class Listing:
         description: str = "",
         agency: str = "",
         source: str = "",
+        legacy_id: str = "",
+        price_value: float | None = None,
+        price_details: str = "",
+        city: str = "",
+        district: str = "",
+        zip_code: str = "",
+        property_type: str = "",
+        is_private: bool = False,
+        phone: str = "[]",
+        epc: str = "",
+        ges: str = "",
+        is_new: bool = False,
+        is_exclusive: bool = False,
+        has_3d_visit: bool = False,
+        creation_date: str = "",
+        update_date: str = "",
+        headline: str = "",
+        photos: str = "[]",
     ):
         self.listing_id = listing_id
         self.url = url
@@ -38,6 +57,24 @@ class Listing:
         self.description = description
         self.agency = agency
         self.source = source
+        self.legacy_id = legacy_id
+        self.price_value = price_value
+        self.price_details = price_details
+        self.city = city
+        self.district = district
+        self.zip_code = zip_code
+        self.property_type = property_type
+        self.is_private = is_private
+        self.phone = phone
+        self.epc = epc
+        self.ges = ges
+        self.is_new = is_new
+        self.is_exclusive = is_exclusive
+        self.has_3d_visit = has_3d_visit
+        self.creation_date = creation_date
+        self.update_date = update_date
+        self.headline = headline
+        self.photos = photos
 
     def __repr__(self) -> str:
         return f"Listing({self.listing_id}, {self.title}, {self.price})"
@@ -55,6 +92,24 @@ class Listing:
             "description": self.description,
             "agency": self.agency,
             "source": self.source,
+            "legacy_id": self.legacy_id,
+            "price_value": self.price_value,
+            "price_details": self.price_details,
+            "city": self.city,
+            "district": self.district,
+            "zip_code": self.zip_code,
+            "property_type": self.property_type,
+            "is_private": self.is_private,
+            "phone": self.phone,
+            "epc": self.epc,
+            "ges": self.ges,
+            "is_new": self.is_new,
+            "is_exclusive": self.is_exclusive,
+            "has_3d_visit": self.has_3d_visit,
+            "creation_date": self.creation_date,
+            "update_date": self.update_date,
+            "headline": self.headline,
+            "photos": self.photos,
         }
 
 
@@ -80,29 +135,50 @@ class Storage:
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS searches (
-                    id          SERIAL PRIMARY KEY,
-                    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    label       TEXT NOT NULL,
-                    ntfy_topic  TEXT NOT NULL,
-                    source      TEXT NOT NULL DEFAULT 'seloger',
-                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    id              SERIAL PRIMARY KEY,
+                    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    label           TEXT NOT NULL,
+                    ntfy_topic      TEXT NOT NULL,
+                    source          TEXT NOT NULL DEFAULT 'seloger',
+                    criteria        JSONB DEFAULT '{}',
+                    scrape_interval INTEGER DEFAULT 5,
+                    last_scraped    TIMESTAMP,
+                    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS listings (
-                    listing_id  TEXT PRIMARY KEY,
-                    url         TEXT NOT NULL,
-                    title       TEXT,
-                    price       TEXT,
-                    surface     TEXT,
-                    rooms       TEXT,
-                    location    TEXT,
-                    image_url   TEXT,
-                    description TEXT,
-                    agency      TEXT,
-                    source      TEXT DEFAULT '',
-                    first_seen  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    listing_id      TEXT PRIMARY KEY,
+                    url             TEXT NOT NULL,
+                    title           TEXT,
+                    price           TEXT,
+                    surface         TEXT,
+                    rooms           TEXT,
+                    location        TEXT,
+                    image_url       TEXT,
+                    description     TEXT,
+                    agency          TEXT,
+                    source          TEXT DEFAULT '',
+                    legacy_id       TEXT DEFAULT '',
+                    price_value     FLOAT,
+                    price_details   TEXT DEFAULT '',
+                    city            TEXT DEFAULT '',
+                    district        TEXT DEFAULT '',
+                    zip_code        TEXT DEFAULT '',
+                    property_type   TEXT DEFAULT '',
+                    is_private      BOOLEAN DEFAULT FALSE,
+                    phone           JSONB DEFAULT '[]',
+                    epc             TEXT DEFAULT '',
+                    ges             TEXT DEFAULT '',
+                    is_new          BOOLEAN DEFAULT FALSE,
+                    is_exclusive    BOOLEAN DEFAULT FALSE,
+                    has_3d_visit    BOOLEAN DEFAULT FALSE,
+                    creation_date   TEXT DEFAULT '',
+                    update_date     TEXT DEFAULT '',
+                    headline        TEXT DEFAULT '',
+                    photos          JSONB DEFAULT '[]',
+                    first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
 
@@ -146,6 +222,70 @@ class Storage:
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_admin_logs_action
                     ON admin_logs(action);
+            """)
+
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_value FLOAT;
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE;
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE;
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE;
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE;
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '';
+            """)
+            cur.execute("""
+                ALTER TABLE listings ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
+            """)
+            cur.execute("""
+                ALTER TABLE searches ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}';
+            """)
+            cur.execute("""
+                ALTER TABLE searches ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5;
+            """)
+            cur.execute("""
+                ALTER TABLE searches ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP;
             """)
 
         self._conn.commit()
@@ -199,12 +339,13 @@ class Storage:
     # Searches
     # ------------------------------------------------------------------
 
-    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger") -> dict:
+    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5) -> dict:
         """Create a search configuration for a user."""
+        criteria_json = json.dumps(criteria or {})
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "INSERT INTO searches (user_id, label, ntfy_topic, source) VALUES (%s, %s, %s, %s) RETURNING id",
-                (user_id, label, ntfy_topic, source),
+                "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria, scrape_interval) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (user_id, label, ntfy_topic, source, criteria_json, scrape_interval),
             )
             row = cur.fetchone()
             self._conn.commit()
@@ -214,13 +355,47 @@ class Storage:
                 "label": label,
                 "ntfy_topic": ntfy_topic,
                 "source": source,
+                "criteria": criteria or {},
+                "scrape_interval": scrape_interval,
             }
+
+    def update_search_criteria(self, search_id: int, criteria: dict) -> bool:
+        """Update the criteria for a search."""
+        criteria_json = json.dumps(criteria)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE searches SET criteria = %s WHERE id = %s",
+                (criteria_json, search_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def update_scrape_interval(self, search_id: int, interval_minutes: int) -> bool:
+        """Update the scrape interval for a search."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE searches SET scrape_interval = %s WHERE id = %s",
+                (interval_minutes, search_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def update_last_scraped(self, search_id: int) -> bool:
+        """Update the last scraped timestamp."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE searches SET last_scraped = CURRENT_TIMESTAMP WHERE id = %s",
+                (search_id,),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
 
     def get_user_searches(self, user_id: int) -> list[dict]:
         """Get all searches for a user."""
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT s.id, s.label, s.ntfy_topic, s.source, s.created_at,
+                """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
+                          s.scrape_interval, s.last_scraped, s.created_at,
                           COUNT(sl.listing_id) AS listing_count
                    FROM searches s
                    LEFT JOIN search_listings sl ON sl.search_id = s.id
@@ -230,17 +405,28 @@ class Storage:
                 (user_id,),
             )
             rows = cur.fetchall()
-            return [dict(r) for r in rows]
+            result = []
+            for r in rows:
+                d = dict(r)
+                if isinstance(d.get("criteria"), str):
+                    d["criteria"] = json.loads(d["criteria"])
+                result.append(d)
+            return result
 
     def get_search(self, search_id: int) -> Optional[dict]:
         """Get a single search by id (including user_id for auth checks)."""
         with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, user_id, label, ntfy_topic, source, created_at FROM searches WHERE id = %s",
+                "SELECT id, user_id, label, ntfy_topic, source, criteria, scrape_interval, last_scraped, created_at FROM searches WHERE id = %s",
                 (search_id,),
             )
             row = cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            d = dict(row)
+            if isinstance(d.get("criteria"), str):
+                d["criteria"] = json.loads(d["criteria"])
+            return d
 
     def delete_search(self, search_id: int) -> bool:
         """Delete a search and its listing links (cascades)."""
@@ -248,6 +434,74 @@ class Storage:
             cur.execute("DELETE FROM searches WHERE id = %s", (search_id,))
             self._conn.commit()
             return cur.rowcount > 0
+
+    def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
+        """Get all searches with user info and listing counts."""
+        query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
+                          s.scrape_interval, s.last_scraped, s.created_at,
+                          u.id AS user_id, u.username,
+                          COUNT(sl.listing_id) AS listing_count
+                   FROM searches s
+                   JOIN users u ON u.id = s.user_id
+                   LEFT JOIN search_listings sl ON sl.search_id = s.id"""
+        conditions = []
+        params = []
+
+        if user_filter:
+            conditions.append("u.username ILIKE %s")
+            params.append(f"%{user_filter}%")
+        if source_filter:
+            conditions.append("s.source = %s")
+            params.append(source_filter)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " GROUP BY s.id, u.id ORDER BY s.created_at DESC"
+
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            result = []
+            for r in cur.fetchall():
+                d = dict(r)
+                if isinstance(d.get("criteria"), str):
+                    d["criteria"] = json.loads(d["criteria"])
+                result.append(d)
+            return result
+
+    def get_search_detail(self, search_id: int) -> Optional[dict]:
+        """Get a search with full details including user info and recent listings."""
+        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT s.*, u.username
+                   FROM searches s
+                   JOIN users u ON u.id = s.user_id
+                   WHERE s.id = %s""",
+                (search_id,),
+            )
+            search = cur.fetchone()
+            if not search:
+                return None
+            result = dict(search)
+            if isinstance(result.get("criteria"), str):
+                result["criteria"] = json.loads(result["criteria"])
+
+            cur.execute(
+                """SELECT l.*, sl.found_at
+                   FROM listings l
+                   JOIN search_listings sl ON sl.listing_id = l.listing_id
+                   WHERE sl.search_id = %s
+                   ORDER BY sl.found_at DESC LIMIT 10""",
+                (search_id,),
+            )
+            result["recent_listings"] = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM search_listings WHERE search_id = %s",
+                (search_id,),
+            )
+            result["total_listings"] = cur.fetchone()["cnt"]
+            return result
 
     # ------------------------------------------------------------------
     # Listings
@@ -263,13 +517,26 @@ class Storage:
                 cur.execute(
                     """INSERT INTO listings
                        (listing_id, url, title, price, surface, rooms,
-                        location, image_url, description, agency, source)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        location, image_url, description, agency, source,
+                        legacy_id, price_value, price_details, city, district,
+                        zip_code, property_type, is_private, phone,
+                        epc, ges, is_new, is_exclusive, has_3d_visit,
+                        creation_date, update_date, headline, photos)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                               %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                               %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (
                         listing.listing_id, listing.url, listing.title,
                         listing.price, listing.surface, listing.rooms,
                         listing.location, listing.image_url,
                         listing.description, listing.agency, listing.source,
+                        listing.legacy_id, listing.price_value, listing.price_details,
+                        listing.city, listing.district, listing.zip_code,
+                        listing.property_type, listing.is_private, listing.phone,
+                        listing.epc, listing.ges, listing.is_new,
+                        listing.is_exclusive, listing.has_3d_visit,
+                        listing.creation_date, listing.update_date,
+                        listing.headline, listing.photos,
                     ),
                 )
                 self._conn.commit()
@@ -530,65 +797,6 @@ class Storage:
                 (listing_id,),
             )
             result["linked_searches"] = [dict(r) for r in cur.fetchall()]
-            return result
-
-    def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
-        """Get all searches with user info and listing counts."""
-        query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.created_at,
-                          u.id AS user_id, u.username,
-                          COUNT(sl.listing_id) AS listing_count
-                   FROM searches s
-                   JOIN users u ON u.id = s.user_id
-                   LEFT JOIN search_listings sl ON sl.search_id = s.id"""
-        conditions = []
-        params = []
-
-        if user_filter:
-            conditions.append("u.username ILIKE %s")
-            params.append(f"%{user_filter}%")
-        if source_filter:
-            conditions.append("s.source = %s")
-            params.append(source_filter)
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-
-        query += " GROUP BY s.id, u.id ORDER BY s.created_at DESC"
-
-        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            return [dict(r) for r in cur.fetchall()]
-
-    def get_search_detail(self, search_id: int) -> Optional[dict]:
-        """Get a search with full details including user info and recent listings."""
-        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """SELECT s.*, u.username
-                   FROM searches s
-                   JOIN users u ON u.id = s.user_id
-                   WHERE s.id = %s""",
-                (search_id,),
-            )
-            search = cur.fetchone()
-            if not search:
-                return None
-            result = dict(search)
-
-            cur.execute(
-                """SELECT l.*, sl.found_at
-                   FROM listings l
-                   JOIN search_listings sl ON sl.listing_id = l.listing_id
-                   WHERE sl.search_id = %s
-                   ORDER BY sl.found_at DESC LIMIT 10""",
-                (search_id,),
-            )
-            result["recent_listings"] = [dict(r) for r in cur.fetchall()]
-
-            cur.execute(
-                "SELECT COUNT(*) AS cnt FROM search_listings WHERE search_id = %s",
-                (search_id,),
-            )
-            result["total_listings"] = cur.fetchone()["cnt"]
             return result
 
     def delete_search_admin(self, search_id: int) -> bool:
