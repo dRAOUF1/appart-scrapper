@@ -65,7 +65,7 @@
             <div class="listing-meta">
                 <span class="text-muted text-sm">
                     {% if li.creation_date|parse_iso_date %}
-                    Publiée le {{ li.creation_date|parse_iso_date.strftime('%d/%m/%Y') }}
+                    Publiée le {{ (li.creation_date|parse_iso_date).strftime('%d/%m/%Y') }}
                     {% elif li.found_at %}
                     Détectée le {{ li.found_at.strftime('%d/%m/%Y %H:%M') }}
                     {% endif %}
