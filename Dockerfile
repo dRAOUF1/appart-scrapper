@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- Application code ----
-COPY main.py config.py notifier.py storage.py ./
+COPY main.py config.py notifier.py storage.py log_manager.py ./
 COPY parsers/ parsers/
 COPY scraper/ scraper/
 COPY config.yaml .
