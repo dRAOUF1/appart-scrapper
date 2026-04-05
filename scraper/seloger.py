@@ -2,11 +2,14 @@
 
 Contourne DataDome avec Camoufox (navigateur Firefox anti-detect avec
 spoofing au niveau C++). Fingerprints injectés nativement, indétectables.
+
+Mode debug GUI : définir SCRAPER_HEADLESS=false pour voir le navigateur.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -173,8 +176,10 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
     - Résolution automatique des challenges JS
     - Backoff exponentiel avec jitter
     """
+    headless = os.environ.get("SCRAPER_HEADLESS", "true").lower() != "false"
     url = _build_search_url(criteria, order)
     logger.debug(f"  URL de recherche: {url[:120]}...")
+    logger.debug(f"  Mode: {'headless' if headless else 'GUI visible'}")
 
     for attempt in range(max_retries):
         try:
@@ -187,27 +192,38 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
 
             from camoufox.sync_api import Camoufox
 
-            with Camoufox(headless=True, humanize=True, geoip=False) as browser:
+            with Camoufox(headless=headless, humanize=True, geoip=False) as browser:
                 page = browser.new_page()
                 logger.debug(f"  Navigation vers classified-search...")
                 page.goto(url, wait_until="networkidle", timeout=30000)
 
-                wait_time = random.uniform(5000, 10000)
+                wait_time = 15000 if not headless else random.uniform(5000, 10000)
                 logger.debug(f"  Attente résolution challenges JS ({wait_time/1000:.1f}s)...")
                 page.wait_for_timeout(wait_time)
 
-                html = page.content()
+                current_url = page.url
+                page_title = page.title()
+                logger.debug(f"  URL courante: {current_url}")
+                logger.debug(f"  Titre page: {page_title}")
 
-                if "403 Forbidden" in html or "access denied" in html.lower():
-                    logger.warning(f"    Page de blocage détectée")
-                    continue
+                html = page.content()
 
                 if "__UFRN_FETCHER__" not in html:
                     logger.warning(f"    Pas de données trouvées dans le HTML")
-                    logger.debug(f"    HTML length: {len(html)} chars")
-                    title_match = re.search(r'<title>(.*?)</title>', html, re.DOTALL)
-                    if title_match:
-                        logger.debug(f"    Page title: {title_match.group(1)}")
+                    logger.info(f"    HTML length: {len(html)} chars")
+                    logger.info(f"    Titre: {page_title}")
+                    logger.info(f"    URL: {current_url}")
+
+                    if not headless:
+                        screenshot_path = f"/tmp/seloger_debug_attempt_{attempt}.png"
+                        page.screenshot(path=screenshot_path)
+                        logger.info(f"    Screenshot sauvegardé: {screenshot_path}")
+
+                    html_preview = html[:500].replace("\n", " ")
+                    logger.debug(f"    HTML preview: {html_preview}")
+
+                    if "403" in page_title or "blocked" in page_title.lower() or "access denied" in html.lower():
+                        logger.warning(f"    Page de blocage détectée")
                     continue
 
                 match = re.search(
