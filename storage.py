@@ -556,18 +556,16 @@ class Storage:
             self._close_conn(conn)
 
     def get_user_searches(self, user_id: int) -> list[dict]:
-        """Get all searches for a user."""
+        """Get all searches for a user — subquery instead of LEFT JOIN to avoid cartesian product."""
         conn = self._get_conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
                     """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
                               s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
-                              COUNT(sl.listing_id) AS listing_count
+                              (SELECT COUNT(*) FROM search_listings WHERE search_id = s.id) AS listing_count
                        FROM searches s
-                       LEFT JOIN search_listings sl ON sl.search_id = s.id
                        WHERE s.user_id = %s
-                       GROUP BY s.id
                        ORDER BY s.created_at DESC""",
                     (user_id,),
                 )
@@ -1061,6 +1059,57 @@ class Storage:
                     "total_listings": row["total_listings"],
                     "new_today": row["new_today"],
                 }
+        finally:
+            self._close_conn(conn)
+
+    def get_dashboard_data(self, user_id: int) -> dict:
+        """Get all dashboard data in 1 connection — stats + searches + recent listings."""
+        conn = self._get_conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Stats
+                cur.execute("""
+                    SELECT
+                        (SELECT COUNT(*) FROM searches WHERE user_id = %s) AS searches,
+                        (SELECT COUNT(DISTINCT sl.listing_id)
+                         FROM search_listings sl JOIN searches s ON s.id = sl.search_id
+                         WHERE s.user_id = %s) AS total_listings,
+                        (SELECT COUNT(DISTINCT sl.listing_id)
+                         FROM search_listings sl JOIN searches s ON s.id = sl.search_id
+                         WHERE s.user_id = %s AND sl.found_at >= CURRENT_DATE) AS new_today
+                """, (user_id, user_id, user_id))
+                stats = dict(cur.fetchone())
+
+                # Searches with counts
+                cur.execute("""
+                    SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
+                           s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
+                           (SELECT COUNT(*) FROM search_listings WHERE search_id = s.id) AS listing_count
+                    FROM searches s
+                    WHERE s.user_id = %s
+                    ORDER BY s.created_at DESC
+                """, (user_id,))
+                searches = []
+                for r in cur.fetchall():
+                    d = dict(r)
+                    if isinstance(d.get("criteria"), str):
+                        d["criteria"] = json.loads(d["criteria"])
+                    searches.append(d)
+
+                # Recent listings across all searches — single query with JOIN
+                cur.execute("""
+                    SELECT l.id AS listing_id, l.title, l.price, l.surface, l.rooms,
+                           l.location, l.url, l.image_url, l.agency, l.city,
+                           sl.found_at, s.label AS search_label
+                    FROM search_listings sl
+                    JOIN searches s ON s.id = sl.search_id
+                    JOIN listings l ON l.listing_id = sl.listing_id
+                    WHERE s.user_id = %s
+                    ORDER BY sl.found_at DESC LIMIT 10
+                """, (user_id,))
+                recent = [dict(r) for r in cur.fetchall()]
+
+            return {"stats": stats, "searches": searches, "recent": recent}
         finally:
             self._close_conn(conn)
 

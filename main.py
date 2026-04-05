@@ -511,23 +511,15 @@ def logout():
 @require_login
 def dashboard():
     from flask import current_app
-    stats = current_app.storage.get_user_stats(g.user["id"])
-    searches = current_app.storage.get_user_searches(g.user["id"])
-
-    recent = []
-    for s in searches[:5]:
-        listings = current_app.storage.get_listings_for_search(s["id"], limit=3)
-        for li in listings:
-            li["search_label"] = s["label"]
-            recent.append(li)
-    recent.sort(key=lambda x: x.get("found_at", ""), reverse=True)
-
+    from datetime import datetime
+    data = current_app.storage.get_dashboard_data(g.user["id"])
     return render_template(
         "dashboard.html",
-        stats=stats,
-        searches=searches,
-        recent=recent[:10],
+        stats=data["stats"],
+        searches=data["searches"],
+        recent=data["recent"][:10],
         api_token=session.get("api_token"),
+        now=datetime.utcnow,
     )
 
 
@@ -581,6 +573,7 @@ def searches():
         return redirect(url_for("web.searches"))
 
     all_searches = current_app.storage.get_user_searches(g.user["id"])
+    from datetime import datetime
     base_url = request.url_root.rstrip("/")
     return render_template(
         "searches.html",
@@ -588,6 +581,7 @@ def searches():
         api_token=session.get("api_token"),
         base_url=base_url,
         sources=sources,
+        now=datetime.utcnow,
     )
 
 
@@ -685,7 +679,7 @@ def edit_search(search_id: int):
             criteria = parse_search_url(search_url)
             if not criteria.get("placeIds"):
                 flash("L'URL ne contient pas de lieu valide", "error")
-                return render_template("search_edit.html", search=search)
+                return render_template("search_edit.html", search=search, now=datetime.utcnow)
         else:
             place_ids = request.form.get("place_ids", "").strip()
             price_min = request.form.get("price_min", "").strip()
@@ -718,7 +712,8 @@ def edit_search(search_id: int):
             flash("Label, topic ntfy et au moins un lieu requis", "error")
 
     stats = storage.get_scrape_stats(search_id)
-    return render_template("search_edit.html", search=search, stats=stats)
+    from datetime import datetime
+    return render_template("search_edit.html", search=search, stats=stats, now=datetime.utcnow)
 
 
 @web_bp.route("/searches/<int:search_id>/logs", methods=["GET"])
@@ -740,7 +735,7 @@ def search_logs(search_id: int):
     total = storage.count_scrape_logs(search_id, status_filter=status_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
     stats = storage.get_scrape_stats(search_id)
-
+    from datetime import datetime
     return render_template(
         "search_logs.html",
         search=search,
@@ -750,6 +745,7 @@ def search_logs(search_id: int):
         total_pages=total_pages,
         status_filter=status_filter,
         stats=stats,
+        now=datetime.utcnow,
     )
 
 
