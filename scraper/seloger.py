@@ -1,15 +1,12 @@
 """SeLoger scraper — API BFF + classified-search avec LZ-string.
 
-Contourne DataDome avec Camoufox (navigateur Firefox anti-detect avec
-spoofing au niveau C++). Fingerprints injectés nativement, indétectables.
-
-Mode debug GUI : définir SCRAPER_HEADLESS=false pour voir le navigateur.
+Utilise un User-Agent iPhone mobile Safari pour bypass DataDome.
+Pas de navigateur, pas de proxy, pas de dépendance lourde.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import random
 import re
 import time
@@ -27,6 +24,8 @@ BFF_ONLY_KEYS = {
 
 BFF_API = "https://www.seloger.com/serp-bff/search"
 SEARCH_URL = "https://www.seloger.com/classified-search"
+
+MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
 
 def _build_search_url(criteria: dict, order: str | None = None) -> str:
@@ -64,14 +63,7 @@ def clean_criteria_for_bff(criteria: dict) -> dict:
 
 
 def parse_search_url(url: str) -> dict:
-    """Extrait les critères de recherche d'une URL SeLoger.
-
-    Exemple d'URL :
-    https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment
-        &locations=AD08FR31096&priceMin=600&priceMax=850&spaceMin=19
-
-    Retourne un dict criteria compatible avec scrape().
-    """
+    """Extrait les critères de recherche d'une URL SeLoger."""
     parsed = urlparse(url)
     params = parse_qs(parsed.query)
 
@@ -128,11 +120,7 @@ def parse_search_url(url: str) -> dict:
 
 
 def _split_csv_values(values: list[str]) -> list[str]:
-    """Splitte les valeurs comma-separated en liste plate.
-
-    ['House,Apartment'] → ['House', 'Apartment']
-    ['Rent'] → ['Rent']
-    """
+    """Splitte les valeurs comma-separated en liste plate."""
     result = []
     for v in values:
         result.extend(v.split(","))
@@ -185,16 +173,11 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
     """Récupère les données détaillées depuis le HTML compressé.
 
-    Utilise Camoufox (Firefox anti-detect) pour bypass DataDome:
-    - Spoofing fingerprints au niveau C++ (indétectable)
-    - Humanize: mouvements de souris réalistes
-    - Résolution automatique des challenges JS
-    - Backoff exponentiel avec jitter
+    Utilise un User-Agent iPhone mobile Safari pour bypass DataDome.
+    DataDome ne bloque pas les requêtes mobiles simples avec ce UA.
     """
-    headless = os.environ.get("SCRAPER_HEADLESS", "true").lower() != "false"
     url = _build_search_url(criteria, order)
     logger.debug(f"  URL de recherche: {url[:120]}...")
-    logger.debug(f"  Mode: {'headless' if headless else 'GUI visible'}")
 
     for attempt in range(max_retries):
         try:
@@ -205,120 +188,108 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             else:
                 logger.info(f"  Tentative 1/{max_retries}...")
 
-            from camoufox.sync_api import Camoufox
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": MOBILE_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "fr-FR,fr;q=0.9",
+            })
 
-            with Camoufox(headless=headless, humanize=True, geoip=False) as browser:
-                page = browser.new_page()
-                logger.debug(f"  Navigation vers classified-search...")
-                page.goto(url, wait_until="networkidle", timeout=30000)
+            session.get("https://www.seloger.com/", timeout=15)
 
-                wait_time = 15000 if not headless else random.uniform(5000, 10000)
-                logger.debug(f"  Attente résolution challenges JS ({wait_time/1000:.1f}s)...")
-                page.wait_for_timeout(wait_time)
+            resp = session.get(url, timeout=20)
 
-                current_url = page.url
-                page_title = page.title()
-                logger.debug(f"  URL courante: {current_url}")
-                logger.debug(f"  Titre page: {page_title}")
+            if resp.status_code == 403:
+                logger.warning(f"    Bloqué (403) — IP temporairement limitée par DataDome")
+                continue
 
-                html = page.content()
+            resp.raise_for_status()
 
-                if "__UFRN_FETCHER__" not in html:
-                    logger.warning(f"    Pas de données trouvées dans le HTML")
-                    logger.info(f"    HTML length: {len(html)} chars")
-                    logger.info(f"    Titre: {page_title}")
-                    logger.info(f"    URL: {current_url}")
+            if "__UFRN_FETCHER__" not in resp.text:
+                logger.warning(f"    Pas de données trouvées dans le HTML")
+                continue
 
-                    if not headless:
-                        screenshot_path = f"/tmp/seloger_debug_attempt_{attempt}.png"
-                        page.screenshot(path=screenshot_path)
-                        logger.info(f"    Screenshot sauvegardé: {screenshot_path}")
+            match = re.search(
+                r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
+                resp.text, re.DOTALL,
+            )
+            if not match:
+                logger.warning(f"    Format HTML inattendu")
+                continue
 
-                    html_preview = html[:500].replace("\n", " ")
-                    logger.debug(f"    HTML preview: {html_preview}")
+            raw = match.group(1)
+            decoded = raw.encode("utf-8").decode("unicode_escape")
+            outer = json.loads(decoded)
+            encoded = outer["data"]["classified-serp-init-data"]
 
-                    if "403" in page_title or "blocked" in page_title.lower() or "access denied" in html.lower():
-                        logger.warning(f"    Page de blocage détectée")
+            lzs = lzstring.LZString()
+            decompressed = lzs.decompressFromBase64(encoded)
+            if not decompressed:
+                logger.warning(f"    Échec décodage LZ-string")
+                continue
+
+            data = json.loads(decompressed)
+            page_props = data.get("pageProps", {})
+            classified_ids = page_props.get("classifieds", [])
+            classifieds_data = page_props.get("classifiedsData", {})
+
+            listings = []
+            for listing_id in classified_ids:
+                item = classifieds_data.get(listing_id, {})
+                if not item:
                     continue
 
-                match = re.search(
-                    r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
-                    html, re.DOTALL,
-                )
-                if not match:
-                    logger.warning(f"    Format HTML inattendu")
-                    continue
+                hf = item.get("hardFacts", {})
+                price_info = hf.get("price", {})
+                location = item.get("location", {}).get("address", {})
+                metadata = item.get("metadata", {})
+                provider = item.get("provider", {})
+                card_provider = item.get("cardProvider", {})
+                main_desc = item.get("mainDescription", {})
+                tags = item.get("tags", {})
+                raw_data = item.get("rawData", {})
+                gallery = item.get("gallery", {})
+                media = item.get("media", {})
 
-                raw = match.group(1)
-                decoded = raw.encode("utf-8").decode("unicode_escape")
-                outer = json.loads(decoded)
-                encoded = outer["data"]["classified-serp-init-data"]
+                surface_data = raw_data.get("surface", {})
+                surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data
 
-                lzs = lzstring.LZString()
-                decompressed = lzs.decompressFromBase64(encoded)
-                if not decompressed:
-                    logger.warning(f"    Échec décodage LZ-string")
-                    continue
+                listings.append({
+                    "id": listing_id,
+                    "legacyId": metadata.get("legacyId"),
+                    "title": hf.get("title", ""),
+                    "headline": main_desc.get("headline", ""),
+                    "description": main_desc.get("description", ""),
+                    "price": price_info.get("formatted"),
+                    "priceValue": raw_data.get("price"),
+                    "priceDetails": price_info.get("additionalInformation"),
+                    "surface": surface_value,
+                    "rooms": raw_data.get("nbroom"),
+                    "propertyType": raw_data.get("propertyTypeLabel"),
+                    "city": location.get("city"),
+                    "district": location.get("district"),
+                    "zipCode": location.get("zipCode"),
+                    "url": item.get("url", ""),
+                    "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
+                    "agency": card_provider.get("title"),
+                    "isPrivate": provider.get("isPrivateOwner", False),
+                    "phone": provider.get("phoneNumbers", []),
+                    "epc": item.get("energyClass", ""),
+                    "ges": item.get("gesClass", ""),
+                    "isNew": tags.get("isNew", False),
+                    "isExclusive": tags.get("isExclusive", False),
+                    "has3DVisit": tags.get("has3DVisit", False),
+                    "creationDate": metadata.get("creationDate"),
+                    "updateDate": metadata.get("updateDate"),
+                    "keyfacts": hf.get("keyfacts", []),
+                })
 
-                data = json.loads(decompressed)
-                page_props = data.get("pageProps", {})
-                classified_ids = page_props.get("classifieds", [])
-                classifieds_data = page_props.get("classifiedsData", {})
+            logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
+            return listings
 
-                listings = []
-                for listing_id in classified_ids:
-                    item = classifieds_data.get(listing_id, {})
-                    if not item:
-                        continue
-
-                    hf = item.get("hardFacts", {})
-                    price_info = hf.get("price", {})
-                    location = item.get("location", {}).get("address", {})
-                    metadata = item.get("metadata", {})
-                    provider = item.get("provider", {})
-                    card_provider = item.get("cardProvider", {})
-                    main_desc = item.get("mainDescription", {})
-                    tags = item.get("tags", {})
-                    raw_data = item.get("rawData", {})
-                    gallery = item.get("gallery", {})
-                    media = item.get("media", {})
-
-                    surface_data = raw_data.get("surface", {})
-                    surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data
-
-                    listings.append({
-                        "id": listing_id,
-                        "legacyId": metadata.get("legacyId"),
-                        "title": hf.get("title", ""),
-                        "headline": main_desc.get("headline", ""),
-                        "description": main_desc.get("description", ""),
-                        "price": price_info.get("formatted"),
-                        "priceValue": raw_data.get("price"),
-                        "priceDetails": price_info.get("additionalInformation"),
-                        "surface": surface_value,
-                        "rooms": raw_data.get("nbroom"),
-                        "propertyType": raw_data.get("propertyTypeLabel"),
-                        "city": location.get("city"),
-                        "district": location.get("district"),
-                        "zipCode": location.get("zipCode"),
-                        "url": item.get("url", ""),
-                        "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
-                        "agency": card_provider.get("title"),
-                        "isPrivate": provider.get("isPrivateOwner", False),
-                        "phone": provider.get("phoneNumbers", []),
-                        "epc": item.get("energyClass", ""),
-                        "ges": item.get("gesClass", ""),
-                        "isNew": tags.get("isNew", False),
-                        "isExclusive": tags.get("isExclusive", False),
-                        "has3DVisit": tags.get("has3DVisit", False),
-                        "creationDate": metadata.get("creationDate"),
-                        "updateDate": metadata.get("updateDate"),
-                        "keyfacts": hf.get("keyfacts", []),
-                    })
-
-                logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
-                return listings
-
+        except requests.exceptions.RequestException as e:
+            logger.error(f"    Erreur réseau: {e}")
+            continue
         except Exception as e:
             logger.error(f"    Erreur: {e}")
             continue
@@ -327,16 +298,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
 
 
 def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]:
-    """Exécute le scraping complet : données détaillées + IDs.
-
-    Stratégie :
-    1. Essai API BFF (rapide, fiable, pas de navigateur)
-    2. Essai données détaillées via Camoufox (si IP non bloquée)
-    3. Fallback sur les données BFF enrichies si Camoufox échoue
-
-    Returns:
-        (detailed_listings, all_ids, total_count)
-    """
+    """Exécute le scraping complet : données détaillées + IDs."""
     logger.info(f"[SeLoger] Début du scraping avec critères: {criteria} (BFF={'oui' if use_bff else 'non'})")
 
     bff_classifieds = []
@@ -353,7 +315,7 @@ def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]
     detailed = []
     try:
         detailed = get_detailed_listings(criteria, order="DateDesc")
-        logger.info(f"[SeLoger] {len(detailed)} annonces détaillées via Camoufox")
+        logger.info(f"[SeLoger] {len(detailed)} annonces détaillées via mobile UA")
     except Exception as e:
         logger.warning(f"[SeLoger] Échec données détaillées: {e}")
 
@@ -378,8 +340,6 @@ def _convert_bff_to_listings(classifieds: list[dict]) -> list[dict]:
             location = c.get("location", {})
             address = location.get("address", {})
             photos = c.get("photos", [])
-            first_photo = photos[0].get("url", "") if photos else ""
-            main_photo = c.get("mainPhoto", {})
 
             listings.append({
                 "id": c.get("id", ""),
