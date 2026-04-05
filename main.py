@@ -5,6 +5,10 @@ Sert à la fois l'API REST (/api/*) et le frontend web (/) depuis
 un seul processus Flask, compatible Render (un seul web service).
 
 Le scraping est fait côté serveur via les API SeLoger (BFF + classified-search).
+Architecture parallèle :
+  - ThreadPoolExecutor(max_workers=1) : max 1 scrape à la fois (évite OOM)
+  - APScheduler : scheduling propre sans threads bloqués
+  - Connexions DB thread-safe avec health check
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import os
 import sys
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from pathlib import Path
 
@@ -32,8 +37,8 @@ from notifier import Notifier
 from parsers import get_parser, list_sources
 from storage import Storage
 
-_scrape_locks: dict[int, threading.Lock] = {}
-_scheduler_started = False
+_scrape_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scrape")
+_scrape_futures: dict[int, object] = {}
 
 
 def create_app() -> Flask:
@@ -91,97 +96,57 @@ def create_app() -> Flask:
             "now": datetime.datetime.utcnow,
         }
 
-    def run_startup_cleanup():
-        try:
-            deleted = app.storage.delete_old_listings(days=4)
-            if deleted:
-                logger.info(f"Startup cleanup: {deleted} anciennes annonces supprimées")
-        except Exception as e:
-            logger.error(f"Erreur lors du cleanup au démarrage: {e}")
-
-    def start_cleanup_scheduler():
-        def scheduler_loop():
-            while True:
-                time.sleep(24 * 60 * 60)
-                try:
-                    deleted = app.storage.delete_old_listings(days=4)
-                    if deleted:
-                        logger.info(f"Scheduler cleanup: {deleted} anciennes annonces supprimées")
-                except Exception as e:
-                    logger.error(f"Erreur lors du cleanup planifié: {e}")
-
-        t = threading.Thread(target=scheduler_loop, daemon=True)
-        t.start()
-
-    def start_scrape_scheduler():
-        def scheduler_loop():
-            while True:
-                time.sleep(60)
-                try:
-                    _run_scheduled_scrapes(app)
-                except Exception as e:
-                    logger.error(f"Erreur scrape scheduler: {e}")
-
-        t = threading.Thread(target=scheduler_loop, daemon=True)
-        t.start()
-        logger.info("Scrape scheduler démarré")
-
-    def _run_scheduled_scrapes(flask_app):
-        with flask_app.app_context():
-            all_users = flask_app.storage.get_all_users()
-            for user in all_users:
-                searches = flask_app.storage.get_user_searches(user["id"])
-                for s in searches:
-                    if not s.get("is_active", True):
-                        continue
-                    criteria = s.get("criteria", {})
-                    if not criteria or not isinstance(criteria, dict):
-                        continue
-                    if not criteria.get("placeIds"):
-                        continue
-
-                    interval = s.get("scrape_interval", 5)
-                    last_scraped = s.get("last_scraped")
-
-                    if last_scraped:
-                        from datetime import datetime, timedelta
-                        if isinstance(last_scraped, str):
-                            last_scraped = datetime.fromisoformat(last_scraped)
-                        threshold = datetime.utcnow() - timedelta(minutes=interval)
-                        if last_scraped > threshold:
-                            continue
-
-                    search_id = s["id"]
-                    lock = _scrape_locks.setdefault(search_id, threading.Lock())
-                    if not lock.acquire(blocking=False):
-                        continue
-
-                    try:
-                        _execute_scrape(flask_app, search_id, user["id"])
-                    finally:
-                        lock.release()
-
     def start_background_tasks():
-        global _scheduler_started
-        lock_file = "/tmp/appart_scheduler_started"
-        if _scheduler_started or os.path.exists(lock_file):
-            return
-        _scheduler_started = True
-        try:
-            with open(lock_file, "w") as f:
-                f.write(str(os.getpid()))
+        """Démarre le scheduler APScheduler. Rien de bloquant."""
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from datetime import datetime, timedelta
 
-            def _async_startup():
-                run_startup_cleanup()
-                start_cleanup_scheduler()
-                start_scrape_scheduler()
-                logger.info("Tous les schedulers démarrés")
+        scheduler = BackgroundScheduler(daemon=True)
 
-            t = threading.Thread(target=_async_startup, daemon=True)
-            t.start()
-            logger.info("Background tasks lancées en async")
-        except Exception as e:
-            logger.error(f"Erreur lors du démarrage des schedulers: {e}")
+        def scheduled_scrape_job():
+            try:
+                with app.app_context():
+                    all_users = app.storage.get_all_users()
+                    now = datetime.utcnow()
+                    for user in all_users:
+                        searches = app.storage.get_user_searches(user["id"])
+                        for s in searches:
+                            if not s.get("is_active", True):
+                                continue
+                            criteria = s.get("criteria", {})
+                            if not criteria or not isinstance(criteria, dict):
+                                continue
+                            if not criteria.get("placeIds"):
+                                continue
+
+                            interval = s.get("scrape_interval", 5)
+                            last_scraped = s.get("last_scraped")
+
+                            if last_scraped:
+                                if isinstance(last_scraped, str):
+                                    last_scraped = datetime.fromisoformat(last_scraped)
+                                threshold = now - timedelta(minutes=interval)
+                                if last_scraped > threshold:
+                                    continue
+
+                            search_id = s["id"]
+                            if search_id in _scrape_futures:
+                                fut = _scrape_futures[search_id]
+                                if not fut.done():
+                                    continue
+                                else:
+                                    del _scrape_futures[search_id]
+
+                            fut = _scrape_executor.submit(_execute_scrape, app, search_id, user["id"])
+                            _scrape_futures[search_id] = fut
+            except Exception as e:
+                logger.error(f"Erreur scheduled_scrape_job: {e}")
+
+        scheduler.add_job(scheduled_scrape_job, "interval", seconds=30, id="scrape_scheduler", max_instances=1)
+        scheduler.start()
+        logger.info("Scrape scheduler démarré (toutes les 30s)")
+
+    start_background_tasks()
 
     start_background_tasks()
 
@@ -425,18 +390,15 @@ def scrape_search(search_id: int):
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
-    lock = _scrape_locks.setdefault(search_id, threading.Lock())
-    if not lock.acquire(blocking=False):
-        return jsonify({"error": "Scraping déjà en cours pour cette recherche"}), 409
+    if search_id in _scrape_futures:
+        fut = _scrape_futures[search_id]
+        if not fut.done():
+            return jsonify({"error": "Scraping déjà en cours pour cette recherche"}), 409
+        else:
+            del _scrape_futures[search_id]
 
-    def run():
-        try:
-            _execute_scrape(current_app, search_id, g.user["id"])
-        finally:
-            lock.release()
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
+    fut = _scrape_executor.submit(_execute_scrape, current_app._get_current_object(), search_id, g.user["id"])
+    _scrape_futures[search_id] = fut
 
     return jsonify({"message": "Scraping démarré en arrière-plan"}), 202
 
@@ -650,21 +612,17 @@ def scrape_search_web(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    user_id = g.user["id"]
+    if search_id in _scrape_futures:
+        fut = _scrape_futures[search_id]
+        if not fut.done():
+            flash("Scraping déjà en cours pour cette recherche", "warning")
+            return redirect(url_for("web.searches"))
+        else:
+            del _scrape_futures[search_id]
+
     app = current_app._get_current_object()
-    lock = _scrape_locks.setdefault(search_id, threading.Lock())
-    if not lock.acquire(blocking=False):
-        flash("Scraping déjà en cours pour cette recherche", "warning")
-        return redirect(url_for("web.searches"))
-
-    def run():
-        try:
-            _execute_scrape(app, search_id, user_id)
-        finally:
-            lock.release()
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
+    fut = _scrape_executor.submit(_execute_scrape, app, search_id, g.user["id"])
+    _scrape_futures[search_id] = fut
     flash("Scraping démarré en arrière-plan !", "success")
     return redirect(url_for("web.searches"))
 
@@ -1011,19 +969,16 @@ def admin_scrape_search(search_id):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.admin_searches"))
 
-    lock = _scrape_locks.setdefault(search_id, threading.Lock())
-    if not lock.acquire(blocking=False):
-        flash("Scraping déjà en cours", "warning")
-        return redirect(url_for("web.admin_search_detail", search_id=search_id))
+    if search_id in _scrape_futures:
+        fut = _scrape_futures[search_id]
+        if not fut.done():
+            flash("Scraping déjà en cours", "warning")
+            return redirect(url_for("web.admin_search_detail", search_id=search_id))
+        else:
+            del _scrape_futures[search_id]
 
-    def run():
-        try:
-            _execute_scrape(current_app, search_id, search["user_id"])
-        finally:
-            lock.release()
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
+    fut = _scrape_executor.submit(_execute_scrape, current_app._get_current_object(), search_id, search["user_id"])
+    _scrape_futures[search_id] = fut
     flash("Scraping démarré en arrière-plan !", "success")
     return redirect(url_for("web.admin_search_detail", search_id=search_id))
 

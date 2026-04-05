@@ -115,52 +115,34 @@ class Listing:
 
 
 class Storage:
-    """PostgreSQL-based storage with multi-user support."""
+    """PostgreSQL-based storage with multi-user support.
+
+    Utilise une connexion par thread (thread-local) avec health check
+    pour compatibilité avec pgBouncer (Render Postgres).
+    """
 
     def __init__(self, database_url: str):
+        import threading
         self.database_url = database_url
-        self._pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
-            dsn=self.database_url,
-            connect_timeout=30,
-        )
+        self._local = threading.local()
         self._init_db()
 
     def _get_conn(self):
-        return self._pool.getconn()
+        """Crée une nouvelle connexion (recommandé pour pgBouncer transaction mode)."""
+        conn = psycopg2.connect(self.database_url, connect_timeout=10)
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = '30000'")
+        cur.close()
+        return conn
 
-    def _put_conn(self, conn):
-        self._pool.putconn(conn)
-
-    def _connect_with_retry(self, max_retries: int = 3):
-        """Connect to DB with retry and timeout for Render cold start."""
-        import time
-        from urllib.parse import urlparse, urlencode, parse_qs, quote
-
-        parsed = urlparse(self.database_url)
-        params = parse_qs(parsed.query)
-        params["connect_timeout"] = ["30"]
-        db_url_with_timeout = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params, doseq=True)}"
-
-        for attempt in range(max_retries):
+    def _close_conn(self, conn):
+        """Ferme une connexion (à appeler dans le finally)."""
+        if conn is not None:
             try:
-                start = time.monotonic()
-                logger.debug(f"Tentative connexion DB (essai {attempt + 1}/{max_retries})...")
-                conn = psycopg2.connect(db_url_with_timeout)
-                cur = conn.cursor()
-                cur.execute("SET statement_timeout = '30000'")
-                cur.close()
-                elapsed = time.monotonic() - start
-                logger.info(f"Connexion DB établie en {elapsed:.2f}s")
-                return conn
-            except psycopg2.OperationalError as e:
-                if attempt < max_retries - 1:
-                    wait = 5 * (attempt + 1)
-                    logger.warning(f"Connexion DB échouée: {e}, retry dans {wait}s...")
-                    time.sleep(wait)
-                else:
-                    raise
+                if not conn.closed:
+                    self._close_conn(conn)
+            except Exception:
+                pass
 
     def _init_db(self) -> None:
         """Create all tables with timing for each phase."""
@@ -361,7 +343,7 @@ class Storage:
             total_elapsed = time.monotonic() - total_start
             logger.info(f"Tables PostgreSQL initialisées en {total_elapsed:.2f}s")
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     # ------------------------------------------------------------------
     # Users
@@ -388,7 +370,7 @@ class Storage:
             conn.rollback()
             raise ValueError(f"Le nom d'utilisateur '{username}' est déjà pris")
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_user_by_token(self, token: str) -> Optional[dict]:
         """Look up a user by API token."""
@@ -402,7 +384,7 @@ class Storage:
                 row = cur.fetchone()
                 return dict(row) if row else None
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_user_by_username(self, username: str) -> Optional[dict]:
         """Look up a user by username."""
@@ -416,7 +398,7 @@ class Storage:
                 row = cur.fetchone()
                 return dict(row) if row else None
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     # ------------------------------------------------------------------
     # Searches
@@ -445,7 +427,7 @@ class Storage:
                     "is_active": is_active,
                 }
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def update_search_criteria(self, search_id: int, criteria: dict) -> bool:
         """Update the criteria for a search."""
@@ -460,7 +442,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None) -> bool:
         """Update multiple fields of a search at once."""
@@ -494,7 +476,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def update_scrape_interval(self, search_id: int, interval_minutes: int) -> bool:
         """Update the scrape interval for a search."""
@@ -508,7 +490,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def update_last_scraped(self, search_id: int) -> bool:
         """Update the last scraped timestamp."""
@@ -522,7 +504,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_user_searches(self, user_id: int) -> list[dict]:
         """Get all searches for a user."""
@@ -549,7 +531,7 @@ class Storage:
                     result.append(d)
                 return result
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_search(self, search_id: int) -> Optional[dict]:
         """Get a single search by id (including user_id for auth checks)."""
@@ -568,7 +550,7 @@ class Storage:
                     d["criteria"] = json.loads(d["criteria"])
                 return d
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def delete_search(self, search_id: int) -> bool:
         """Delete a search and its listing links (cascades)."""
@@ -579,7 +561,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def toggle_search_active(self, search_id: int) -> bool | None:
         """Toggle is_active for a search. Returns new value or None if not found."""
@@ -594,7 +576,7 @@ class Storage:
                 conn.commit()
                 return row["is_active"] if row else None
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
         """Get all searches with user info and listing counts."""
@@ -632,7 +614,7 @@ class Storage:
                     result.append(d)
                 return result
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_search_detail(self, search_id: int) -> Optional[dict]:
         """Get a search with full details including user info and recent listings."""
@@ -670,7 +652,7 @@ class Storage:
                 result["total_listings"] = cur.fetchone()["cnt"]
                 return result
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     # ------------------------------------------------------------------
     # Scrape Logs
@@ -696,7 +678,7 @@ class Storage:
                 conn.commit()
                 return row["id"]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_scrape_logs(self, search_id: int, limit: int = 50, offset: int = 0, status_filter: str = "") -> list[dict]:
         """Get scrape logs for a search."""
@@ -719,7 +701,7 @@ class Storage:
                     result.append(d)
                 return result
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def count_scrape_logs(self, search_id: int, status_filter: str = "") -> int:
         """Count scrape logs for a search."""
@@ -734,7 +716,7 @@ class Storage:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_scrape_stats(self, search_id: int) -> dict:
         """Get scrape statistics for a search."""
@@ -766,7 +748,7 @@ class Storage:
             stats["last_scrape"] = dict(last) if last else None
             return stats
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def update_scrape_log_raw(self, log_id: int, raw_logs: str) -> bool:
         """Save raw log text to a scrape log entry."""
@@ -780,7 +762,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_scrape_log_raw(self, log_id: int, user_id: int | None = None) -> dict | None:
         """Get raw logs for a scrape log entry."""
@@ -796,7 +778,7 @@ class Storage:
                 row = cur.fetchone()
                 return dict(row) if row else None
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_latest_scrape_log_id(self, search_id: int) -> int | None:
         """Get the most recent scrape log id for a search."""
@@ -810,7 +792,7 @@ class Storage:
                 row = cur.fetchone()
                 return row[0] if row else None
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     # ------------------------------------------------------------------
     # App Settings
@@ -825,7 +807,7 @@ class Storage:
                 row = cur.fetchone()
                 return row[0] if row else default
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def set_setting(self, key: str, value: str) -> bool:
         """Set an app setting (insert or update)."""
@@ -840,7 +822,7 @@ class Storage:
                 conn.commit()
                 return True
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     # ------------------------------------------------------------------
     # Listings
@@ -885,7 +867,7 @@ class Storage:
             conn.rollback()
             return False
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def link_listing_to_search(self, search_id: int, listing_id: str) -> bool:
         """
@@ -905,7 +887,7 @@ class Storage:
             conn.rollback()
             return False
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def save_and_link(
         self, listings: list[Listing], search_id: int
@@ -949,7 +931,7 @@ class Storage:
                 rows = cur.fetchall()
                 return [dict(r) for r in rows]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def count_listings_for_search(self, search_id: int) -> int:
         """Count total listings for a search."""
@@ -963,7 +945,7 @@ class Storage:
                 row = cur.fetchone()
                 return row["cnt"]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_user_stats(self, user_id: int) -> dict:
         """Get statistics for a user."""
@@ -1000,7 +982,7 @@ class Storage:
                 "new_today": today,
             }
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     # ------------------------------------------------------------------
     # Admin
@@ -1032,7 +1014,7 @@ class Storage:
                 "new_today": today,
             }
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_all_users(self) -> list[dict]:
         """List all users with their search and listing counts."""
@@ -1052,7 +1034,7 @@ class Storage:
                 rows = cur.fetchall()
                 return [dict(r) for r in rows]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def delete_old_listings(self, days: int = 4) -> int:
         """Delete listings older than N days. Returns count of deleted listings."""
@@ -1068,7 +1050,7 @@ class Storage:
                 logger.info(f"Supprimé {deleted} anciennes annonces (>{days} jours)")
             return deleted
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def delete_listing(self, listing_id: str) -> bool:
         """Delete a single listing by ID. Cascades to search_listings."""
@@ -1079,7 +1061,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_orphan_listings_count(self) -> int:
         """Count listings not linked to any search."""
@@ -1093,7 +1075,7 @@ class Storage:
                 )
                 return cur.fetchone()[0]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def delete_orphan_listings(self) -> int:
         """Delete all listings not linked to any search. Returns count."""
@@ -1113,7 +1095,7 @@ class Storage:
                 logger.info(f"Supprimé {deleted} annonces orphelines")
             return deleted
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
         """Get all listings with pagination and filters."""
@@ -1142,7 +1124,7 @@ class Storage:
                 cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def count_all_listings(self, search_term="", source_filter="") -> int:
         """Count all listings with filters."""
@@ -1166,7 +1148,7 @@ class Storage:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_listing_detail(self, listing_id: str) -> Optional[dict]:
         """Get a single listing with its linked searches."""
@@ -1190,7 +1172,7 @@ class Storage:
                 result["linked_searches"] = [dict(r) for r in cur.fetchall()]
                 return result
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def delete_search_admin(self, search_id: int) -> bool:
         """Delete a search as admin. Returns True if deleted."""
@@ -1201,7 +1183,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def delete_user(self, user_id: int) -> bool:
         """Delete a user and all associated data (cascades)."""
@@ -1212,7 +1194,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def reset_user_token(self, user_id: int) -> str:
         """Generate a new API token for a user. Returns the new token."""
@@ -1227,7 +1209,7 @@ class Storage:
                 conn.commit()
             return new_token
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_user_detail(self, user_id: int) -> Optional[dict]:
         """Get a user with full stats and recent activity."""
@@ -1282,7 +1264,7 @@ class Storage:
                 result["recent_listings"] = [dict(r) for r in cur.fetchall()]
                 return result
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_enhanced_admin_stats(self) -> dict:
         """Get comprehensive admin statistics."""
@@ -1373,7 +1355,7 @@ class Storage:
                 "users_without_searches": users_without_searches,
             }
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def log_admin_action(self, action: str, details: str = "", performed_by: str = "") -> None:
         """Log an admin action."""
@@ -1389,7 +1371,7 @@ class Storage:
             conn.rollback()
             logger.error(f"Failed to log admin action: {e}")
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_admin_logs(self, limit=50, offset=0, action_filter="", date_from="", date_to="") -> list[dict]:
         """Get admin activity logs."""
@@ -1419,7 +1401,7 @@ class Storage:
                 cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def count_admin_logs(self, action_filter="", date_from="", date_to="") -> int:
         """Count admin logs with filters."""
@@ -1446,7 +1428,7 @@ class Storage:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def purge_old_logs(self, days: int = 30) -> int:
         """Delete logs older than N days. Returns count."""
@@ -1462,7 +1444,7 @@ class Storage:
                 logger.info(f"Purgé {deleted} anciens logs admin")
             return deleted
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_db_stats(self) -> dict:
         """Get database size and per-table statistics."""
@@ -1507,7 +1489,7 @@ class Storage:
                 "indexes": indexes,
             }
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_table_details(self, table_name: str) -> dict:
         """Get columns, constraints, and indexes for a specific table."""
@@ -1555,7 +1537,7 @@ class Storage:
                 "total_size": total_size,
             }
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def execute_query(self, sql: str) -> tuple[list[dict], int, Optional[str]]:
         """Execute a SQL query. Returns (rows, row_count, error)."""
@@ -1574,7 +1556,7 @@ class Storage:
             conn.rollback()
             return [], 0, str(e)
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def get_active_connections(self) -> list[dict]:
         """Get active PostgreSQL connections."""
@@ -1590,7 +1572,7 @@ class Storage:
                 )
                 return [dict(r) for r in cur.fetchall()]
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def truncate_table(self, table_name: str) -> bool:
         """Truncate a table. Returns True if successful."""
@@ -1605,7 +1587,7 @@ class Storage:
             logger.error(f"Failed to truncate {table_name}: {e}")
             return False
         finally:
-            self._put_conn(conn)
+            self._close_conn(conn)
 
     def close(self) -> None:
         """Close all database connections in the pool."""

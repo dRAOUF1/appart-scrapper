@@ -46,4 +46,5 @@ COPY static/ static/
 EXPOSE 10000
 
 # ---- Run with gunicorn ----
-CMD gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 120 "main:create_app()"
+# 1 worker, 30s timeout (scrapes ne bloquent plus le worker)
+CMD gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 30 --graceful-timeout 10 "main:create_app()"
