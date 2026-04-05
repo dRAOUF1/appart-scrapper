@@ -10,6 +10,7 @@ import json
 import random
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
@@ -103,11 +104,15 @@ def _get_free_proxies(count: int = 5000) -> list[str]:
 
 
 def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | None:
-    """Try fetching URL through free proxies until one works."""
-    proxies = _get_free_proxies()
-    logger.info(f"  Testing {min(max_proxies, len(proxies))} free proxies (from {len(proxies)} available)...")
+    """Try fetching URL through free proxies in parallel (10 workers).
 
-    for i, proxy in enumerate(proxies[:max_proxies]):
+    Each proxy test runs in its own thread with its own Session.
+    First proxy that succeeds cancels all remaining tests.
+    """
+    proxies = _get_free_proxies()
+    logger.info(f"  Testing up to {min(max_proxies, len(proxies))} proxies in parallel (from {len(proxies)} available)...")
+
+    def test_proxy(proxy):
         try:
             session = requests.Session()
             session.proxies = {
@@ -123,10 +128,21 @@ def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | N
             resp = session.get(url, timeout=12)
 
             if resp.status_code == 200 and "__UFRN_FETCHER__" in resp.text:
-                logger.info(f"  Proxy {proxy} worked (#{i+1})")
-                return resp
+                return proxy, resp
         except Exception:
-            continue
+            pass
+        return proxy, None
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(test_proxy, p): p for p in proxies[:max_proxies]}
+        for future in as_completed(futures):
+            proxy, resp = future.result()
+            if resp is not None:
+                # Cancel remaining tests
+                for f in futures:
+                    f.cancel()
+                logger.info(f"  Proxy {proxy} worked")
+                return resp
 
     return None
 
