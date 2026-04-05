@@ -323,7 +323,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             if resp.status_code == 403 or "__UFRN_FETCHER__" not in resp.text:
                 # IP bloquée — essayer avec proxies
                 logger.warning(f"    IP bloquée ou pas de données, tentative avec proxies gratuits...")
-                resp = _try_with_proxies(url, max_proxies=30)
+                resp = _try_with_proxies(url, max_proxies=5000)
                 if resp is None:
                     logger.warning(f"    Aucun proxy gratuit n'a fonctionné")
                     continue
