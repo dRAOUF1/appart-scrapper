@@ -118,24 +118,61 @@ class Storage:
 
     def __init__(self, database_url: str):
         self.database_url = database_url
-        self._conn = psycopg2.connect(database_url)
+        self._conn = self._connect_with_retry()
         self._init_db()
 
+    def _connect_with_retry(self, max_retries: int = 3):
+        """Connect to DB with retry and timeout for Render cold start."""
+        import time
+        from urllib.parse import urlparse, urlencode, parse_qs, quote
+
+        parsed = urlparse(self.database_url)
+        params = parse_qs(parsed.query)
+        params["connect_timeout"] = ["30"]
+        db_url_with_timeout = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params, doseq=True)}"
+
+        for attempt in range(max_retries):
+            try:
+                start = time.monotonic()
+                logger.debug(f"Tentative connexion DB (essai {attempt + 1}/{max_retries})...")
+                conn = psycopg2.connect(db_url_with_timeout)
+                cur = conn.cursor()
+                cur.execute("SET statement_timeout = '30000'")
+                cur.close()
+                elapsed = time.monotonic() - start
+                logger.info(f"Connexion DB établie en {elapsed:.2f}s")
+                return conn
+            except psycopg2.OperationalError as e:
+                if attempt < max_retries - 1:
+                    wait = 5 * (attempt + 1)
+                    logger.warning(f"Connexion DB échouée: {e}, retry dans {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
+
     def _init_db(self) -> None:
-        """Create all tables. Uses non-blocking advisory lock with retry."""
+        """Create all tables with timing for each phase."""
         import time
 
-        start = time.monotonic()
+        total_start = time.monotonic()
+        phase_start = total_start
+
+        def _log_phase(name: str):
+            elapsed = time.monotonic() - phase_start
+            logger.debug(f"  DB phase '{name}': {elapsed:.2f}s")
+            return time.monotonic()
 
         with self._conn.cursor() as cur:
+            lock_acquired = False
             for attempt in range(5):
                 cur.execute("SELECT pg_try_advisory_xact_lock(987654321)")
                 if cur.fetchone()[0]:
+                    lock_acquired = True
                     break
                 self._conn.rollback()
                 time.sleep(1)
             else:
-                logger.warning("Impossible d'obtenir le lock DB, on continue quand même")
+                logger.warning("Impossible d'obtenir le lock DB, init simplifié")
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -145,7 +182,6 @@ class Storage:
                     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS searches (
                     id              SERIAL PRIMARY KEY,
@@ -159,7 +195,6 @@ class Storage:
                     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS listings (
                     listing_id      TEXT PRIMARY KEY,
@@ -194,7 +229,6 @@ class Storage:
                     first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS search_listings (
                     search_id   INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
@@ -203,70 +237,6 @@ class Storage:
                     PRIMARY KEY (search_id, listing_id)
                 );
             """)
-
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_listings_first_seen
-                    ON listings(first_seen);
-            """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_search_listings_search
-                    ON search_listings(search_id);
-            """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_searches_user
-                    ON searches(user_id);
-            """)
-
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS admin_logs (
-                    id            SERIAL PRIMARY KEY,
-                    action        TEXT NOT NULL,
-                    details       TEXT,
-                    performed_by  TEXT,
-                    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_admin_logs_created
-                    ON admin_logs(created_at);
-            """)
-
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_admin_logs_action
-                    ON admin_logs(action);
-            """)
-
-            cur.execute("""
-                ALTER TABLE listings
-                    ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS price_value FLOAT,
-                    ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE,
-                    ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]',
-                    ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE,
-                    ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE,
-                    ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE,
-                    ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
-                    ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
-            """)
-
-            cur.execute("""
-                ALTER TABLE searches
-                    ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}',
-                    ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5,
-                    ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
-                    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
-            """)
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS scrape_logs (
                     id              SERIAL PRIMARY KEY,
@@ -282,37 +252,100 @@ class Storage:
                     raw_logs        TEXT
                 );
             """)
-
             cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
-                    ON scrape_logs(search_id);
+                CREATE TABLE IF NOT EXISTS admin_logs (
+                    id            SERIAL PRIMARY KEY,
+                    action        TEXT NOT NULL,
+                    details       TEXT,
+                    performed_by  TEXT,
+                    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
-
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
-                    ON scrape_logs(started_at DESC);
-            """)
-
-            cur.execute("""
-                ALTER TABLE scrape_logs
-                    ADD COLUMN IF NOT EXISTS raw_logs TEXT;
-            """)
-
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_settings (
                     key   TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
             """)
-
             cur.execute("""
                 INSERT INTO app_settings (key, value) VALUES ('use_bff_api', 'true')
                 ON CONFLICT (key) DO NOTHING;
             """)
+            phase_start = _log_phase("create_tables")
 
-        self._conn.commit()
-        elapsed = time.monotonic() - start
-        logger.debug(f"Tables PostgreSQL initialisées en {elapsed:.2f}s")
+            self._conn.commit()
+
+            if lock_acquired:
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_listings_first_seen
+                        ON listings(first_seen);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_listings_search
+                        ON search_listings(search_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_searches_user
+                        ON searches(user_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_admin_logs_created
+                        ON admin_logs(created_at);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_admin_logs_action
+                        ON admin_logs(action);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
+                        ON scrape_logs(search_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
+                        ON scrape_logs(started_at DESC);
+                """)
+                phase_start = _log_phase("indexes")
+
+                cur.execute("""
+                    ALTER TABLE listings
+                        ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS price_value FLOAT,
+                        ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]',
+                        ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
+                """)
+                phase_start = _log_phase("alter_listings")
+
+                cur.execute("""
+                    ALTER TABLE searches
+                        ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}',
+                        ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5,
+                        ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
+                        ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+                """)
+                cur.execute("""
+                    ALTER TABLE scrape_logs
+                        ADD COLUMN IF NOT EXISTS raw_logs TEXT;
+                """)
+                phase_start = _log_phase("alter_other")
+
+                self._conn.commit()
+
+        total_elapsed = time.monotonic() - total_start
+        logger.info(f"Tables PostgreSQL initialisées en {total_elapsed:.2f}s")
 
     # ------------------------------------------------------------------
     # Users
