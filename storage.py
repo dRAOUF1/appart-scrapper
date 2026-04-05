@@ -143,7 +143,7 @@ class Storage:
                 return g._db_conn
         except Exception:
             pass
-        return self._get_conn_for_request()
+        return self._get_conn()
 
     def _release_conn(self, conn):
         """Ne ferme la connexion que si elle n'est PAS la connexion partagée de la requête."""
@@ -153,7 +153,7 @@ class Storage:
                 return  # Ne pas fermer — sera fermé par teardown_request
         except Exception:
             pass
-        self._release_conn(conn)
+        self._close_conn(conn)
 
     def _get_ddl_conn(self):
         """Crée une connexion SANS statement_timeout pour les opérations DDL (CREATE/ALTER)."""
