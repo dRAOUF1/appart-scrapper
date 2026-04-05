@@ -89,7 +89,8 @@ def create_app() -> Flask:
                 pass
             g._db_conn = None
 
-    from datetime import datetime
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
 
     @app.template_filter("parse_iso_date")
     def parse_iso_date(value):
@@ -101,6 +102,17 @@ def create_app() -> Flask:
         except (ValueError, AttributeError):
             return None
 
+    FR_TZ = ZoneInfo("Europe/Paris")
+
+    @app.template_filter("fr_time")
+    def fr_time(dt):
+        """Convert UTC datetime to Europe/Paris time for display (handles DST)."""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(FR_TZ)
+
     import logging
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -109,7 +121,7 @@ def create_app() -> Flask:
         import datetime
         return {
             "admin_username": os.environ.get("ADMIN_USERNAME", "admin"),
-            "now": datetime.datetime.utcnow,
+            "now": lambda: datetime.datetime.now(FR_TZ),
         }
 
     def start_background_tasks():
@@ -299,7 +311,7 @@ def require_token(f):
 def create_user():
     from flask import current_app
     data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
+    username = data.get("username", "").strip().lower()
     if not username:
         return jsonify({"error": "username requis"}), 400
     try:
@@ -313,7 +325,7 @@ def create_user():
 def login_user():
     from flask import current_app
     data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
+    username = data.get("username", "").strip().lower()
     if not username:
         return jsonify({"error": "username requis"}), 400
     user = current_app.storage.get_user_by_username(username)
@@ -495,7 +507,7 @@ def index():
 def login():
     if request.method == "POST":
         from flask import current_app
-        username = request.form.get("username", "").strip()
+        username = request.form.get("username", "").strip().lower()
         if not username:
             flash("Nom d'utilisateur requis", "error")
             return render_template("login.html")
@@ -926,7 +938,7 @@ def admin_reset_token(user_id):
 @web_bp.route("/admin/users/create", methods=["POST"])
 @require_admin
 def admin_create_user():
-    username = request.form.get("username", "").strip()
+    username = request.form.get("username", "").strip().lower()
     if not username:
         flash("Nom d'utilisateur requis", "error")
         return redirect(url_for("web.admin_users"))

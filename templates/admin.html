@@ -104,7 +104,7 @@
         {% for day in stats.activity_7d %}
         <div class="bar" style="height: {{ (day.count / max_count * 100) if max_count > 0 else 0 }}%">
             <span class="bar-value">{{ day.count }}</span>
-            <span class="bar-label">{{ day.day.strftime('%d/%m') if day.day else '—' }}</span>
+            <span class="bar-label">{{ (day.day|fr_time).strftime('%d/%m') if day.day else '—' }}</span>
         </div>
         {% endfor %}
     </div>
@@ -195,7 +195,7 @@
         </div>
         <div class="detail-row">
             <span class="detail-label">Inscrit le</span>
-            <span class="detail-value">{{ user_detail.created_at.strftime('%d/%m/%Y %H:%M') if user_detail.created_at else '—' }}</span>
+            <span class="detail-value">{{ (user_detail.created_at|fr_time).strftime('%d/%m/%Y %H:%M') if user_detail.created_at else '—' }}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Recherches</span>
@@ -239,7 +239,7 @@
                     <td><strong>{{ s.label }}</strong></td>
                     <td><span class="badge badge-source">{{ s.source }}</span></td>
                     <td>{{ s.listing_count }}</td>
-                    <td class="text-muted">{{ s.created_at.strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
+                    <td class="text-muted">{{ (s.created_at|fr_time).strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -269,7 +269,7 @@
                     <td>{{ li.price or '—' }}</td>
                     <td>{{ li.location or '—' }}</td>
                     <td><span class="badge">{{ li.search_label }}</span></td>
-                    <td class="text-muted">{{ li.first_seen.strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
+                    <td class="text-muted">{{ (li.first_seen|fr_time).strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -324,7 +324,7 @@
                     <td><strong>{{ u.username }}</strong></td>
                     <td>{{ u.search_count }}</td>
                     <td>{{ u.listing_count }}</td>
-                    <td class="text-muted">{{ u.created_at.strftime('%d/%m/%Y') if u.created_at else '—' }}</td>
+                    <td class="text-muted">{{ (u.created_at|fr_time).strftime('%d/%m/%Y') if u.created_at else '—' }}</td>
                     <td>
                         <code class="token-mini" id="tok-{{ u.id }}">{{ u.api_token[:16] }}…</code>
                         <button class="btn btn-sm btn-ghost" onclick="copyToken('tok-{{ u.id }}', '{{ u.api_token }}')">Copier</button>
@@ -382,7 +382,7 @@
         </div>
         <div class="detail-row">
             <span class="detail-label">Créée le</span>
-            <span class="detail-value">{{ search_detail.created_at.strftime('%d/%m/%Y %H:%M') if search_detail.created_at else '—' }}</span>
+            <span class="detail-value">{{ (search_detail.created_at|fr_time).strftime('%d/%m/%Y %H:%M') if search_detail.created_at else '—' }}</span>
         </div>
         {% if search_detail.scrape_interval %}
         <div class="detail-row">
@@ -393,7 +393,7 @@
         {% if search_detail.last_scraped %}
         <div class="detail-row">
             <span class="detail-label">Dernier scrape</span>
-            <span class="detail-value">{{ search_detail.last_scraped.strftime('%d/%m/%Y %H:%M') if search_detail.last_scraped else '—' }}</span>
+            <span class="detail-value">{{ (search_detail.last_scraped|fr_time).strftime('%d/%m/%Y %H:%M') if search_detail.last_scraped else '—' }}</span>
         </div>
         {% endif %}
     </div>
@@ -426,7 +426,7 @@
                     <td>{{ li.price or '—' }}</td>
                     <td>{{ li.surface or '—' }}</td>
                     <td>{{ li.location or '—' }}</td>
-                    <td class="text-muted">{{ li.found_at.strftime('%d/%m/%Y %H:%M') if li.found_at else '—' }}</td>
+                    <td class="text-muted">{{ (li.found_at|fr_time).strftime('%d/%m/%Y %H:%M') if li.found_at else '—' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -490,8 +490,8 @@
                     <td>{{ s.listing_count }}</td>
                     <td><code class="token-mini">{{ s.ntfy_topic }}</code></td>
                     <td><span class="badge">{{ s.scrape_interval or 5 }}min</span></td>
-                    <td class="text-muted">{{ s.last_scraped.strftime('%H:%M') if s.last_scraped else '—' }}</td>
-                    <td class="text-muted">{{ s.created_at.strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
+                    <td class="text-muted">{{ (s.last_scraped|fr_time).strftime('%H:%M') if s.last_scraped else '—' }}</td>
+                    <td class="text-muted">{{ (s.created_at|fr_time).strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
                     <td>
                         <a href="{{ url_for('web.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost">Voir</a>
                         <form method="POST" action="{{ url_for('web.admin_scrape_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
@@ -559,7 +559,7 @@
         </div>
         <div class="detail-row">
             <span class="detail-label">Détectée le</span>
-            <span class="detail-value">{{ listing_detail.first_seen.strftime('%d/%m/%Y %H:%M') if listing_detail.first_seen else '—' }}</span>
+            <span class="detail-value">{{ (listing_detail.first_seen|fr_time).strftime('%d/%m/%Y %H:%M') if listing_detail.first_seen else '—' }}</span>
         </div>
     </div>
     <div class="detail-card">
@@ -637,7 +637,7 @@
                     <td>{{ li.location or '—' }}</td>
                     <td><span class="badge badge-source">{{ li.source or '—' }}</span></td>
                     <td>{{ li.linked_searches }} recherche(s)</td>
-                    <td class="text-muted">{{ li.first_seen.strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
+                    <td class="text-muted">{{ (li.first_seen|fr_time).strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
                     <td>
                         <a href="{{ url_for('web.admin_listing_detail', listing_id=li.listing_id) }}" class="btn btn-sm btn-ghost">Voir</a>
                         <form method="POST" action="{{ url_for('web.admin_delete_listing', listing_id=li.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
@@ -807,7 +807,7 @@
                     <td>{{ c.application_name or '—' }}</td>
                     <td>{{ c.client_addr or '—' }}</td>
                     <td><span class="badge">{{ c.state }}</span></td>
-                    <td class="text-muted">{{ c.backend_start.strftime('%H:%M:%S') if c.backend_start else '—' }}</td>
+                    <td class="text-muted">{{ (c.backend_start|fr_time).strftime('%H:%M:%S') if c.backend_start else '—' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -917,7 +917,7 @@
             {% if log.performed_by %}
             <div>par <strong>{{ log.performed_by }}</strong></div>
             {% endif %}
-            <div>{{ log.created_at.strftime('%d/%m/%Y %H:%M') if log.created_at else '—' }}</div>
+            <div>{{ (log.created_at|fr_time).strftime('%d/%m/%Y %H:%M') if log.created_at else '—' }}</div>
         </div>
     </div>
     {% endfor %}

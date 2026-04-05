@@ -54,7 +54,7 @@
             {% if stats.last_scrape.status == 'success' %}✅{% else %}❌{% endif %}
             {{ stats.last_scrape.status }}
         </span>
-        <span class="text-muted">Dernier scrape : {{ stats.last_scrape.started_at.strftime('%d/%m/%Y %H:%M:%S') }}</span>
+        <span class="text-muted">Dernier scrape : {{ (stats.last_scrape.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') }}</span>
         {% if stats.last_scrape.error_message %}
         <span class="text-muted" style="color: var(--danger);">Erreur : {{ stats.last_scrape.error_message[:100] }}</span>
         {% endif %}
@@ -95,8 +95,8 @@
                 {% for log in logs %}
                 <tr class="log-row log-row-{{ log.status }}">
                     <td>
-                        <div style="font-weight: 600;">{{ log.started_at.strftime('%d/%m/%Y') }}</div>
-                        <div class="text-muted" style="font-size: 0.8rem;">{{ log.started_at.strftime('%H:%M:%S') }}</div>
+                        <div style="font-weight: 600;">{{ (log.started_at|fr_time).strftime('%d/%m/%Y') }}</div>
+                        <div class="text-muted" style="font-size: 0.8rem;">{{ (log.started_at|fr_time).strftime('%H:%M:%S') }}</div>
                     </td>
                     <td>
                         <span class="log-status-badge status-{{ log.status }}">

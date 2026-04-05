@@ -65,9 +65,9 @@
             <div class="listing-meta">
                 <span class="text-muted text-sm">
                     {% if li.creation_date|parse_iso_date %}
-                    Publiée le {{ (li.creation_date|parse_iso_date).strftime('%d/%m/%Y') }}
+                    Publiée le {{ (li.creation_date|parse_iso_date|fr_time).strftime('%d/%m/%Y') }}
                     {% elif li.found_at %}
-                    Détectée le {{ li.found_at.strftime('%d/%m/%Y %H:%M') }}
+                    Détectée le {{ (li.found_at|fr_time).strftime('%d/%m/%Y %H:%M') }}
                     {% endif %}
                 </span>
                 <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>

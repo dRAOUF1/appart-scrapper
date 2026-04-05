@@ -15,8 +15,8 @@
                 {{ log_entry.status }}
             </span>
             <span class="text-muted" style="margin-left: 0.75rem;">
-                {{ log_entry.started_at.strftime('%d/%m/%Y %H:%M:%S') }}
-                {% if log_entry.completed_at %} → {{ log_entry.completed_at.strftime('%H:%M:%S') }}{% endif %}
+                {{ (log_entry.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') }}
+                {% if log_entry.completed_at %} → {{ (log_entry.completed_at|fr_time).strftime('%H:%M:%S') }}{% endif %}
             </span>
         </div>
         <a href="{{ url_for('web.search_log_download', search_id=search.id, log_id=log_entry.id) }}" class="btn btn-sm btn-ghost">⬇ Télécharger .log</a>
