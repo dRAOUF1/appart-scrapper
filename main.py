@@ -259,8 +259,8 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
                 notifier.notify_new_listing(topic, listing)
                 time.sleep(0.3)
 
-            if new_listings:
-                notifier.notify_summary(topic, len(new_listings), len(listings))
+            # if new_listings:
+            #     notifier.notify_summary(topic, len(new_listings), len(listings))
 
             log_id = storage.create_scrape_log(
                 search_id, "success",
