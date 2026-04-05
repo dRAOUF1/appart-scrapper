@@ -37,6 +37,8 @@ _scheduler_started = False
 
 
 def create_app() -> Flask:
+    import time
+    startup_start = time.monotonic()
     config = load_config()
 
     logger.remove()
@@ -168,10 +170,16 @@ def create_app() -> Flask:
         try:
             with open(lock_file, "w") as f:
                 f.write(str(os.getpid()))
-            run_startup_cleanup()
-            start_cleanup_scheduler()
-            start_scrape_scheduler()
-            logger.info("Tous les schedulers démarrés")
+
+            def _async_startup():
+                run_startup_cleanup()
+                start_cleanup_scheduler()
+                start_scrape_scheduler()
+                logger.info("Tous les schedulers démarrés")
+
+            t = threading.Thread(target=_async_startup, daemon=True)
+            t.start()
+            logger.info("Background tasks lancées en async")
         except Exception as e:
             logger.error(f"Erreur lors du démarrage des schedulers: {e}")
 
@@ -180,7 +188,8 @@ def create_app() -> Flask:
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(web_bp)
 
-    logger.info("Appart Tracker — démarré (mode scraper)")
+    startup_elapsed = time.monotonic() - startup_start
+    logger.info(f"Appart Tracker — démarré (mode scraper) en {startup_elapsed:.2f}s")
     return app
 
 

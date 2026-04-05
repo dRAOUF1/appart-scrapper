@@ -122,9 +122,21 @@ class Storage:
         self._init_db()
 
     def _init_db(self) -> None:
-        """Create all tables. Uses advisory lock to prevent deadlocks with multiple workers."""
+        """Create all tables. Uses non-blocking advisory lock with retry."""
+        import time
+
+        start = time.monotonic()
+
         with self._conn.cursor() as cur:
-            cur.execute("SELECT pg_advisory_xact_lock(987654321)")
+            for attempt in range(5):
+                cur.execute("SELECT pg_try_advisory_xact_lock(987654321)")
+                if cur.fetchone()[0]:
+                    break
+                self._conn.rollback()
+                time.sleep(1)
+            else:
+                logger.warning("Impossible d'obtenir le lock DB, on continue quand même")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id          SERIAL PRIMARY KEY,
@@ -226,70 +238,33 @@ class Storage:
             """)
 
             cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '';
+                ALTER TABLE listings
+                    ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS price_value FLOAT,
+                    ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE,
+                    ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]',
+                    ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE,
+                    ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE,
+                    ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE,
+                    ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
+                    ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
             """)
+
             cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_value FLOAT;
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE;
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE;
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE;
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE;
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '';
-            """)
-            cur.execute("""
-                ALTER TABLE listings ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
-            """)
-            cur.execute("""
-                ALTER TABLE searches ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}';
-            """)
-            cur.execute("""
-                ALTER TABLE searches ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5;
-            """)
-            cur.execute("""
-                ALTER TABLE searches ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP;
-            """)
-            cur.execute("""
-                ALTER TABLE searches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+                ALTER TABLE searches
+                    ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}',
+                    ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5,
+                    ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
             """)
 
             cur.execute("""
@@ -319,7 +294,8 @@ class Storage:
             """)
 
             cur.execute("""
-                ALTER TABLE scrape_logs ADD COLUMN IF NOT EXISTS raw_logs TEXT;
+                ALTER TABLE scrape_logs
+                    ADD COLUMN IF NOT EXISTS raw_logs TEXT;
             """)
 
             cur.execute("""
@@ -335,7 +311,8 @@ class Storage:
             """)
 
         self._conn.commit()
-        logger.debug("Tables PostgreSQL initialisées")
+        elapsed = time.monotonic() - start
+        logger.debug(f"Tables PostgreSQL initialisées en {elapsed:.2f}s")
 
     # ------------------------------------------------------------------
     # Users
