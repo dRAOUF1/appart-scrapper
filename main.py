@@ -81,7 +81,7 @@ def create_app() -> Flask:
                 pass
             g._db_conn = None
 
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, date
     from zoneinfo import ZoneInfo
 
     @app.template_filter("parse_iso_date")
@@ -100,6 +100,8 @@ def create_app() -> Flask:
     def fr_time(dt):
         if dt is None:
             return None
+        if isinstance(dt, date) and not isinstance(dt, datetime):
+            return datetime(dt.year, dt.month, dt.day, tzinfo=FR_TZ)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(FR_TZ)

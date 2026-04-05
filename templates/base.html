@@ -4,9 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Appart Tracker{% endblock %}</title>
+    <title>{% block title %}Appart Scraper{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('web.static', filename='style.css') }}">
     {% block head %}{% endblock %}
 </head>
@@ -14,23 +13,28 @@
 <body>
     {% if session.get('user_id') %}
     <nav class="navbar">
-        <div class="nav-brand">
-            <span class="nav-logo">🏠</span>
-            <span class="nav-title">Appart Tracker</span>
-        </div>
-        <div class="nav-links">
-            <a href="{{ url_for('web.dashboard') }}"
-                class="nav-link {% if request.endpoint == 'web.dashboard' %}active{% endif %}">Dashboard</a>
-            <a href="{{ url_for('web.searches') }}"
-                class="nav-link {% if request.endpoint == 'web.searches' %}active{% endif %}">Recherches</a>
-            {% if session.get('username') == admin_username %}
-            <a href="{{ url_for('web.admin') }}"
-                class="nav-link {% if request.endpoint == 'web.admin' %}active{% endif %}">⚙ Admin</a>
-            {% endif %}
-        </div>
-        <div class="nav-user">
-            <span class="nav-username">{{ session.get('username', '') }}</span>
-            <a href="{{ url_for('web.logout') }}" class="btn btn-sm btn-ghost">Déconnexion</a>
+        <div class="nav-content">
+            <div class="nav-brand">
+                <span class="nav-logo">🏠</span>
+                <span class="nav-title">Appart Scraper</span>
+            </div>
+            <div class="nav-links">
+                <a href="{{ url_for('web.dashboard') }}"
+                    class="nav-link {% if request.endpoint == 'web.dashboard' %}active{% endif %}">Dashboard</a>
+                <a href="{{ url_for('web.searches') }}"
+                    class="nav-link {% if request.endpoint == 'web.searches' %}active{% endif %}">Mes Recherches</a>
+                {% if session.get('username') == admin_username %}
+                <a href="{{ url_for('admin.admin') }}"
+                    class="nav-link {% if request.endpoint and request.endpoint.startswith('admin.') %}active{% endif %}">Admin</a>
+                {% endif %}
+            </div>
+            <div class="nav-user">
+                <div class="user-avatar">
+                    {{ session.get('username', '')[0].upper() }}
+                </div>
+                <span class="nav-username">{{ session.get('username', '') }}</span>
+                <a href="{{ url_for('web.logout') }}" class="btn btn-sm btn-ghost">Déconnexion</a>
+            </div>
         </div>
     </nav>
     {% endif %}
@@ -39,9 +43,9 @@
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         {% for category, message in messages %}
-        <div class="alert alert-{{ category }}">
+        <div class="toast toast-{{ category }}">
             {{ message }}
-            <button class="alert-close" onclick="this.parentElement.remove()">×</button>
+            <button class="toast-close" onclick="this.parentElement.remove()">×</button>
         </div>
         {% endfor %}
         {% endif %}

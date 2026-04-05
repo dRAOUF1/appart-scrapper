@@ -1,20 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Admin — Appart Tracker{% endblock %}
+{% block title %}Admin — Appart Scraper{% endblock %}
 
 {% block content %}
 <div class="admin-header">
     <h1>Panel Admin</h1>
-    <span class="alert-badge info">Connecté en tant que {{ session.get('username') }}</span>
+    <span class="badge badge-active">Connecté en tant que {{ session.get('username') }}</span>
 </div>
 
 <!-- Tab Navigation -->
 <nav class="admin-tabs">
-    <a href="{{ url_for('web.admin', tab='dashboard') }}" class="admin-tab {% if active_tab == 'dashboard' %}active{% endif %}">Dashboard</a>
-    <a href="{{ url_for('web.admin_users') }}" class="admin-tab {% if active_tab == 'users' %}active{% endif %}">Utilisateurs</a>
-    <a href="{{ url_for('web.admin_searches') }}" class="admin-tab {% if active_tab == 'searches' %}active{% endif %}">Recherches</a>
-    <a href="{{ url_for('web.admin_listings') }}" class="admin-tab {% if active_tab == 'listings' %}active{% endif %}">Annonces</a>
-    <a href="{{ url_for('web.admin_database') }}" class="admin-tab {% if active_tab == 'database' %}active{% endif %}">Base de données</a>
-    <a href="{{ url_for('web.admin_logs') }}" class="admin-tab {% if active_tab == 'logs' %}active{% endif %}">Logs</a>
+    <a href="{{ url_for('admin.admin', tab='dashboard') }}" class="admin-tab {% if active_tab == 'dashboard' %}active{% endif %}">Dashboard</a>
+    <a href="{{ url_for('admin.admin_users') }}" class="admin-tab {% if active_tab == 'users' %}active{% endif %}">Utilisateurs</a>
+    <a href="{{ url_for('admin.admin_searches') }}" class="admin-tab {% if active_tab == 'searches' %}active{% endif %}">Recherches</a>
+    <a href="{{ url_for('admin.admin_listings') }}" class="admin-tab {% if active_tab == 'listings' %}active{% endif %}">Annonces</a>
+    <a href="{{ url_for('admin.admin_database') }}" class="admin-tab {% if active_tab == 'database' %}active{% endif %}">Base de données</a>
+    <a href="{{ url_for('admin.admin_logs') }}" class="admin-tab {% if active_tab == 'logs' %}active{% endif %}">Logs</a>
 </nav>
 
 <!-- ============================================================
@@ -62,10 +62,10 @@
     <h2>⚠️ Alertes</h2>
     <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
         {% if stats.orphan_listings > 0 %}
-        <span class="alert-badge warning">📭 {{ stats.orphan_listings }} annonce(s) orpheline(s)</span>
+        <span class="badge badge-warning">📭 {{ stats.orphan_listings }} annonce(s) orpheline(s)</span>
         {% endif %}
         {% if stats.users_without_searches > 0 %}
-        <span class="alert-badge info">👤 {{ stats.users_without_searches }} utilisateur(s) sans recherche</span>
+        <span class="badge">👤 {{ stats.users_without_searches }} utilisateur(s) sans recherche</span>
         {% endif %}
     </div>
 </div>
@@ -82,10 +82,10 @@
                 Si désactivé, se limite aux ~30 premiers résultats.
             </p>
             <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <span class="log-status-badge {% if stats.bff_enabled %}status-success{% else %}status-error{% endif %}">
+                <span class="badge {% if stats.bff_enabled %}badge-active{% else %}badge-inactive{% endif %}">
                     {% if stats.bff_enabled %}✅ Activée{% else %}❌ Désactivée{% endif %}
                 </span>
-                <form method="POST" action="{{ url_for('web.admin_toggle_bff') }}" style="display: inline;">
+                <form method="POST" action="{{ url_for('admin.admin_toggle_bff') }}" style="display: inline;">
                     <button type="submit" class="btn btn-sm btn-ghost">
                         {% if stats.bff_enabled %}Désactiver{% else %}Activer{% endif %}
                     </button>
@@ -160,15 +160,15 @@
 <div class="card">
     <h2>⚡ Actions rapides</h2>
     <div class="action-bar">
-        <form method="POST" action="{{ url_for('web.admin_cleanup') }}" class="inline-form" onsubmit="return confirm('Supprimer les annonces de plus de 4 jours ?')">
+        <form method="POST" action="{{ url_for('admin.admin_cleanup') }}" class="inline-form" onsubmit="return confirm('Supprimer les annonces de plus de 4 jours ?')">
             <button type="submit" class="btn btn-primary">🧹 Nettoyer annonces (>4j)</button>
         </form>
         {% if stats.orphan_listings > 0 %}
-        <form method="POST" action="{{ url_for('web.admin_cleanup_orphan') }}" class="inline-form" onsubmit="return confirm('Supprimer {{ stats.orphan_listings }} annonce(s) orpheline(s) ?')">
+        <form method="POST" action="{{ url_for('admin.admin_cleanup_orphan') }}" class="inline-form" onsubmit="return confirm('Supprimer {{ stats.orphan_listings }} annonce(s) orpheline(s) ?')">
             <button type="submit" class="btn btn-danger">🗑 Supprimer orphelines ({{ stats.orphan_listings }})</button>
         </form>
         {% endif %}
-        <a href="{{ url_for('web.admin_logs') }}" class="btn btn-ghost">📋 Voir les logs</a>
+        <a href="{{ url_for('admin.admin_logs') }}" class="btn btn-ghost">📋 Voir les logs</a>
     </div>
 </div>
 
@@ -181,7 +181,7 @@
 
 {% if user_detail %}
 <!-- User Detail View -->
-<a href="{{ url_for('web.admin_users') }}" class="back-link">← Retour aux utilisateurs</a>
+<a href="{{ url_for('admin.admin_users') }}" class="back-link">← Retour aux utilisateurs</a>
 <div class="detail-grid">
     <div class="detail-card">
         <h3>👤 Informations</h3>
@@ -209,10 +209,15 @@
     <div class="detail-card">
         <h3>🔑 Token API</h3>
         <div class="token-display" style="margin-top: 0.5rem;">
-            <code id="user-token">{{ user_detail.api_token }}</code>
-            <button class="btn btn-sm btn-ghost" onclick="copyToken('user-token')">Copier</button>
+            <div class="token-content">
+                <span class="token-prefix">sk_live_</span>
+                <span class="token-visible">{{ user_detail.api_token[:8] }}</span>
+                <span class="token-hidden">••••••••</span>
+                <span class="token-visible">{{ user_detail.api_token[-4:] if user_detail.api_token|length >= 4 else '' }}</span>
+            </div>
+            <button class="btn btn-sm btn-ghost" onclick="copyToken('user-detail-token', '{{ user_detail.api_token }}')">Copier</button>
         </div>
-        <form method="POST" action="{{ url_for('web.admin_reset_token', user_id=user_detail.id) }}" class="inline-form" style="margin-top: 1rem;" onsubmit="return confirm('Réinitialiser le token API ? L\'ancien token ne fonctionnera plus.')">
+        <form method="POST" action="{{ url_for('admin.admin_reset_token', user_id=user_detail.id) }}" class="inline-form" style="margin-top: 1rem;" onsubmit="return confirm('Réinitialiser le token API ?')">
             <button type="submit" class="btn btn-danger btn-sm">🔄 Réinitialiser le token</button>
         </form>
     </div>
@@ -279,7 +284,7 @@
 {% endif %}
 
 <div class="action-bar" style="margin-top: 1.5rem;">
-    <form method="POST" action="{{ url_for('web.admin_delete_user', user_id=user_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer définitivement l\'utilisateur {{ user_detail.username }} et toutes ses données ?')">
+    <form method="POST" action="{{ url_for('admin.admin_delete_user', user_id=user_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer définitivement cet utilisateur et toutes ses données ?')">
         <button type="submit" class="btn btn-danger">🗑 Supprimer cet utilisateur</button>
     </form>
 </div>
@@ -289,17 +294,17 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
         <h2 style="margin-bottom: 0;">👥 Utilisateurs ({{ user_count }})</h2>
-        <form method="GET" action="{{ url_for('web.admin_users') }}" style="display: flex; gap: 0.5rem;">
-            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+        <form method="GET" action="{{ url_for('admin.admin_users') }}" style="display: flex; gap: 0.5rem;">
+            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
             <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
         </form>
     </div>
 
     <!-- Create User -->
     <details style="margin-bottom: 1rem;">
-        <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0;">+ Créer un utilisateur</summary>
-        <form method="POST" action="{{ url_for('web.admin_create_user') }}" style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-            <input type="text" name="username" placeholder="Nom d'utilisateur" required style="padding: 0.5rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem; flex: 1; max-width: 300px;">
+        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.4rem 0;">+ Créer un utilisateur</summary>
+        <form method="POST" action="{{ url_for('admin.admin_create_user') }}" style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+            <input type="text" name="username" placeholder="Nom d'utilisateur" required style="padding: 0.5rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem; flex: 1; max-width: 300px;">
             <button type="submit" class="btn btn-sm btn-primary">Créer</button>
         </form>
     </details>
@@ -330,8 +335,8 @@
                         <button class="btn btn-sm btn-ghost" onclick="copyToken('tok-{{ u.id }}', '{{ u.api_token }}')">Copier</button>
                     </td>
                     <td>
-                        <a href="{{ url_for('web.admin_user_detail', user_id=u.id) }}" class="btn btn-sm btn-ghost">Voir</a>
-                        <form method="POST" action="{{ url_for('web.admin_delete_user', user_id=u.id) }}" class="inline-form" onsubmit="return confirm('Supprimer {{ u.username }} ?')">
+                        <a href="{{ url_for('admin.admin_user_detail', user_id=u.id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_delete_user', user_id=u.id) }}" class="inline-form" onsubmit="return confirm('Supprimer {{ u.username }} ?')">
                             <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
                         </form>
                     </td>
@@ -352,7 +357,7 @@
 
 {% if search_detail %}
 <!-- Search Detail View -->
-<a href="{{ url_for('web.admin_searches') }}" class="back-link">← Retour aux recherches</a>
+<a href="{{ url_for('admin.admin_searches') }}" class="back-link">← Retour aux recherches</a>
 <div class="detail-grid">
     <div class="detail-card">
         <h3>🔍 Détails de la recherche</h3>
@@ -436,10 +441,10 @@
 {% endif %}
 
 <div class="action-bar" style="margin-top: 1.5rem;">
-    <form method="POST" action="{{ url_for('web.admin_scrape_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
+    <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
         <button type="submit" class="btn btn-success">🔄 Scrapper maintenant</button>
     </form>
-    <form method="POST" action="{{ url_for('web.admin_delete_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer la recherche « {{ search_detail.label }} » ?')">
+    <form method="POST" action="{{ url_for('admin.admin_delete_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer la recherche « {{ search_detail.label }} » ?')">
         <button type="submit" class="btn btn-danger">🗑 Supprimer cette recherche</button>
     </form>
 </div>
@@ -449,12 +454,12 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
         <h2 style="margin-bottom: 0;">🔍 Recherches ({{ search_count }})</h2>
-        <form method="GET" action="{{ url_for('web.admin_searches') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <input type="text" name="user" placeholder="Par utilisateur..." value="{{ user_filter }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
-            <input type="text" name="source" placeholder="Par source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+        <form method="GET" action="{{ url_for('admin.admin_searches') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" name="user" placeholder="Par utilisateur..." value="{{ user_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <input type="text" name="source" placeholder="Par source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
             <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
             {% if user_filter or source_filter %}
-            <a href="{{ url_for('web.admin_searches') }}" class="btn btn-sm btn-ghost">Reset</a>
+            <a href="{{ url_for('admin.admin_searches') }}" class="btn btn-sm btn-ghost">Reset</a>
             {% endif %}
         </form>
     </div>
@@ -493,11 +498,11 @@
                     <td class="text-muted">{{ (s.last_scraped|fr_time).strftime('%H:%M') if s.last_scraped else '—' }}</td>
                     <td class="text-muted">{{ (s.created_at|fr_time).strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
                     <td>
-                        <a href="{{ url_for('web.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost">Voir</a>
-                        <form method="POST" action="{{ url_for('web.admin_scrape_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
+                        <a href="{{ url_for('admin.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
                             <button type="submit" class="btn btn-sm btn-success">🔄</button>
                         </form>
-                        <form method="POST" action="{{ url_for('web.admin_delete_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Supprimer « {{ s.label }} » ?')">
+                        <form method="POST" action="{{ url_for('admin.admin_delete_search', search_id=s.id) }}" class="inline-form" onsubmit="return confirm('Supprimer « {{ s.label }} » ?')">
                             <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
                         </form>
                     </td>
@@ -521,7 +526,7 @@
 
 {% if listing_detail %}
 <!-- Listing Detail View -->
-<a href="{{ url_for('web.admin_listings') }}" class="back-link">← Retour aux annonces</a>
+<a href="{{ url_for('admin.admin_listings') }}" class="back-link">← Retour aux annonces</a>
 <div class="detail-grid">
     <div class="detail-card">
         <h3>🏠 Détails de l'annonce</h3>
@@ -572,7 +577,7 @@
         </div>
         {% endfor %}
         {% else %}
-        <span class="alert-badge warning">Orpheline — aucune recherche liée</span>
+        <span class="badge badge-warning">Orpheline — aucune recherche liée</span>
         {% endif %}
     </div>
 </div>
@@ -585,7 +590,7 @@
 {% endif %}
 
 <div class="action-bar" style="margin-top: 1.5rem;">
-    <form method="POST" action="{{ url_for('web.admin_delete_listing', listing_id=listing_detail.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
+    <form method="POST" action="{{ url_for('admin.admin_delete_listing', listing_id=listing_detail.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
         <button type="submit" class="btn btn-danger">🗑 Supprimer cette annonce</button>
     </form>
 </div>
@@ -595,20 +600,20 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
         <h2 style="margin-bottom: 0;">🏠 Annonces ({{ total }})</h2>
-        <form method="GET" action="{{ url_for('web.admin_listings') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
-            <input type="text" name="source" placeholder="Source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+        <form method="GET" action="{{ url_for('admin.admin_listings') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <input type="text" name="source" placeholder="Source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
             <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
             {% if search_term or source_filter %}
-            <a href="{{ url_for('web.admin_listings') }}" class="btn btn-sm btn-ghost">Reset</a>
+            <a href="{{ url_for('admin.admin_listings') }}" class="btn btn-sm btn-ghost">Reset</a>
             {% endif %}
         </form>
     </div>
 
     {% if orphan_count > 0 %}
     <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <span class="alert-badge warning">📭 {{ orphan_count }} annonce(s) orpheline(s)</span>
-        <form method="POST" action="{{ url_for('web.admin_cleanup_orphan') }}" class="inline-form" onsubmit="return confirm('Supprimer {{ orphan_count }} annonce(s) orpheline(s) ?')">
+        <span class="badge badge-warning">📭 {{ orphan_count }} annonce(s) orpheline(s)</span>
+        <form method="POST" action="{{ url_for('admin.admin_cleanup_orphan') }}" class="inline-form" onsubmit="return confirm('Supprimer {{ orphan_count }} annonce(s) orpheline(s) ?')">
             <button type="submit" class="btn btn-sm btn-danger">Nettoyer orphelines</button>
         </form>
     </div>
@@ -639,8 +644,8 @@
                     <td>{{ li.linked_searches }} recherche(s)</td>
                     <td class="text-muted">{{ (li.first_seen|fr_time).strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
                     <td>
-                        <a href="{{ url_for('web.admin_listing_detail', listing_id=li.listing_id) }}" class="btn btn-sm btn-ghost">Voir</a>
-                        <form method="POST" action="{{ url_for('web.admin_delete_listing', listing_id=li.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
+                        <a href="{{ url_for('admin.admin_listing_detail', listing_id=li.listing_id) }}" class="btn btn-sm btn-ghost">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_delete_listing', listing_id=li.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">
                             <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
                         </form>
                     </td>
@@ -656,11 +661,11 @@
     {% if total_pages > 1 %}
     <div class="pagination">
         {% if page > 1 %}
-        <a href="{{ url_for('web.admin_listings', page=page-1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost">← Précédent</a>
+        <a href="{{ url_for('admin.admin_listings', page=page-1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost">← Précédent</a>
         {% endif %}
         <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="{{ url_for('web.admin_listings', page=page+1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost">Suivant →</a>
+        <a href="{{ url_for('admin.admin_listings', page=page+1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost">Suivant →</a>
         {% endif %}
     </div>
     {% endif %}
@@ -720,8 +725,8 @@
                     <td>{{ t.data_size }}</td>
                     <td>{{ t.total_size }}</td>
                     <td>
-                        <a href="{{ url_for('web.admin_table_detail', table_name=t.table_name) }}" class="btn btn-sm btn-ghost">Détails</a>
-                        <form method="POST" action="{{ url_for('web.admin_truncate_table') }}" class="inline-form" onsubmit="return confirm('Vider la table « {{ t.table_name }} » ? Cette action est irréversible.')">
+                        <a href="{{ url_for('admin.admin_table_detail', table_name=t.table_name) }}" class="btn btn-sm btn-ghost">Détails</a>
+                        <form method="POST" action="{{ url_for('admin.admin_truncate_table') }}" class="inline-form" onsubmit="return confirm('Vider la table « {{ t.table_name }} » ? Cette action est irréversible.')">
                             <input type="hidden" name="table_name" value="{{ t.table_name }}">
                             <button type="submit" class="btn btn-sm btn-danger">Vider</button>
                         </form>
@@ -820,7 +825,7 @@
 <div class="card">
     <h2>💻 Exécuter une requête SQL</h2>
     <p class="text-muted text-sm" style="margin-bottom: 1rem;">Attention : toutes les requêtes sont autorisées (INSERT, UPDATE, DELETE, DROP...). Soyez prudent.</p>
-    <form method="POST" action="{{ url_for('web.admin_execute_query') }}">
+    <form method="POST" action="{{ url_for('admin.admin_execute_query') }}">
         <div class="query-editor">
             <textarea name="sql" placeholder="SELECT * FROM users LIMIT 10;">{% if query_sql %}{{ query_sql }}{% endif %}</textarea>
         </div>
@@ -866,15 +871,15 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
         <h2 style="margin-bottom: 0;">📋 Logs d'activité ({{ total_logs }})</h2>
-        <form method="POST" action="{{ url_for('web.admin_purge_logs') }}" class="inline-form" onsubmit="return confirm('Supprimer les logs de plus de X jours ?')">
-            <input type="number" name="days" value="30" min="1" max="365" style="width: 70px; padding: 0.3rem 0.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.8rem;">
+        <form method="POST" action="{{ url_for('admin.admin_purge_logs') }}" class="inline-form" onsubmit="return confirm('Supprimer les logs de plus de X jours ?')">
+            <input type="number" name="days" value="30" min="1" max="365" style="width: 70px; padding: 0.3rem 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.8rem;">
             <button type="submit" class="btn btn-sm btn-danger">Purger anciens logs</button>
         </form>
     </div>
 
     <!-- Filters -->
-    <form method="GET" action="{{ url_for('web.admin_logs') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
-        <select name="action" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+    <form method="GET" action="{{ url_for('admin.admin_logs') }}" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <select name="action" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
             <option value="">Toutes les actions</option>
             <option value="user_deleted" {% if action_filter == 'user_deleted' %}selected{% endif %}>user_deleted</option>
             <option value="user_created" {% if action_filter == 'user_created' %}selected{% endif %}>user_created</option>
@@ -886,11 +891,11 @@
             <option value="db_query" {% if action_filter == 'db_query' %}selected{% endif %}>db_query</option>
             <option value="table_truncated" {% if action_filter == 'table_truncated' %}selected{% endif %}>table_truncated</option>
         </select>
-        <input type="date" name="date_from" value="{{ date_from }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
-        <input type="date" name="date_to" value="{{ date_to }}" style="padding: 0.4rem 0.8rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-size: 0.85rem;">
+        <input type="date" name="date_from" value="{{ date_from }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="date" name="date_to" value="{{ date_to }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
         <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
         {% if action_filter or date_from or date_to %}
-        <a href="{{ url_for('web.admin_logs') }}" class="btn btn-sm btn-ghost">Reset</a>
+        <a href="{{ url_for('admin.admin_logs') }}" class="btn btn-sm btn-ghost">Reset</a>
         {% endif %}
     </form>
 
@@ -925,11 +930,11 @@
     {% if total_pages > 1 %}
     <div class="pagination">
         {% if page > 1 %}
-        <a href="{{ url_for('web.admin_logs', page=page-1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost">← Précédent</a>
+        <a href="{{ url_for('admin.admin_logs', page=page-1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost">← Précédent</a>
         {% endif %}
         <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="{{ url_for('web.admin_logs', page=page+1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost">Suivant →</a>
+        <a href="{{ url_for('admin.admin_logs', page=page+1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost">Suivant →</a>
         {% endif %}
     </div>
     {% endif %}

@@ -38,7 +38,7 @@ def admin_user_detail(user_id):
     user = storage.get_user_detail(user_id)
     if not user:
         flash("Utilisateur introuvable", "error")
-        return redirect(url_for("web.admin"))
+        return redirect(url_for("admin.admin"))
     return render_template("admin.html", active_tab="users", user_detail=user)
 
 
@@ -51,7 +51,7 @@ def admin_delete_user(user_id):
         storage.delete_user(user_id)
         storage.log_admin_action("user_deleted", f"User '{user['username']}' (ID:{user_id}) deleted", g.user["username"])
         flash(f"Utilisateur '{user['username']}' supprimé", "success")
-    return redirect(url_for("web.admin_users"))
+    return redirect(url_for("admin.admin_users"))
 
 
 @admin_bp.route("/admin/users/<int:user_id>/reset-token", methods=["POST"])
@@ -63,7 +63,7 @@ def admin_reset_token(user_id):
         new_token = storage.reset_user_token(user_id)
         storage.log_admin_action("user_token_reset", f"Token reset for '{user['username']}' (ID:{user_id})", g.user["username"])
         flash(f"Nouveau token pour '{user['username']}': {new_token}", "success")
-    return redirect(url_for("web.admin_user_detail", user_id=user_id))
+    return redirect(url_for("admin.admin_user_detail", user_id=user_id))
 
 
 @admin_bp.route("/admin/users/create", methods=["POST"])
@@ -72,14 +72,14 @@ def admin_create_user():
     username = request.form.get("username", "").strip().lower()
     if not username:
         flash("Nom d'utilisateur requis", "error")
-        return redirect(url_for("web.admin_users"))
+        return redirect(url_for("admin.admin_users"))
     try:
         user = current_app.storage.create_user(username)
         current_app.storage.log_admin_action("user_created", f"User '{username}' (ID:{user['id']}) created", g.user["username"])
         flash(f"Utilisateur '{username}' créé. Token: {user['api_token']}", "success")
     except ValueError as e:
         flash(str(e), "error")
-    return redirect(url_for("web.admin_users"))
+    return redirect(url_for("admin.admin_users"))
 
 
 @admin_bp.route("/admin/searches")
@@ -99,7 +99,7 @@ def admin_search_detail(search_id):
     search = storage.get_search_detail(search_id)
     if not search:
         flash("Recherche introuvable", "error")
-        return redirect(url_for("web.admin_searches"))
+        return redirect(url_for("admin.admin_searches"))
     return render_template("admin.html", active_tab="searches", search_detail=search)
 
 
@@ -112,7 +112,7 @@ def admin_delete_search(search_id):
         storage.delete_search_admin(search_id)
         storage.log_admin_action("search_deleted", f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}", g.user["username"])
         flash(f"Recherche '{search['label']}' supprimée", "success")
-    return redirect(url_for("web.admin_searches"))
+    return redirect(url_for("admin.admin_searches"))
 
 
 @admin_bp.route("/admin/searches/<int:search_id>/scrape", methods=["POST"])
@@ -122,13 +122,13 @@ def admin_scrape_search(search_id):
     search = storage.get_search(search_id)
     if not search:
         flash("Recherche introuvable", "error")
-        return redirect(url_for("web.admin_searches"))
+        return redirect(url_for("admin.admin_searches"))
 
     if search_id in current_app._scrape_futures:
         fut = current_app._scrape_futures[search_id]
         if not fut.done():
             flash("Scraping déjà en cours", "warning")
-            return redirect(url_for("web.admin_search_detail", search_id=search_id))
+            return redirect(url_for("admin.admin_search_detail", search_id=search_id))
         else:
             del current_app._scrape_futures[search_id]
 
@@ -139,7 +139,7 @@ def admin_scrape_search(search_id):
     )
     current_app._scrape_futures[search_id] = fut
     flash("Scraping démarré en arrière-plan !", "success")
-    return redirect(url_for("web.admin_search_detail", search_id=search_id))
+    return redirect(url_for("admin.admin_search_detail", search_id=search_id))
 
 
 @admin_bp.route("/admin/listings")
@@ -168,7 +168,7 @@ def admin_listing_detail(listing_id):
     listing = storage.get_listing_detail(listing_id)
     if not listing:
         flash("Annonce introuvable", "error")
-        return redirect(url_for("web.admin_listings"))
+        return redirect(url_for("admin.admin_listings"))
     return render_template("admin.html", active_tab="listings", listing_detail=listing)
 
 
@@ -179,7 +179,7 @@ def admin_delete_listing(listing_id):
     storage.delete_listing(listing_id)
     storage.log_admin_action("listing_deleted", f"Listing '{listing_id}' deleted", g.user["username"])
     flash("Annonce supprimée", "success")
-    return redirect(url_for("web.admin_listings"))
+    return redirect(url_for("admin.admin_listings"))
 
 
 @admin_bp.route("/admin/listings/cleanup-orphan", methods=["POST"])
@@ -189,7 +189,7 @@ def admin_cleanup_orphan():
     deleted = storage.delete_orphan_listings()
     storage.log_admin_action("orphan_cleanup", f"{deleted} orphan listings deleted", g.user["username"])
     flash(f"{deleted} annonce(s) orpheline(s) supprimée(s)", "success")
-    return redirect(url_for("web.admin_listings"))
+    return redirect(url_for("admin.admin_listings"))
 
 
 @admin_bp.route("/admin/database")
@@ -217,13 +217,13 @@ def admin_execute_query():
     sql = request.form.get("sql", "").strip()
     if not sql:
         flash("Requête vide", "error")
-        return redirect(url_for("web.admin_database"))
+        return redirect(url_for("admin.admin_database"))
     storage = current_app.storage
     rows, row_count, error = storage.execute_query(sql)
     storage.log_admin_action("db_query", sql[:200], g.user["username"])
     if error:
         flash(f"Erreur: {error}", "error")
-        return redirect(url_for("web.admin_database"))
+        return redirect(url_for("admin.admin_database"))
     flash(f"Requête exécutée — {row_count} ligne(s) affectée(s)", "success")
     return render_template("admin.html", active_tab="database", db_stats=storage.get_db_stats(),
                            query_result=rows, query_row_count=row_count, query_sql=sql)
@@ -235,18 +235,18 @@ def admin_truncate_table():
     table_name = request.form.get("table_name", "").strip()
     if not table_name:
         flash("Nom de table requis", "error")
-        return redirect(url_for("web.admin_database"))
+        return redirect(url_for("admin.admin_database"))
     storage = current_app.storage
     ALLOWED_TABLES = {"users", "searches", "listings", "search_listings", "scrape_logs", "admin_logs"}
     if table_name not in ALLOWED_TABLES:
         flash(f"Table '{table_name}' non autorisée", "error")
-        return redirect(url_for("web.admin_database"))
+        return redirect(url_for("admin.admin_database"))
     if storage.truncate_table(table_name):
         storage.log_admin_action("table_truncated", f"Table '{table_name}' truncated", g.user["username"])
         flash(f"Table '{table_name}' vidée", "success")
     else:
         flash(f"Impossible de vider la table '{table_name}'", "error")
-    return redirect(url_for("web.admin_database"))
+    return redirect(url_for("admin.admin_database"))
 
 
 @admin_bp.route("/admin/logs")
@@ -275,7 +275,7 @@ def admin_purge_logs():
     storage = current_app.storage
     deleted = storage.purge_old_logs(days=days)
     flash(f"{deleted} ancien(s) log(s) supprimé(s)", "success")
-    return redirect(url_for("web.admin_logs"))
+    return redirect(url_for("admin.admin_logs"))
 
 
 @admin_bp.route("/admin/cleanup", methods=["POST"])
@@ -286,7 +286,7 @@ def admin_cleanup():
     deleted = storage.delete_old_listings(days=days)
     storage.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
-    return redirect(url_for("web.admin"))
+    return redirect(url_for("admin.admin"))
 
 
 @admin_bp.route("/admin/settings/toggle-bff", methods=["POST"])
@@ -298,4 +298,4 @@ def admin_toggle_bff():
     storage.set_setting("use_bff_api", new_val)
     storage.log_admin_action("bff_toggled", f"BFF API {'disabled' if new_val == 'false' else 'enabled'}", g.user["username"])
     flash(f"API BFF {'désactivée' if new_val == 'false' else 'activée'}", "success")
-    return redirect(url_for("web.admin"))
+    return redirect(url_for("admin.admin"))

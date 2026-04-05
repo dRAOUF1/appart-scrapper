@@ -23,24 +23,24 @@
 </div>
 
 <!-- Stats -->
-<div class="stats-grid stats-grid-5">
-    <div class="stat-card stat-sm">
+<div class="stats-grid">
+    <div class="stat-card">
         <div class="stat-value">{{ stats.total or 0 }}</div>
         <div class="stat-label">Scrapes totaux</div>
     </div>
-    <div class="stat-card stat-sm">
-        <div class="stat-value" style="color: var(--success);">{{ stats.success_count or 0 }}</div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: var(--green);">{{ stats.success_count or 0 }}</div>
         <div class="stat-label">Succès</div>
     </div>
-    <div class="stat-card stat-sm">
-        <div class="stat-value" style="color: var(--danger);">{{ stats.error_count or 0 }}</div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: var(--red);">{{ stats.error_count or 0 }}</div>
         <div class="stat-label">Erreurs</div>
     </div>
-    <div class="stat-card stat-sm">
+    <div class="stat-card">
         <div class="stat-value">{{ "%.1f"|format(stats.avg_listings or 0) }}</div>
         <div class="stat-label">Moy. annonces</div>
     </div>
-    <div class="stat-card stat-sm">
+    <div class="stat-card">
         <div class="stat-value">{{ "%.0f"|format(stats.avg_duration or 0) }}s</div>
         <div class="stat-label">Durée moyenne</div>
     </div>
@@ -50,13 +50,13 @@
 {% if stats.last_scrape %}
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <span class="log-status-badge status-{{ stats.last_scrape.status }}">
+        <span class="badge {% if stats.last_scrape.status == 'success' %}badge-active{% else %}badge-inactive{% endif %}">
             {% if stats.last_scrape.status == 'success' %}✅{% else %}❌{% endif %}
             {{ stats.last_scrape.status }}
         </span>
         <span class="text-muted">Dernier scrape : {{ (stats.last_scrape.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') }}</span>
         {% if stats.last_scrape.error_message %}
-        <span class="text-muted" style="color: var(--danger);">Erreur : {{ stats.last_scrape.error_message[:100] }}</span>
+        <span class="text-muted" style="color: var(--red);">Erreur : {{ stats.last_scrape.error_message[:100] }}</span>
         {% endif %}
     </div>
 </div>
@@ -65,7 +65,7 @@
 <!-- Filters -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-        <span style="color: var(--text-muted); font-size: 0.85rem;">Filtrer :</span>
+        <span style="color: var(--text-secondary); font-size: 0.85rem;">Filtrer :</span>
         <a href="{{ url_for('web.search_logs', search_id=search.id) }}"
            class="btn btn-sm {% if not status_filter %}btn-primary{% else %}btn-ghost{% endif %}">Tous ({{ stats.total or 0 }})</a>
         <a href="{{ url_for('web.search_logs', search_id=search.id, status='success') }}"
@@ -99,9 +99,10 @@
                         <div class="text-muted" style="font-size: 0.8rem;">{{ (log.started_at|fr_time).strftime('%H:%M:%S') }}</div>
                     </td>
                     <td>
-                        <span class="log-status-badge status-{{ log.status }}">
+                        <span class="badge {% if log.status == 'success' %}badge-active{% elif log.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
                             {% if log.status == 'success' %}✅ Succès
-                            {% elif log.status == 'error' %}❌ Erreur{% endif %}
+                            {% elif log.status == 'error' %}❌ Erreur
+                            {% else %}⚠️ Partiel{% endif %}
                         </span>
                     </td>
                     <td>
@@ -110,7 +111,7 @@
                     <td style="font-weight: 600;">{{ log.listings_found or 0 }}</td>
                     <td>
                         {% if log.new_listings and log.new_listings > 0 %}
-                            <span style="color: var(--success); font-weight: 600;">+{{ log.new_listings }}</span>
+                            <span style="color: var(--green); font-weight: 600;">+{{ log.new_listings }}</span>
                         {% else %}<span class="text-muted">0</span>{% endif %}
                     </td>
                     <td>

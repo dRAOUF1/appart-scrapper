@@ -1,28 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Connexion — SeLoger Tracker{% endblock %}
+{% block title %}Connexion — Appart Scraper{% endblock %}
 
 {% block content %}
 <div class="login-wrapper">
     <div class="login-card">
         <div class="login-header">
-            <span class="login-logo">🏠</span>
-            <h1>SeLoger Tracker</h1>
-            <p class="login-subtitle">Suivez vos annonces immobilières en temps réel</p>
+            <div class="login-logo">🏠</div>
+            <h1>Appart Scraper</h1>
+            <p class="login-subtitle">Entrez votre nom d'utilisateur pour accéder à votre espace.</p>
         </div>
-
+        
         <form method="POST" class="login-form">
             <div class="form-group">
                 <label for="username">Nom d'utilisateur</label>
-                <input type="text" id="username" name="username" placeholder="Entrez votre nom" required autofocus
-                    autocomplete="username">
+                <input type="text" 
+                       id="username" 
+                       name="username" 
+                       placeholder="Votre nom d'utilisateur"
+                       required
+                       autocomplete="username">
             </div>
+            
             <button type="submit" class="btn btn-primary btn-full">
-                Se connecter / S'inscrire
+                Se connecter
             </button>
         </form>
-
+        
         <p class="login-hint">
-            Si le compte n'existe pas, il sera créé automatiquement.
+            Si vous n'avez pas de compte, il sera créé automatiquement lors de votre première connexion.
         </p>
     </div>
 </div>

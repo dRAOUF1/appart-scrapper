@@ -6,8 +6,13 @@
     <div>
         <a href="{{ url_for('web.searches') }}" class="back-link">← Recherches</a>
         <h1>{{ search.label }}</h1>
-        <p class="text-muted">{{ total }} annonce{{ 's' if total != 1 else '' }} · source: <span
-                class="badge badge-source">{{ search.source }}</span> · topic: <code>{{ search.ntfy_topic }}</code></p>
+        <div class="meta-info">
+            <span>{{ total }} annonce{{ 's' if total != 1 else '' }}</span>
+            <span>·</span>
+            <span class="badge badge-source">{{ search.source }}</span>
+            <span>·</span>
+            <code>{{ search.ntfy_topic }}</code>
+        </div>
     </div>
 </div>
 
@@ -39,12 +44,12 @@
 <div class="listing-grid" id="listing-grid">
     {% for li in listings %}
     <div class="listing-card" data-title="{{ li.title|lower }}" data-location="{{ li.location|lower }}"
-        data-agency="{{ li.agency|lower }}"
-        data-price="{{ li.price | replace('€','') | replace('/mois','') | replace(' ','') | replace('\u00a0','') }}"
-        data-surface="{{ li.surface | replace('m²','') | replace('m2','') | replace(' ','') }}"
-        data-rooms="{{ li.rooms | replace('pièces','') | replace('pièce','') | replace(' ','') }}">
+         data-agency="{{ li.agency|lower }}"
+         data-price="{{ li.price | replace('€','') | replace('/mois','') | replace(' ','') | replace('\u00a0','') }}"
+         data-surface="{{ li.surface | replace('m²','') | replace('m2','') | replace(' ','') }}"
+         data-rooms="{{ li.rooms | replace('pièces','') | replace('pièce','') | replace(' ','') }}">
         {% if li.image_url %}
-        <div class="listing-img" style="background-image: url('{{ li.image_url }}')"></div>
+        <div class="listing-img" style="background-image: url('{{ li.image_url }}'); background-size: cover; background-position: center; border-radius: var(--radius-sm);"></div>
         {% else %}
         <div class="listing-img listing-img-placeholder">🏠</div>
         {% endif %}
@@ -91,7 +96,7 @@
     {% endif %}
     <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
     {% if page < total_pages %} <a href="?page={{ page + 1 }}" class="btn btn-sm btn-ghost">Suivant →</a>
-        {% endif %}
+    {% endif %}
 </div>
 {% endif %}
 

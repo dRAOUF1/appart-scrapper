@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — SeLoger Tracker{% endblock %}
+{% block title %}Dashboard — Appart Scraper{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -24,14 +24,24 @@
         <div class="stat-value">{{ stats.new_today }}</div>
         <div class="stat-label">Nouvelles aujourd'hui</div>
     </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔍</div>
+        <div class="stat-value">{{ searches|length }}</div>
+        <div class="stat-label">Recherches</div>
+    </div>
 </div>
 
 <!-- API Token -->
-<div class="card token-card">
+<div class="card">
     <h2>🔑 Votre Token API</h2>
     <p class="text-muted">Utilisez ce token dans vos scripts pour interagir avec l'API.</p>
     <div class="token-display">
-        <code id="api-token">{{ api_token }}</code>
+        <div class="token-content">
+            <span class="token-prefix">sk_live_</span>
+            <span class="token-visible">{{ api_token[:8] }}</span>
+            <span class="token-hidden">••••••••</span>
+            <span class="token-visible">{{ api_token[-4:] if api_token|length >= 4 else '' }}</span>
+        </div>
         <button class="btn btn-sm btn-ghost" onclick="copyToken()">Copier</button>
     </div>
 </div>
@@ -53,7 +63,7 @@
         {% for li in recent %}
         <div class="listing-card">
             {% if li.image_url %}
-            <div class="listing-img" style="background-image: url('{{ li.image_url }}')"></div>
+            <div class="listing-img" style="background-image: url('{{ li.image_url }}'); background-size: cover; background-position: center;"></div>
             {% else %}
             <div class="listing-img listing-img-placeholder">🏠</div>
             {% endif %}
@@ -61,7 +71,7 @@
                 <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
                 <div class="listing-title">{{ li.title[:80] if li.title else 'Annonce' }}</div>
                 <div class="listing-details">
-                    {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
+                    {% if li.surface %}<span>📐 {{ li.surface }}m²</span>{% endif %}
                     {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
                     {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
                 </div>
@@ -69,7 +79,7 @@
                 <div class="listing-agency">{{ li.agency }}</div>
                 {% endif %}
                 <div class="listing-meta">
-                    <span class="badge">{{ li.search_label }}</span>
+                    <span class="badge badge-source">{{ li.search_label }}</span>
                     {% if li.creation_date|parse_iso_date %}
                     <span class="text-muted text-sm">Publiée le {{ (li.creation_date|parse_iso_date|fr_time).strftime('%d/%m/%Y') }}</span>
                     {% elif li.found_at %}
@@ -96,7 +106,7 @@
 {% block scripts %}
 <script>
     function copyToken() {
-        const token = document.getElementById('api-token').textContent;
+        const token = '{{ api_token }}';
         navigator.clipboard.writeText(token).then(() => {
             const btn = event.target;
             btn.textContent = 'Copié ✓';
