@@ -1,7 +1,7 @@
 """SeLoger scraper — API BFF + classified-search avec LZ-string.
 
-Utilise un User-Agent iPhone mobile Safari pour bypass DataDome.
-Pas de navigateur, pas de proxy, pas de dépendance lourde.
+Utilise un User-Agent iPhone mobile Safari + rotation de proxies gratuits
+pour bypass DataDome sur les environnements cloud (Render, AWS, etc.).
 """
 
 from __future__ import annotations
@@ -26,6 +26,67 @@ BFF_API = "https://www.seloger.com/serp-bff/search"
 SEARCH_URL = "https://www.seloger.com/classified-search"
 
 MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+_PROXY_CACHE: list[str] = []
+_PROXY_CACHE_TIME: float = 0
+
+
+def _get_free_proxies(count: int = 50) -> list[str]:
+    """Fetch free HTTP proxies from public APIs."""
+    global _PROXY_CACHE, _PROXY_CACHE_TIME
+    now = time.time()
+    if _PROXY_CACHE and now - _PROXY_CACHE_TIME < 300:
+        return _PROXY_CACHE
+
+    proxies: list[str] = []
+    sources = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+        "https://api.openproxylist.xyz/http.txt",
+    ]
+    for src in sources:
+        try:
+            r = requests.get(src, timeout=10)
+            if r.status_code == 200:
+                for line in r.text.strip().split("\n"):
+                    line = line.strip()
+                    if ":" in line and len(line) < 30:
+                        proxies.append(line)
+        except Exception:
+            pass
+
+    random.shuffle(proxies)
+    _PROXY_CACHE = proxies[:count]
+    _PROXY_CACHE_TIME = now
+    return _PROXY_CACHE
+
+
+def _try_with_proxies(url: str, max_proxies: int = 20) -> requests.Response | None:
+    """Try fetching URL through free proxies until one works."""
+    proxies = _get_free_proxies()
+    logger.debug(f"  Testing {min(max_proxies, len(proxies))} free proxies...")
+
+    for i, proxy in enumerate(proxies[:max_proxies]):
+        try:
+            session = requests.Session()
+            session.proxies = {
+                "http": f"http://{proxy}",
+                "https": f"http://{proxy}",
+            }
+            session.headers.update({
+                "User-Agent": MOBILE_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "fr-FR,fr;q=0.9",
+            })
+            session.get("https://www.seloger.com/", timeout=8)
+            resp = session.get(url, timeout=12)
+
+            if resp.status_code == 200 and "__UFRN_FETCHER__" in resp.text:
+                logger.info(f"  Proxy {proxy} worked (#{i+1})")
+                return resp
+        except Exception:
+            continue
+
+    return None
 
 
 def _build_search_url(criteria: dict, order: str | None = None) -> str:
@@ -173,13 +234,16 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
     """Récupère les données détaillées depuis le HTML compressé.
 
-    Utilise un User-Agent iPhone mobile Safari pour bypass DataDome.
-    DataDome ne bloque pas les requêtes mobiles simples avec ce UA.
+    Stratégie :
+    1. Essai direct avec User-Agent iPhone mobile Safari
+    2. Si 403, rotation de proxies gratuits
     """
     url = _build_search_url(criteria, order)
     logger.debug(f"  URL de recherche: {url[:120]}...")
 
     for attempt in range(max_retries):
+        resp = None
+
         try:
             if attempt > 0:
                 wait = (2 ** attempt) + random.uniform(1.0, 3.0)
@@ -188,19 +252,26 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             else:
                 logger.info(f"  Tentative 1/{max_retries}...")
 
+            # Essai direct
             session = requests.Session()
             session.headers.update({
                 "User-Agent": MOBILE_UA,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "fr-FR,fr;q=0.9",
             })
-
             session.get("https://www.seloger.com/", timeout=15)
-
             resp = session.get(url, timeout=20)
 
+            if resp.status_code == 403 or "__UFRN_FETCHER__" not in resp.text:
+                # IP bloquée — essayer avec proxies
+                logger.warning(f"    IP bloquée ou pas de données, tentative avec proxies gratuits...")
+                resp = _try_with_proxies(url, max_proxies=30)
+                if resp is None:
+                    logger.warning(f"    Aucun proxy gratuit n'a fonctionné")
+                    continue
+
             if resp.status_code == 403:
-                logger.warning(f"    Bloqué (403) — IP temporairement limitée par DataDome")
+                logger.warning(f"    Bloqué (403) même avec proxy")
                 continue
 
             resp.raise_for_status()
