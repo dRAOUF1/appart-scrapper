@@ -83,10 +83,10 @@ def parse_search_url(url: str) -> dict:
         criteria["location"] = {"placeIds": place_ids}
 
     if "distributionTypes" in params:
-        criteria["distributionTypes"] = params["distributionTypes"]
+        criteria["distributionTypes"] = _split_csv_values(params["distributionTypes"])
 
     if "estateTypes" in params:
-        criteria["estateTypes"] = params["estateTypes"]
+        criteria["estateTypes"] = _split_csv_values(params["estateTypes"])
 
     if "priceMin" in params:
         try:
@@ -113,18 +113,30 @@ def parse_search_url(url: str) -> dict:
             pass
 
     if "rooms" in params:
-        criteria["rooms"] = params["rooms"]
+        criteria["rooms"] = _split_csv_values(params["rooms"])
 
     if "bedrooms" in params:
-        criteria["bedrooms"] = params["bedrooms"]
+        criteria["bedrooms"] = _split_csv_values(params["bedrooms"])
 
     if "order" in params:
         criteria["order"] = params["order"][0]
 
     if "locationsInBuildingExcluded" in params:
-        criteria["locationsInBuildingExcluded"] = params["locationsInBuildingExcluded"]
+        criteria["locationsInBuildingExcluded"] = _split_csv_values(params["locationsInBuildingExcluded"])
 
     return criteria
+
+
+def _split_csv_values(values: list[str]) -> list[str]:
+    """Splitte les valeurs comma-separated en liste plate.
+
+    ['House,Apartment'] → ['House', 'Apartment']
+    ['Rent'] → ['Rent']
+    """
+    result = []
+    for v in values:
+        result.extend(v.split(","))
+    return result
 
 
 def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tuple[list, int]:
@@ -139,6 +151,7 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
     session.get("https://www.seloger.com/classified-search", timeout=15)
 
     all_ids: list = []
+    all_classifieds: list = []
     page = 1
     total = None
 
@@ -152,9 +165,11 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
         resp.raise_for_status()
         data = resp.json()
 
-        page_ids = [c["id"] for c in data.get("classifieds", [])]
+        page_classifieds = data.get("classifieds", [])
+        page_ids = [c["id"] for c in page_classifieds]
         total = data.get("totalCount", total)
         all_ids.extend(page_ids)
+        all_classifieds.extend(page_classifieds)
 
         logger.debug(f"  Page {page}: {len(page_ids)} IDs (total connu: {total})")
 
@@ -164,7 +179,7 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
         page += 1
         time.sleep(0.3)
 
-    return all_ids, total or len(all_ids)
+    return all_ids, total or len(all_ids), all_classifieds
 
 
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
@@ -314,39 +329,89 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
 def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]:
     """Exécute le scraping complet : données détaillées + IDs.
 
-    Args:
-        criteria: Critères de recherche SeLoger
-        use_bff: Si True, utilise l'API BFF pour récupérer tous les IDs.
-                 Si False, se limite aux résultats de classified-search.
+    Stratégie :
+    1. Essai API BFF (rapide, fiable, pas de navigateur)
+    2. Essai données détaillées via Camoufox (si IP non bloquée)
+    3. Fallback sur les données BFF enrichies si Camoufox échoue
 
     Returns:
         (detailed_listings, all_ids, total_count)
     """
     logger.info(f"[SeLoger] Début du scraping avec critères: {criteria} (BFF={'oui' if use_bff else 'non'})")
 
-    detailed = []
-    try:
-        detailed = get_detailed_listings(criteria, order="DateDesc")
-        logger.info(f"[SeLoger] {len(detailed)} annonces détaillées")
-    except Exception as e:
-        logger.error(f"[SeLoger] Échec données détaillées: {e}")
-
+    bff_classifieds = []
     all_ids = []
-    total = len(detailed)
+    total = 0
 
     if use_bff:
         try:
-            all_ids, total = get_all_ids(criteria)
-            logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces")
+            all_ids, total, bff_classifieds = get_all_ids(criteria)
+            logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces via BFF")
         except Exception as e:
             logger.error(f"[SeLoger] Échec BFF: {e}")
-            if detailed:
-                all_ids = [l["id"] for l in detailed]
-                total = len(detailed)
-                logger.info(f"[SeLoger] Fallback: {len(all_ids)} IDs depuis les détails")
-    else:
-        all_ids = [l["id"] for l in detailed]
-        total = len(detailed)
-        logger.info(f"[SeLoger] BFF désactivé : {len(all_ids)} IDs depuis les détails uniquement")
 
-    return detailed, all_ids, total
+    detailed = []
+    try:
+        detailed = get_detailed_listings(criteria, order="DateDesc")
+        logger.info(f"[SeLoger] {len(detailed)} annonces détaillées via Camoufox")
+    except Exception as e:
+        logger.warning(f"[SeLoger] Échec données détaillées: {e}")
+
+    if detailed:
+        return detailed, [l["id"] for l in detailed], len(detailed)
+
+    if bff_classifieds:
+        logger.info(f"[SeLoger] Fallback: conversion des {len(bff_classifieds)} résultats BFF en listings")
+        detailed = _convert_bff_to_listings(bff_classifieds)
+        return detailed, all_ids, total
+
+    return [], all_ids, total
+
+
+def _convert_bff_to_listings(classifieds: list[dict]) -> list[dict]:
+    """Convertit les résultats bruts de l'API BFF en format listing standard."""
+    listings = []
+    for c in classifieds:
+        try:
+            card = c.get("card", {})
+            price = card.get("price", {})
+            location = c.get("location", {})
+            address = location.get("address", {})
+            photos = c.get("photos", [])
+            first_photo = photos[0].get("url", "") if photos else ""
+            main_photo = c.get("mainPhoto", {})
+
+            listings.append({
+                "id": c.get("id", ""),
+                "legacyId": c.get("legacyId", ""),
+                "title": card.get("title", ""),
+                "headline": card.get("title", ""),
+                "description": "",
+                "price": price.get("text", ""),
+                "priceValue": price.get("value"),
+                "priceDetails": price.get("priceDetails", ""),
+                "surface": card.get("surface", ""),
+                "rooms": card.get("rooms", ""),
+                "propertyType": card.get("propertyType", ""),
+                "city": address.get("city", ""),
+                "district": address.get("district", ""),
+                "zipCode": address.get("zipCode", ""),
+                "url": c.get("urls", {}).get("classified", ""),
+                "photos": [{"url": p.get("url", ""), "alt": p.get("caption", ""), "key": ""} for p in photos],
+                "agency": card.get("agency", {}).get("name", ""),
+                "isPrivate": False,
+                "phone": [],
+                "epc": card.get("energyRate", ""),
+                "ges": card.get("gesRate", ""),
+                "isNew": card.get("isNew", False),
+                "isExclusive": False,
+                "has3DVisit": bool(card.get("has3DTour")),
+                "creationDate": c.get("publicationDate", ""),
+                "updateDate": c.get("lastUpdateDate", ""),
+                "keyfacts": card.get("keyFacts", []),
+            })
+        except Exception as e:
+            logger.debug(f"  Erreur conversion BFF: {e}")
+            continue
+
+    return listings
