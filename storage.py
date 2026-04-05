@@ -135,6 +135,26 @@ class Storage:
         cur.close()
         return conn
 
+    def _get_conn_for_request(self):
+        """Retourne la connexion partagée de la requête HTTP si disponible, sinon crée une nouvelle."""
+        try:
+            from flask import g
+            if hasattr(g, '_db_conn') and g._db_conn is not None:
+                return g._db_conn
+        except Exception:
+            pass
+        return self._get_conn_for_request()
+
+    def _release_conn(self, conn):
+        """Ne ferme la connexion que si elle n'est PAS la connexion partagée de la requête."""
+        try:
+            from flask import g
+            if hasattr(g, '_db_conn') and g._db_conn is conn:
+                return  # Ne pas fermer — sera fermé par teardown_request
+        except Exception:
+            pass
+        self._release_conn(conn)
+
     def _get_ddl_conn(self):
         """Crée une connexion SANS statement_timeout pour les opérations DDL (CREATE/ALTER)."""
         conn = psycopg2.connect(self.database_url, connect_timeout=30)
@@ -144,11 +164,11 @@ class Storage:
         return conn
 
     def _close_conn(self, conn):
-        """Ferme une connexion (à appeler dans le finally)."""
+        """Ferme une connexion."""
         if conn is not None:
             try:
                 if not conn.closed:
-                    self._close_conn(conn)
+                    conn.close()
             except Exception:
                 pass
 
@@ -157,7 +177,7 @@ class Storage:
         import time
         total_start = time.monotonic()
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -171,7 +191,7 @@ class Storage:
                 logger.error("Tables DB manquantes — exécutez les migrations manuellement")
                 raise RuntimeError("Database tables not found. Run migrations first.")
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
         elapsed = time.monotonic() - total_start
         logger.debug(f"DB init check: {elapsed:.3f}s (tables OK)")
@@ -392,7 +412,7 @@ class Storage:
             total_elapsed = time.monotonic() - total_start
             logger.info(f"Tables PostgreSQL initialisées en {total_elapsed:.2f}s")
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     # ------------------------------------------------------------------
     # Users
@@ -401,7 +421,7 @@ class Storage:
     def create_user(self, username: str) -> dict:
         """Create a new user and return {id, username, api_token}."""
         api_token = secrets.token_urlsafe(32)
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -419,11 +439,11 @@ class Storage:
             conn.rollback()
             raise ValueError(f"Le nom d'utilisateur '{username}' est déjà pris")
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_user_by_token(self, token: str) -> Optional[dict]:
         """Look up a user by API token."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -433,11 +453,11 @@ class Storage:
                 row = cur.fetchone()
                 return dict(row) if row else None
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_user_by_username(self, username: str) -> Optional[dict]:
         """Look up a user by username."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -447,7 +467,7 @@ class Storage:
                 row = cur.fetchone()
                 return dict(row) if row else None
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     # ------------------------------------------------------------------
     # Searches
@@ -456,7 +476,7 @@ class Storage:
     def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True) -> dict:
         """Create a search configuration for a user."""
         criteria_json = json.dumps(criteria or {})
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -476,12 +496,12 @@ class Storage:
                     "is_active": is_active,
                 }
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def update_search_criteria(self, search_id: int, criteria: dict) -> bool:
         """Update the criteria for a search."""
         criteria_json = json.dumps(criteria)
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -491,7 +511,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None) -> bool:
         """Update multiple fields of a search at once."""
@@ -515,7 +535,7 @@ class Storage:
         if not fields:
             return False
         params.extend([search_id, user_id])
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -525,11 +545,11 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def update_scrape_interval(self, search_id: int, interval_minutes: int) -> bool:
         """Update the scrape interval for a search."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -539,11 +559,11 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def update_last_scraped(self, search_id: int) -> bool:
         """Update the last scraped timestamp."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -553,11 +573,11 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_user_searches(self, user_id: int) -> list[dict]:
         """Get all searches for a user — subquery instead of LEFT JOIN to avoid cartesian product."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -578,11 +598,11 @@ class Storage:
                     result.append(d)
                 return result
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_search(self, search_id: int) -> Optional[dict]:
         """Get a single search by id (including user_id for auth checks)."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -597,22 +617,22 @@ class Storage:
                     d["criteria"] = json.loads(d["criteria"])
                 return d
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def delete_search(self, search_id: int) -> bool:
         """Delete a search and its listing links (cascades)."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM searches WHERE id = %s", (search_id,))
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def toggle_search_active(self, search_id: int) -> bool | None:
         """Toggle is_active for a search. Returns new value or None if not found."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -623,7 +643,7 @@ class Storage:
                 conn.commit()
                 return row["is_active"] if row else None
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
         """Get all searches with user info and listing counts."""
@@ -649,7 +669,7 @@ class Storage:
 
         query += " GROUP BY s.id, u.id ORDER BY s.created_at DESC"
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
@@ -661,11 +681,11 @@ class Storage:
                     result.append(d)
                 return result
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_search_detail(self, search_id: int) -> Optional[dict]:
         """Get a search with full details including user info and recent listings."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -699,7 +719,7 @@ class Storage:
                 result["total_listings"] = cur.fetchone()["cnt"]
                 return result
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     # ------------------------------------------------------------------
     # Scrape Logs
@@ -711,7 +731,7 @@ class Storage:
         now = started_at or datetime.datetime.utcnow()
         completed_at = datetime.datetime.utcnow()
         duration = (completed_at - now).total_seconds() if started_at else 0
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -725,7 +745,7 @@ class Storage:
                 conn.commit()
                 return row["id"]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_scrape_logs(self, search_id: int, limit: int = 50, offset: int = 0, status_filter: str = "") -> list[dict]:
         """Get scrape logs for a search."""
@@ -736,7 +756,7 @@ class Storage:
             params.append(status_filter)
         query += " ORDER BY started_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
@@ -748,7 +768,7 @@ class Storage:
                     result.append(d)
                 return result
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def count_scrape_logs(self, search_id: int, status_filter: str = "") -> int:
         """Count scrape logs for a search."""
@@ -757,17 +777,17 @@ class Storage:
         if status_filter:
             query += " AND status = %s"
             params.append(status_filter)
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_scrape_stats(self, search_id: int) -> dict:
         """Get scrape statistics for a search."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -795,11 +815,11 @@ class Storage:
             stats["last_scrape"] = dict(last) if last else None
             return stats
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def update_scrape_log_raw(self, log_id: int, raw_logs: str) -> bool:
         """Save raw log text to a scrape log entry."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -809,7 +829,7 @@ class Storage:
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_scrape_log_raw(self, log_id: int, user_id: int | None = None) -> dict | None:
         """Get raw logs for a scrape log entry."""
@@ -818,18 +838,18 @@ class Storage:
         if user_id is not None:
             query += " AND search_id IN (SELECT id FROM searches WHERE user_id = %s)"
             params.append(user_id)
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
                 row = cur.fetchone()
                 return dict(row) if row else None
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_latest_scrape_log_id(self, search_id: int) -> int | None:
         """Get the most recent scrape log id for a search."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -839,7 +859,7 @@ class Storage:
                 row = cur.fetchone()
                 return row[0] if row else None
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     # ------------------------------------------------------------------
     # App Settings
@@ -847,18 +867,18 @@ class Storage:
 
     def get_setting(self, key: str, default: str = "") -> str:
         """Get an app setting by key."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
                 row = cur.fetchone()
                 return row[0] if row else default
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def set_setting(self, key: str, value: str) -> bool:
         """Set an app setting (insert or update)."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -869,7 +889,7 @@ class Storage:
                 conn.commit()
                 return True
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     # ------------------------------------------------------------------
     # Listings
@@ -880,7 +900,7 @@ class Storage:
         Insert a listing if it doesn't already exist.
         Returns True if new, False if already known.
         """
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -914,14 +934,14 @@ class Storage:
             conn.rollback()
             return False
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def link_listing_to_search(self, search_id: int, listing_id: str) -> bool:
         """
         Associate a listing with a search.
         Returns True if newly linked, False if already linked.
         """
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -934,7 +954,7 @@ class Storage:
             conn.rollback()
             return False
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def save_and_link(
         self, listings: list[Listing], search_id: int
@@ -952,7 +972,7 @@ class Storage:
         if not listings:
             return [], []
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 listing_data = [
@@ -1001,13 +1021,13 @@ class Storage:
             conn.rollback()
             raise
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_listings_for_search(
         self, search_id: int, limit: int = 50, offset: int = 0
     ) -> list[dict]:
         """Get all listings linked to a search, most recent first."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1022,11 +1042,11 @@ class Storage:
                 rows = cur.fetchall()
                 return [dict(r) for r in rows]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def count_listings_for_search(self, search_id: int) -> int:
         """Count total listings for a search."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1036,11 +1056,11 @@ class Storage:
                 row = cur.fetchone()
                 return row["cnt"]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_user_stats(self, user_id: int) -> dict:
         """Get statistics for a user — 1 query."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
@@ -1060,11 +1080,11 @@ class Storage:
                     "new_today": row["new_today"],
                 }
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_dashboard_data(self, user_id: int) -> dict:
         """Get all dashboard data in 1 connection — stats + searches + recent listings."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 # Stats
@@ -1111,7 +1131,7 @@ class Storage:
 
             return {"stats": stats, "searches": searches, "recent": recent}
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     # ------------------------------------------------------------------
     # Admin
@@ -1119,7 +1139,7 @@ class Storage:
 
     def get_admin_stats(self) -> dict:
         """Global platform statistics — 1 query."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
@@ -1138,11 +1158,11 @@ class Storage:
                     "new_today": row["new_today"],
                 }
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_all_users(self) -> list[dict]:
         """List all users with their search and listing counts — no cartesian product."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1158,11 +1178,11 @@ class Storage:
                 rows = cur.fetchall()
                 return [dict(r) for r in rows]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def delete_old_listings(self, days: int = 4) -> int:
         """Delete listings older than N days. Returns count of deleted listings."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1175,22 +1195,22 @@ class Storage:
                 logger.info(f"Supprimé {deleted} anciennes annonces (>{days} jours)")
             return deleted
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def delete_listing(self, listing_id: str) -> bool:
         """Delete a single listing by ID. Cascades to search_listings."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM listings WHERE listing_id = %s", (listing_id,))
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_orphan_listings_count(self) -> int:
         """Count listings not linked to any search."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1200,11 +1220,11 @@ class Storage:
                 )
                 return cur.fetchone()[0]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def delete_orphan_listings(self) -> int:
         """Delete all listings not linked to any search. Returns count."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1220,7 +1240,7 @@ class Storage:
                 logger.info(f"Supprimé {deleted} annonces orphelines")
             return deleted
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
         """Get all listings with pagination and filters — no cartesian product."""
@@ -1243,13 +1263,13 @@ class Storage:
         query += " ORDER BY l.first_seen DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def count_all_listings(self, search_term="", source_filter="") -> int:
         """Count all listings with filters."""
@@ -1267,17 +1287,17 @@ class Storage:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_listing_detail(self, listing_id: str) -> Optional[dict]:
         """Get a single listing with its linked searches."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("SELECT * FROM listings WHERE listing_id = %s", (listing_id,))
@@ -1297,34 +1317,34 @@ class Storage:
                 result["linked_searches"] = [dict(r) for r in cur.fetchall()]
                 return result
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def delete_search_admin(self, search_id: int) -> bool:
         """Delete a search as admin. Returns True if deleted."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM searches WHERE id = %s", (search_id,))
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def delete_user(self, user_id: int) -> bool:
         """Delete a user and all associated data (cascades)."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
                 conn.commit()
                 return cur.rowcount > 0
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def reset_user_token(self, user_id: int) -> str:
         """Generate a new API token for a user. Returns the new token."""
         new_token = secrets.token_urlsafe(32)
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1334,11 +1354,11 @@ class Storage:
                 conn.commit()
             return new_token
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_user_detail(self, user_id: int) -> Optional[dict]:
         """Get a user with full stats and recent activity."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1389,11 +1409,11 @@ class Storage:
                 result["recent_listings"] = [dict(r) for r in cur.fetchall()]
                 return result
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_enhanced_admin_stats(self) -> dict:
         """Get comprehensive admin statistics — consolidated into 5 queries."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
@@ -1464,11 +1484,11 @@ class Storage:
                 "users_without_searches": counts["users_no_searches"],
             }
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def log_admin_action(self, action: str, details: str = "", performed_by: str = "") -> None:
         """Log an admin action."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1480,7 +1500,7 @@ class Storage:
             conn.rollback()
             logger.error(f"Failed to log admin action: {e}")
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_admin_logs(self, limit=50, offset=0, action_filter="", date_from="", date_to="") -> list[dict]:
         """Get admin activity logs."""
@@ -1504,13 +1524,13 @@ class Storage:
         query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def count_admin_logs(self, action_filter="", date_from="", date_to="") -> int:
         """Count admin logs with filters."""
@@ -1531,17 +1551,17 @@ class Storage:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def purge_old_logs(self, days: int = 30) -> int:
         """Delete logs older than N days. Returns count."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1554,11 +1574,11 @@ class Storage:
                 logger.info(f"Purgé {deleted} anciens logs admin")
             return deleted
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_db_stats(self) -> dict:
         """Get database size and per-table statistics — 3 queries total."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("SELECT pg_size_pretty(pg_database_size(current_database())) AS size")
@@ -1589,11 +1609,11 @@ class Storage:
                 "indexes": indexes,
             }
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_table_details(self, table_name: str) -> dict:
         """Get columns, constraints, and indexes for a specific table."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1637,11 +1657,11 @@ class Storage:
                 "total_size": total_size,
             }
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def execute_query(self, sql: str) -> tuple[list[dict], int, Optional[str]]:
         """Execute a SQL query. Returns (rows, row_count, error)."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(sql)
@@ -1656,11 +1676,11 @@ class Storage:
             conn.rollback()
             return [], 0, str(e)
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def get_active_connections(self) -> list[dict]:
         """Get active PostgreSQL connections."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1672,11 +1692,11 @@ class Storage:
                 )
                 return [dict(r) for r in cur.fetchall()]
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def truncate_table(self, table_name: str) -> bool:
         """Truncate a table. Returns True if successful."""
-        conn = self._get_conn()
+        conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(f"TRUNCATE TABLE {table_name} CASCADE")
@@ -1687,7 +1707,7 @@ class Storage:
             logger.error(f"Failed to truncate {table_name}: {e}")
             return False
         finally:
-            self._close_conn(conn)
+            self._release_conn(conn)
 
     def close(self) -> None:
         """Close all database connections in the pool."""

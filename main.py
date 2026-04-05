@@ -73,6 +73,22 @@ def create_app() -> Flask:
         priority=config.ntfy.priority,
     )
 
+    @app.before_request
+    def before_request():
+        """Ouvre une connexion DB partagée pour toute la durée de la requête HTTP."""
+        g._db_conn = app.storage._get_conn()
+
+    @app.teardown_request
+    def teardown_request(exception):
+        """Ferme la connexion DB partagée à la fin de la requête."""
+        if hasattr(g, '_db_conn') and g._db_conn is not None:
+            try:
+                if not g._db_conn.closed:
+                    g._db_conn.close()
+            except Exception:
+                pass
+            g._db_conn = None
+
     from datetime import datetime
 
     @app.template_filter("parse_iso_date")
