@@ -1098,7 +1098,7 @@ class Storage:
 
                 # Recent listings across all searches — single query with JOIN
                 cur.execute("""
-                    SELECT l.id AS listing_id, l.title, l.price, l.surface, l.rooms,
+                    SELECT l.listing_id, l.title, l.price, l.surface, l.rooms,
                            l.location, l.url, l.image_url, l.agency, l.city,
                            sl.found_at, s.label AS search_label
                     FROM search_listings sl
