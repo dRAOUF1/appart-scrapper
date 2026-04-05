@@ -135,6 +135,14 @@ class Storage:
         cur.close()
         return conn
 
+    def _get_ddl_conn(self):
+        """Crée une connexion SANS statement_timeout pour les opérations DDL (CREATE/ALTER)."""
+        conn = psycopg2.connect(self.database_url, connect_timeout=30)
+        cur = conn.cursor()
+        cur.execute("SET lock_timeout = '60000'")
+        cur.close()
+        return conn
+
     def _close_conn(self, conn):
         """Ferme une connexion (à appeler dans le finally)."""
         if conn is not None:
@@ -145,9 +153,34 @@ class Storage:
                 pass
 
     def _init_db(self) -> None:
-        """Create all tables with timing for each phase."""
+        """Vérifie que les tables existent. Ne fait JAMAIS de DDL au runtime."""
         import time
+        total_start = time.monotonic()
 
+        conn = self._get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = 'users'
+                    )
+                """)
+                tables_exist = cur.fetchone()[0]
+            if not tables_exist:
+                logger.error("Tables DB manquantes — exécutez les migrations manuellement")
+                raise RuntimeError("Database tables not found. Run migrations first.")
+        finally:
+            self._close_conn(conn)
+
+        elapsed = time.monotonic() - total_start
+        logger.debug(f"DB init check: {elapsed:.3f}s (tables OK)")
+
+    def _run_ddl_migrations(self) -> None:
+        """Run DDL migrations — à exécuter UNE SEULE FOIS au premier déploiement.
+        Pas appelé automatiquement au démarrage.
+        """
+        import time
         total_start = time.monotonic()
         phase_start = total_start
 
@@ -156,20 +189,9 @@ class Storage:
             logger.debug(f"  DB phase '{name}': {elapsed:.2f}s")
             return time.monotonic()
 
-        conn = self._get_conn()
+        conn = self._get_ddl_conn()
         try:
             with conn.cursor() as cur:
-                lock_acquired = False
-                for attempt in range(5):
-                    cur.execute("SELECT pg_try_advisory_xact_lock(987654321)")
-                    if cur.fetchone()[0]:
-                        lock_acquired = True
-                        break
-                    conn.rollback()
-                    time.sleep(1)
-                else:
-                    logger.warning("Impossible d'obtenir le lock DB, init simplifié")
-
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         id          SERIAL PRIMARY KEY,
@@ -271,74 +293,101 @@ class Storage:
 
                 conn.commit()
 
-                if lock_acquired:
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_listings_first_seen
-                            ON listings(first_seen);
-                    """)
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_search_listings_search
-                            ON search_listings(search_id);
-                    """)
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_searches_user
-                            ON searches(user_id);
-                    """)
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_admin_logs_created
-                            ON admin_logs(created_at);
-                    """)
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_admin_logs_action
-                            ON admin_logs(action);
-                    """)
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
-                            ON scrape_logs(search_id);
-                    """)
-                    cur.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
-                            ON scrape_logs(started_at DESC);
-                    """)
-                    phase_start = _log_phase("indexes")
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_listings_first_seen
+                        ON listings(first_seen);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_listings_search
+                        ON search_listings(search_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_listings_found_at
+                        ON search_listings(found_at DESC);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_listings_search_found
+                        ON search_listings(search_id, found_at DESC);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_search_listings_listing
+                        ON search_listings(listing_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_searches_user
+                        ON searches(user_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_searches_user_active
+                        ON searches(user_id, is_active);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_searches_source
+                        ON searches(source);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_listings_source
+                        ON listings(source);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_admin_logs_created
+                        ON admin_logs(created_at);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_admin_logs_action
+                        ON admin_logs(action);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
+                        ON scrape_logs(search_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
+                        ON scrape_logs(started_at DESC);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_status
+                        ON scrape_logs(status);
+                """)
+                phase_start = _log_phase("indexes")
 
-                    cur.execute("""
-                        ALTER TABLE listings
-                            ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS price_value FLOAT,
-                            ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE,
-                            ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]',
-                            ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE,
-                            ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE,
-                            ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE,
-                            ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
-                            ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
-                    """)
-                    phase_start = _log_phase("alter_listings")
+                cur.execute("""
+                    ALTER TABLE listings
+                        ADD COLUMN IF NOT EXISTS legacy_id TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS price_value FLOAT,
+                        ADD COLUMN IF NOT EXISTS price_details TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS city TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS district TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS zip_code TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS property_type TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS phone JSONB DEFAULT '[]',
+                        ADD COLUMN IF NOT EXISTS epc TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS ges TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
+                """)
+                phase_start = _log_phase("alter_listings")
 
-                    cur.execute("""
-                        ALTER TABLE searches
-                            ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}',
-                            ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5,
-                            ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
-                            ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
-                    """)
-                    cur.execute("""
-                        ALTER TABLE scrape_logs
-                            ADD COLUMN IF NOT EXISTS raw_logs TEXT;
-                    """)
-                    phase_start = _log_phase("alter_other")
+                cur.execute("""
+                    ALTER TABLE searches
+                        ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}',
+                        ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5,
+                        ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
+                        ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+                """)
+                cur.execute("""
+                    ALTER TABLE scrape_logs
+                        ADD COLUMN IF NOT EXISTS raw_logs TEXT;
+                """)
+                phase_start = _log_phase("alter_other")
 
-                    conn.commit()
+                conn.commit()
 
             total_elapsed = time.monotonic() - total_start
             logger.info(f"Tables PostgreSQL initialisées en {total_elapsed:.2f}s")
@@ -948,39 +997,26 @@ class Storage:
             self._close_conn(conn)
 
     def get_user_stats(self, user_id: int) -> dict:
-        """Get statistics for a user."""
+        """Get statistics for a user — 1 query."""
         conn = self._get_conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(
-                    "SELECT COUNT(*) AS cnt FROM searches WHERE user_id = %s",
-                    (user_id,),
-                )
-                searches = cur.fetchone()["cnt"]
-
-                cur.execute(
-                    """SELECT COUNT(DISTINCT sl.listing_id) AS cnt
-                       FROM search_listings sl
-                       JOIN searches s ON s.id = sl.search_id
-                       WHERE s.user_id = %s""",
-                    (user_id,),
-                )
-                total = cur.fetchone()["cnt"]
-
-                cur.execute(
-                    """SELECT COUNT(DISTINCT sl.listing_id) AS cnt
-                       FROM search_listings sl
-                       JOIN searches s ON s.id = sl.search_id
-                       WHERE s.user_id = %s AND DATE(sl.found_at) = CURRENT_DATE""",
-                    (user_id,),
-                )
-                today = cur.fetchone()["cnt"]
-
-            return {
-                "searches": searches,
-                "total_listings": total,
-                "new_today": today,
-            }
+                cur.execute("""
+                    SELECT
+                        (SELECT COUNT(*) FROM searches WHERE user_id = %s) AS searches,
+                        (SELECT COUNT(DISTINCT sl.listing_id)
+                         FROM search_listings sl JOIN searches s ON s.id = sl.search_id
+                         WHERE s.user_id = %s) AS total_listings,
+                        (SELECT COUNT(DISTINCT sl.listing_id)
+                         FROM search_listings sl JOIN searches s ON s.id = sl.search_id
+                         WHERE s.user_id = %s AND sl.found_at >= CURRENT_DATE) AS new_today
+                """, (user_id, user_id, user_id))
+                row = cur.fetchone()
+                return {
+                    "searches": row["searches"],
+                    "total_listings": row["total_listings"],
+                    "new_today": row["new_today"],
+                }
         finally:
             self._close_conn(conn)
 
@@ -989,46 +1025,41 @@ class Storage:
     # ------------------------------------------------------------------
 
     def get_admin_stats(self) -> dict:
-        """Global platform statistics."""
+        """Global platform statistics — 1 query."""
         conn = self._get_conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM users")
-                users = cur.fetchone()["c"]
-
-                cur.execute("SELECT COUNT(*) AS c FROM searches")
-                searches = cur.fetchone()["c"]
-
-                cur.execute("SELECT COUNT(*) AS c FROM listings")
-                listings = cur.fetchone()["c"]
-
-                cur.execute(
-                    "SELECT COUNT(*) AS c FROM search_listings WHERE DATE(found_at) = CURRENT_DATE"
-                )
-                today = cur.fetchone()["c"]
-
-            return {
-                "users": users,
-                "searches": searches,
-                "total_listings": listings,
-                "new_today": today,
-            }
+                cur.execute("""
+                    SELECT
+                        (SELECT COUNT(*) FROM users) AS users,
+                        (SELECT COUNT(*) FROM searches) AS searches,
+                        (SELECT COUNT(*) FROM listings) AS listings,
+                        (SELECT COUNT(*) FROM search_listings
+                         WHERE found_at >= CURRENT_DATE) AS new_today
+                """)
+                row = cur.fetchone()
+                return {
+                    "users": row["users"],
+                    "searches": row["searches"],
+                    "total_listings": row["listings"],
+                    "new_today": row["new_today"],
+                }
         finally:
             self._close_conn(conn)
 
     def get_all_users(self) -> list[dict]:
-        """List all users with their search and listing counts."""
+        """List all users with their search and listing counts — no cartesian product."""
         conn = self._get_conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
                     """SELECT u.id, u.username, u.api_token, u.created_at,
-                              COUNT(DISTINCT s.id)          AS search_count,
-                              COUNT(DISTINCT sl.listing_id) AS listing_count
+                              (SELECT COUNT(*) FROM searches WHERE user_id = u.id) AS search_count,
+                              (SELECT COUNT(DISTINCT sl.listing_id)
+                               FROM search_listings sl
+                               JOIN searches s ON s.id = sl.search_id
+                               WHERE s.user_id = u.id) AS listing_count
                        FROM users u
-                       LEFT JOIN searches s  ON s.user_id = u.id
-                       LEFT JOIN search_listings sl ON sl.search_id = s.id
-                       GROUP BY u.id
                        ORDER BY u.created_at DESC"""
                 )
                 rows = cur.fetchall()
@@ -1042,7 +1073,8 @@ class Storage:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"DELETE FROM listings WHERE first_seen < NOW() - INTERVAL '{days} days'",
+                    "DELETE FROM listings WHERE first_seen < NOW() - INTERVAL '%s days'",
+                    (str(days),),
                 )
                 conn.commit()
                 deleted = cur.rowcount
@@ -1098,10 +1130,10 @@ class Storage:
             self._close_conn(conn)
 
     def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
-        """Get all listings with pagination and filters."""
-        query = """SELECT l.*, COUNT(sl.search_id) AS linked_searches
-                   FROM listings l
-                   LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id"""
+        """Get all listings with pagination and filters — no cartesian product."""
+        query = """SELECT l.*,
+                          (SELECT COUNT(*) FROM search_listings WHERE listing_id = l.listing_id) AS linked_searches
+                   FROM listings l"""
         conditions = []
         params = []
 
@@ -1115,7 +1147,7 @@ class Storage:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " GROUP BY l.listing_id ORDER BY l.first_seen DESC LIMIT %s OFFSET %s"
+        query += " ORDER BY l.first_seen DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         conn = self._get_conn()
@@ -1267,38 +1299,27 @@ class Storage:
             self._close_conn(conn)
 
     def get_enhanced_admin_stats(self) -> dict:
-        """Get comprehensive admin statistics."""
+        """Get comprehensive admin statistics — consolidated into 5 queries."""
         conn = self._get_conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM users")
-                users = cur.fetchone()["c"]
-
-                cur.execute("SELECT COUNT(*) AS c FROM searches")
-                searches = cur.fetchone()["c"]
-
-                cur.execute("SELECT COUNT(*) AS c FROM listings")
-                listings = cur.fetchone()["c"]
-
-                cur.execute("SELECT COUNT(*) AS c FROM search_listings")
-                search_listings = cur.fetchone()["c"]
-
-                cur.execute(
-                    "SELECT COUNT(*) AS c FROM search_listings WHERE DATE(found_at) = CURRENT_DATE"
-                )
-                today = cur.fetchone()["c"]
-
-                cur.execute(
-                    """SELECT COUNT(DISTINCT l.listing_id) AS c FROM listings l
-                       LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id
-                       WHERE sl.listing_id IS NULL"""
-                )
-                orphans = cur.fetchone()["c"]
-
-                cur.execute(
-                    "SELECT COALESCE(AVG(cnt), 0) AS avg_listings FROM (SELECT COUNT(*) AS cnt FROM search_listings GROUP BY search_id) sub"
-                )
-                avg_listings_per_search = round(cur.fetchone()["avg_listings"], 1)
+                cur.execute("""
+                    SELECT
+                        (SELECT COUNT(*) FROM users) AS users,
+                        (SELECT COUNT(*) FROM searches) AS searches,
+                        (SELECT COUNT(*) FROM listings) AS listings,
+                        (SELECT COUNT(*) FROM search_listings) AS search_listings,
+                        (SELECT COUNT(*) FROM search_listings
+                         WHERE found_at >= CURRENT_DATE) AS new_today,
+                        (SELECT COUNT(*) FROM listings l
+                         LEFT JOIN search_listings sl ON sl.listing_id = l.listing_id
+                         WHERE sl.listing_id IS NULL) AS orphans,
+                        (SELECT COALESCE(AVG(cnt), 0)
+                         FROM (SELECT COUNT(*) AS cnt FROM search_listings GROUP BY search_id) sub) AS avg_listings,
+                        (SELECT COUNT(*) FROM users
+                         WHERE id NOT IN (SELECT DISTINCT user_id FROM searches)) AS users_no_searches
+                """)
+                counts = cur.fetchone()
 
                 cur.execute(
                     """SELECT u.username, COUNT(DISTINCT sl.listing_id) AS listing_count
@@ -1335,24 +1356,19 @@ class Storage:
                 )
                 sources_breakdown = [dict(r) for r in cur.fetchall()]
 
-                cur.execute(
-                    "SELECT COUNT(*) AS c FROM users WHERE id NOT IN (SELECT DISTINCT user_id FROM searches)"
-                )
-                users_without_searches = cur.fetchone()["c"]
-
             return {
-                "users": users,
-                "searches": searches,
-                "total_listings": listings,
-                "search_listings": search_listings,
-                "new_today": today,
-                "orphan_listings": orphans,
-                "avg_listings_per_search": avg_listings_per_search,
+                "users": counts["users"],
+                "searches": counts["searches"],
+                "total_listings": counts["listings"],
+                "search_listings": counts["search_listings"],
+                "new_today": counts["new_today"],
+                "orphan_listings": counts["orphans"],
+                "avg_listings_per_search": round(counts["avg_listings"], 1),
                 "top_users": top_users,
                 "top_searches": top_searches,
                 "activity_7d": activity_7d,
                 "sources_breakdown": sources_breakdown,
-                "users_without_searches": users_without_searches,
+                "users_without_searches": counts["users_no_searches"],
             }
         finally:
             self._close_conn(conn)
@@ -1436,7 +1452,8 @@ class Storage:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"DELETE FROM admin_logs WHERE created_at < NOW() - INTERVAL '{days} days'"
+                    "DELETE FROM admin_logs WHERE created_at < NOW() - INTERVAL '%s days'",
+                    (str(days),),
                 )
                 conn.commit()
                 deleted = cur.rowcount
@@ -1447,7 +1464,7 @@ class Storage:
             self._close_conn(conn)
 
     def get_db_stats(self) -> dict:
-        """Get database size and per-table statistics."""
+        """Get database size and per-table statistics — 3 queries total."""
         conn = self._get_conn()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -1465,23 +1482,13 @@ class Storage:
                 tables = [dict(r) for r in cur.fetchall()]
 
                 cur.execute(
-                    """SELECT schemaname, tablename, indexname
+                    """SELECT schemaname, tablename, indexname,
+                              pg_size_pretty(pg_relation_size(schemaname || '.' || indexname)) AS index_size
                        FROM pg_indexes
                        WHERE schemaname = 'public'
                        ORDER BY tablename, indexname"""
                 )
-                raw_indexes = cur.fetchall()
-
-                indexes = []
-                for idx in raw_indexes:
-                    idx_dict = dict(idx)
-                    cur.execute(
-                        "SELECT pg_size_pretty(pg_relation_size(%s::regclass)) AS size",
-                        (idx_dict["indexname"],),
-                    )
-                    size_row = cur.fetchone()
-                    idx_dict["index_size"] = size_row["size"] if size_row else "N/A"
-                    indexes.append(idx_dict)
+                indexes = [dict(r) for r in cur.fetchall()]
 
             return {
                 "db_size": db_size,
