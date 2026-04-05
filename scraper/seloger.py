@@ -30,40 +30,82 @@ MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/
 _PROXY_CACHE: list[str] = []
 _PROXY_CACHE_TIME: float = 0
 
+_PROXY_SOURCES = [
+    # Direct APIs
+    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+    "https://api.openproxylist.xyz/http.txt",
+    "https://proxy-list.download/api/v1/get?type=http",
+    "https://proxyscan.io/download?type=http",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
+    "https://raw.githubusercontent.com/databay-labs/free-proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/http.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/zloi-user/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/hookzof/proxyscrape/master/proxy-list/http.txt",
+    "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt",
+    "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    "https://raw.githubusercontent.com/YFZMATE/Proxy-List/main/http.txt",
+    "https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt",
+    "https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/http.txt",
+    "https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list/data.txt",
+    "https://raw.githubusercontent.com/saisuiu/UAS/main/http.txt",
+    "https://raw.githubusercontent.com/opsxcq/proxy-list/master/list.txt",
+    "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies.txt",
+    "https://raw.githubusercontent.com/hendrikbgr/Free-Proxy-Repo/master/proxy_list.txt",
+    "https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/http/http.txt",
+    "https://raw.githubusercontent.com/UptimerBot/proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/ProxyScraper/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/Proxy-List/Proxy-List/main/http.txt",
+    "https://raw.githubusercontent.com/Free-Proxy-List/Proxy-List/main/http.txt",
+    "https://raw.githubusercontent.com/Proxy4parsing/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/ProxyScrape/proxy-list/main/http.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Download/Proxy-List/main/http.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Provider/Proxy-List/main/http.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Provider/Proxy-List/main/https.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Provider/Proxy-List/main/socks4.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Provider/Proxy-List/main/socks5.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Provider/Proxy-List/main/anonymous.txt",
+    "https://raw.githubusercontent.com/Proxy-List-Provider/Proxy-List/main/elite.txt",
+]
 
-def _get_free_proxies(count: int = 50) -> list[str]:
-    """Fetch free HTTP proxies from public APIs."""
+
+def _get_free_proxies(count: int = 5000) -> list[str]:
+    """Fetch free HTTP proxies from all public APIs."""
     global _PROXY_CACHE, _PROXY_CACHE_TIME
     now = time.time()
-    if _PROXY_CACHE and now - _PROXY_CACHE_TIME < 300:
+    if _PROXY_CACHE and now - _PROXY_CACHE_TIME < 180:
         return _PROXY_CACHE
 
-    proxies: list[str] = []
-    sources = [
-        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-        "https://api.openproxylist.xyz/http.txt",
-    ]
-    for src in sources:
+    proxies: set[str] = set()
+    for src in _PROXY_SOURCES:
         try:
-            r = requests.get(src, timeout=10)
+            r = requests.get(src, timeout=5)
             if r.status_code == 200:
                 for line in r.text.strip().split("\n"):
                     line = line.strip()
                     if ":" in line and len(line) < 30:
-                        proxies.append(line)
+                        proxies.add(line)
         except Exception:
             pass
 
-    random.shuffle(proxies)
-    _PROXY_CACHE = proxies[:count]
+    proxy_list = list(proxies)
+    random.shuffle(proxy_list)
+    _PROXY_CACHE = proxy_list[:count]
     _PROXY_CACHE_TIME = now
     return _PROXY_CACHE
 
 
-def _try_with_proxies(url: str, max_proxies: int = 20) -> requests.Response | None:
+def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | None:
     """Try fetching URL through free proxies until one works."""
     proxies = _get_free_proxies()
-    logger.debug(f"  Testing {min(max_proxies, len(proxies))} free proxies...")
+    logger.info(f"  Testing {min(max_proxies, len(proxies))} free proxies (from {len(proxies)} available)...")
 
     for i, proxy in enumerate(proxies[:max_proxies]):
         try:
