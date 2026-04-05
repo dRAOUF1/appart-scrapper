@@ -51,7 +51,7 @@
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <span class="log-status-badge status-{{ stats.last_scrape.status }}">
-            {% if stats.last_scrape.status == 'success' %}✅{% elif stats.last_scrape.status == 'error' %}❌{% else %}⚠️{% endif %}
+            {% if stats.last_scrape.status == 'success' %}✅{% else %}❌{% endif %}
             {{ stats.last_scrape.status }}
         </span>
         <span class="text-muted">Dernier scrape : {{ stats.last_scrape.started_at.strftime('%d/%m/%Y %H:%M:%S') }}</span>
@@ -72,8 +72,6 @@
            class="btn btn-sm {% if status_filter == 'success' %}btn-success{% else %}btn-ghost{% endif %}">✅ Succès</a>
         <a href="{{ url_for('web.search_logs', search_id=search.id, status='error') }}"
            class="btn btn-sm {% if status_filter == 'error' %}btn-danger{% else %}btn-ghost{% endif %}">❌ Erreurs</a>
-        <a href="{{ url_for('web.search_logs', search_id=search.id, status='partial') }}"
-           class="btn btn-sm {% if status_filter == 'partial' %}btn-warning{% else %}btn-ghost{% endif %}">⚠️ Partiels</a>
     </div>
 </div>
 
@@ -103,8 +101,7 @@
                     <td>
                         <span class="log-status-badge status-{{ log.status }}">
                             {% if log.status == 'success' %}✅ Succès
-                            {% elif log.status == 'error' %}❌ Erreur
-                            {% else %}⚠️ Partiel{% endif %}
+                            {% elif log.status == 'error' %}❌ Erreur{% endif %}
                         </span>
                     </td>
                     <td>

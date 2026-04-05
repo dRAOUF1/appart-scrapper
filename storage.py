@@ -794,7 +794,6 @@ class Storage:
                     """SELECT COUNT(*) AS total,
                               COUNT(*) FILTER (WHERE status = 'success') AS success_count,
                               COUNT(*) FILTER (WHERE status = 'error') AS error_count,
-                              COUNT(*) FILTER (WHERE status = 'partial') AS partial_count,
                               COALESCE(AVG(listings_found), 0) AS avg_listings,
                               COALESCE(AVG(new_listings), 0) AS avg_new,
                               COALESCE(AVG(duration_sec), 0) AS avg_duration

@@ -232,7 +232,8 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
                 logger.info(f"[search:{search_id}] Aucune annonce trouvée")
                 storage.update_last_scraped(search_id)
                 storage.create_scrape_log(
-                    search_id, "success",
+                    search_id, "error",
+                    error_message="Aucune annonce trouvée",
                     listings_found=0, new_listings=0,
                     started_at=started_at,
                 )
@@ -249,9 +250,8 @@ def _execute_scrape(app, search_id: int, user_id: int) -> int:
             if new_listings:
                 notifier.notify_summary(topic, len(new_listings), len(listings))
 
-            status = "success" if new_listings else "partial"
             log_id = storage.create_scrape_log(
-                search_id, status,
+                search_id, "success",
                 listings_found=len(listings),
                 new_listings=len(new_listings),
                 details={"already_known": len(already)},
