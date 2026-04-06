@@ -90,8 +90,9 @@ class ScrapeService:
                     notifier.notify_new_listing(topic, listing)
                     time.sleep(0.3)
 
-                if new_listings:
-                    notifier.notify_summary(topic, len(new_listings), len(listings))
+                # Désactivé pour éviter le spam de notifications quand il y a beaucoup de nouvelles annonces
+                # if new_listings:
+                #     notifier.notify_summary(topic, len(new_listings), len(listings))
 
                 log_id = storage.create_scrape_log(
                     search_id, "success",
