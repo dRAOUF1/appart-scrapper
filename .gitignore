@@ -1,7 +1,8 @@
-env/*
+venv/*
 browser_profile_uc/*
 **/__pycache__/*
-annonces.json
-scraper.log
-.gitignore
-debug*
+.env
+seloger_scraper.log
+.opencodelogs/
+
+logs/

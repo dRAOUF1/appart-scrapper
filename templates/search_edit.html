@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Modifier — {{ search.label }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="{{ url_for('web.searches') }}" class="back-link">← Retour aux recherches</a>
+    <h1>Modifier « {{ search.label }} »</h1>
+</div>
+
+<!-- Stats summary -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.total or 0 }}</div>
+        <div class="stat-label">Scrapes totaux</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: var(--green);">{{ stats.success_count or 0 }}</div>
+        <div class="stat-label">Succès</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: var(--red);">{{ stats.error_count or 0 }}</div>
+        <div class="stat-label">Erreurs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ "%.1f"|format(stats.avg_listings or 0) }}</div>
+        <div class="stat-label">Moy. annonces/scrape</div>
+    </div>
+</div>
+
+<!-- Active/Inactive toggle -->
+<div class="card">
+    <h2>⏯️ État de la recherche</h2>
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            {% if search.is_active %}
+            <p style="color: var(--green); font-weight: 600;">✅ Recherche active — Le scraping s'exécute selon l'intervalle configuré.</p>
+            {% else %}
+            <p style="color: var(--red); font-weight: 600;">⏸️ Recherche inactive — Le scraping est suspendu.</p>
+            {% endif %}
+        </div>
+        <form method="POST" action="{{ url_for('web.toggle_search_active_web', search_id=search.id) }}">
+            {% if search.is_active %}
+            <button type="submit" class="btn btn-warning">⏸️ Désactiver</button>
+            {% else %}
+            <button type="submit" class="btn btn-success">▶️ Activer</button>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- Edit form -->
+<div class="card">
+    <h2>⚙️ Paramètres de la recherche</h2>
+    <form method="POST">
+        <div class="form-grid">
+            <div class="form-group">
+                <label for="label">Label</label>
+                <input type="text" id="label" name="label" value="{{ search.label }}" required>
+            </div>
+            <div class="form-group">
+                <label for="ntfy_topic">Topic ntfy</label>
+                <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ search.ntfy_topic }}" required>
+            </div>
+            <div class="form-group">
+                <label for="scrape_interval">Intervalle (min)</label>
+                <input type="number" id="scrape_interval" name="scrape_interval" value="{{ search.scrape_interval or 5 }}" min="1" max="1440">
+            </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 1rem;">
+            <label for="search_url">URL de recherche SeLoger</label>
+            <input type="url" id="search_url" name="search_url"
+                placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
+            <small class="form-help">
+                L'URL sera parsée pour extraire les critères. Laissez vide pour utiliser les champs manuels.
+            </small>
+        </div>
+
+        <details style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Critères manuels</summary>
+            <div class="form-grid" style="margin-top: 0.75rem;">
+                <div class="form-group">
+                    <label for="place_ids">Place IDs</label>
+                    <input type="text" id="place_ids" name="place_ids"
+                        value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
+                        placeholder="Ex: AD08FR31096">
+                </div>
+                <div class="form-group">
+                    <label for="price_min">Prix min (€)</label>
+                    <input type="number" id="price_min" name="price_min"
+                        value="{{ search.criteria.priceMin if search.criteria.priceMin else '' }}"
+                        placeholder="600">
+                </div>
+                <div class="form-group">
+                    <label for="price_max">Prix max (€)</label>
+                    <input type="number" id="price_max" name="price_max"
+                        value="{{ search.criteria.priceMax if search.criteria.priceMax else '' }}"
+                        placeholder="850">
+                </div>
+                <div class="form-group">
+                    <label for="space_min">Surface min (m²)</label>
+                    <input type="number" id="space_min" name="space_min"
+                        value="{{ search.criteria.spaceMin if search.criteria.spaceMin else '' }}"
+                        placeholder="19">
+                </div>
+                <div class="form-group">
+                    <label for="distribution">Type de transaction</label>
+                    <select id="distribution" name="distribution">
+                        <option value="Rent" {% if search.criteria.distributionTypes and 'Rent' in search.criteria.distributionTypes %}selected{% endif %}>Location</option>
+                        <option value="Sale" {% if search.criteria.distributionTypes and 'Sale' in search.criteria.distributionTypes %}selected{% endif %}>Achat</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="estate_type">Type de bien</label>
+                    <select id="estate_type" name="estate_type">
+                        <option value="Apartment" {% if search.criteria.estateTypes and 'Apartment' in search.criteria.estateTypes %}selected{% endif %}>Appartement</option>
+                        <option value="House" {% if search.criteria.estateTypes and 'House' in search.criteria.estateTypes %}selected{% endif %}>Maison</option>
+                        <option value="Parking" {% if search.criteria.estateTypes and 'Parking' in search.criteria.estateTypes %}selected{% endif %}>Parking</option>
+                        <option value="Land" {% if search.criteria.estateTypes and 'Land' in search.criteria.estateTypes %}selected{% endif %}>Terrain</option>
+                    </select>
+                </div>
+            </div>
+        </details>
+
+        <!-- Current criteria display -->
+        {% if search.criteria %}
+        <details style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">📋 Critères actuels</summary>
+            <pre style="margin-top: 0.5rem;"><code>{{ search.criteria | tojson(indent=2) }}</code></pre>
+        </details>
+        {% endif %}
+
+        <div class="form-actions" style="margin-top: 1.5rem; display: flex; gap: 0.75rem;">
+            <button type="submit" class="btn btn-primary">💾 Enregistrer</button>
+            <a href="{{ url_for('web.searches') }}" class="btn btn-ghost">Annuler</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

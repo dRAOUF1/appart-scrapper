@@ -1,0 +1,398 @@
+"""Web Frontend Blueprint — user-facing routes (/)."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from io import BytesIO
+
+from flask import (
+    Blueprint, request, render_template, redirect, url_for,
+    session, flash, g, current_app, jsonify, send_file,
+)
+
+from parsers import list_sources
+from routes.auth import require_login
+
+web_bp = Blueprint(
+    "web", __name__,
+    template_folder="templates",
+    static_folder="static",
+)
+
+
+def _parse_search_criteria_from_form(form_data: dict) -> dict:
+    """Build criteria dict from web form fields."""
+    criteria = {}
+    search_url = form_data.get("search_url", "").strip()
+
+    if search_url:
+        from scraper.seloger import parse_search_url
+        criteria = parse_search_url(search_url)
+    else:
+        place_ids = form_data.get("place_ids", "").strip()
+        price_min = form_data.get("price_min", "").strip()
+        price_max = form_data.get("price_max", "").strip()
+        space_min = form_data.get("space_min", "").strip()
+        distribution = form_data.get("distribution", "Rent")
+        estate_type = form_data.get("estate_type", "Apartment")
+
+        if place_ids:
+            criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
+            criteria["location"] = {"placeIds": criteria["placeIds"]}
+        if price_min:
+            criteria["priceMin"] = int(price_min)
+        if price_max:
+            criteria["priceMax"] = int(price_max)
+        if space_min:
+            criteria["spaceMin"] = int(space_min)
+        criteria["distributionTypes"] = [distribution]
+        criteria["estateTypes"] = [estate_type]
+
+    return criteria
+
+
+def _submit_scrape(search_id: int, user_id: int):
+    """Submit a scrape job, checking for existing futures."""
+    if search_id in current_app._scrape_futures:
+        fut = current_app._scrape_futures[search_id]
+        if not fut.done():
+            return False, "Scraping déjà en cours pour cette recherche"
+        else:
+            del current_app._scrape_futures[search_id]
+
+    from services.scrape_service import ScrapeService
+    fut = current_app._scrape_executor.submit(
+        ScrapeService(current_app._get_current_object()).execute,
+        search_id, user_id,
+    )
+    current_app._scrape_futures[search_id] = fut
+    return True, "Scraping démarré en arrière-plan"
+
+
+@web_bp.route("/")
+def index():
+    if "user_id" in session:
+        return redirect(url_for("web.dashboard"))
+    return redirect(url_for("web.login"))
+
+
+@web_bp.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip().lower()
+        if not username:
+            flash("Nom d'utilisateur requis", "error")
+            return render_template("login.html")
+
+        user = current_app.storage.get_user_by_username(username)
+        if not user:
+            try:
+                user = current_app.storage.create_user(username)
+                flash(f"Compte créé ! Votre token API : {user['api_token']}", "success")
+            except ValueError:
+                flash("Erreur lors de la création du compte", "error")
+                return render_template("login.html")
+
+        session["user_id"] = user["id"]
+        session["username"] = user["username"]
+        session["api_token"] = user["api_token"]
+        return redirect(url_for("web.dashboard"))
+
+    return render_template("login.html")
+
+
+@web_bp.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("web.login"))
+
+
+@web_bp.route("/dashboard")
+@require_login
+def dashboard():
+    data = current_app.storage.get_dashboard_data(g.user["id"])
+    return render_template(
+        "dashboard.html",
+        stats=data["stats"],
+        searches=data["searches"],
+        recent=data["recent"][:10],
+        api_token=session.get("api_token"),
+        now=datetime.utcnow,
+    )
+
+
+@web_bp.route("/searches", methods=["GET", "POST"])
+@require_login
+def searches():
+    sources = list_sources()
+    if request.method == "POST":
+        label = request.form.get("label", "").strip()
+        ntfy_topic = request.form.get("ntfy_topic", "").strip()
+        source = request.form.get("source", "seloger").strip()
+        scrape_interval = int(request.form.get("scrape_interval", 5))
+
+        criteria = _parse_search_criteria_from_form(request.form)
+
+        if not criteria.get("placeIds"):
+            flash("L'URL ne contient pas de lieu valide (locations=...)", "error")
+            return redirect(url_for("web.searches"))
+
+        if label and ntfy_topic and criteria.get("placeIds"):
+            current_app.storage.create_search(
+                g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
+            )
+            flash(f"Recherche « {label} » créée !", "success")
+        else:
+            flash("Label, topic ntfy et au moins un lieu requis", "error")
+        return redirect(url_for("web.searches"))
+
+    all_searches = current_app.storage.get_user_searches(g.user["id"])
+    base_url = request.url_root.rstrip("/")
+    return render_template(
+        "searches.html",
+        searches=all_searches,
+        api_token=session.get("api_token"),
+        base_url=base_url,
+        sources=sources,
+        now=datetime.utcnow,
+    )
+
+
+@web_bp.route("/searches/<int:search_id>/delete", methods=["POST"])
+@require_login
+def delete_search_web(search_id: int):
+    search = current_app.storage.get_search(search_id)
+    if search and search["user_id"] == g.user["id"]:
+        current_app.storage.delete_search(search_id)
+        flash("Recherche supprimée", "success")
+    return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/scrape", methods=["POST"])
+@require_login
+def scrape_search_web(search_id: int):
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    ok, msg = _submit_scrape(search_id, g.user["id"])
+    flash(msg, "success" if ok else "warning")
+    return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/interval", methods=["POST"])
+@require_login
+def update_interval_web(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    interval = int(request.form.get("scrape_interval", 5))
+    if interval < 1:
+        interval = 1
+    storage.update_scrape_interval(search_id, interval)
+    flash(f"Intervalle mis à jour : {interval} minutes", "success")
+    return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/toggle-active", methods=["POST"])
+@require_login
+def toggle_search_active_web(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+    new_value = storage.toggle_search_active(search_id)
+    if new_value is None:
+        flash("Recherche introuvable", "error")
+    else:
+        status = "activée" if new_value else "désactivée"
+        flash(f"Recherche {status}", "success")
+    return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/edit", methods=["GET", "POST"])
+@require_login
+def edit_search(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    if request.method == "POST":
+        label = request.form.get("label", "").strip()
+        ntfy_topic = request.form.get("ntfy_topic", "").strip()
+        scrape_interval = int(request.form.get("scrape_interval", 5))
+
+        criteria = _parse_search_criteria_from_form(request.form)
+
+        if not criteria.get("placeIds"):
+            flash("L'URL ne contient pas de lieu valide", "error")
+            return render_template("search_edit.html", search=search, now=datetime.utcnow)
+
+        if label and ntfy_topic and criteria.get("placeIds"):
+            storage.update_search(
+                search_id, g.user["id"],
+                label=label, ntfy_topic=ntfy_topic,
+                criteria=criteria, scrape_interval=scrape_interval,
+            )
+            flash("Recherche mise à jour !", "success")
+            return redirect(url_for("web.searches"))
+        else:
+            flash("Label, topic ntfy et au moins un lieu requis", "error")
+
+    stats = storage.get_scrape_stats(search_id)
+    return render_template("search_edit.html", search=search, stats=stats, now=datetime.utcnow)
+
+
+@web_bp.route("/searches/<int:search_id>/logs", methods=["GET"])
+@require_login
+def search_logs(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    page = int(request.args.get("page", 1))
+    per_page = 30
+    offset = (page - 1) * per_page
+    status_filter = request.args.get("status", "")
+
+    logs = storage.get_scrape_logs(search_id, limit=per_page, offset=offset, status_filter=status_filter)
+    total = storage.count_scrape_logs(search_id, status_filter=status_filter)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    stats = storage.get_scrape_stats(search_id)
+    return render_template(
+        "search_logs.html",
+        search=search,
+        logs=logs,
+        total=total,
+        page=page,
+        total_pages=total_pages,
+        status_filter=status_filter,
+        stats=stats,
+        now=datetime.utcnow,
+    )
+
+
+@web_bp.route("/searches/<int:search_id>/logs/live", methods=["GET"])
+@require_login
+def search_logs_live(search_id: int):
+    from log_manager import SearchLogManager
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Not found"}), 404
+
+    offset = int(request.args.get("offset", 0))
+    log_mgr = SearchLogManager(search_id)
+    new_text, new_offset = log_mgr.read_tail(offset)
+
+    return jsonify({
+        "text": new_text,
+        "offset": new_offset,
+        "has_content": bool(new_text),
+    })
+
+
+@web_bp.route("/searches/<int:search_id>/logs/<int:log_id>/raw", methods=["GET"])
+@require_login
+def search_log_raw(search_id: int, log_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    log_entry = storage.get_scrape_log_raw(log_id, g.user["id"])
+    if not log_entry:
+        flash("Log introuvable", "error")
+        return redirect(url_for("web.search_logs", search_id=search_id))
+
+    return render_template(
+        "search_log_raw.html",
+        search=search,
+        log_entry=log_entry,
+    )
+
+
+@web_bp.route("/searches/<int:search_id>/logs/<int:log_id>/download", methods=["GET"])
+@require_login
+def search_log_download(search_id: int, log_id: int):
+    from log_manager import SearchLogManager
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Not found"}), 404
+
+    log_entry = storage.get_scrape_log_raw(log_id, g.user["id"])
+    if not log_entry:
+        return jsonify({"error": "Log not found"}), 404
+
+    if log_entry.get("raw_logs"):
+        buf = BytesIO(log_entry["raw_logs"].encode("utf-8"))
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name=f"search_{search_id}_log_{log_id}.log",
+        )
+
+    log_mgr = SearchLogManager(search_id)
+    if log_mgr.file_exists():
+        return send_file(
+            log_mgr.log_file,
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name=f"search_{search_id}_log_{log_id}.log",
+        )
+
+    return "No logs available", 404
+
+
+@web_bp.route("/listings/<int:search_id>")
+@require_login
+def listings(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    page = int(request.args.get("page", 1))
+    per_page = 20
+    offset = (page - 1) * per_page
+
+    all_listings = storage.get_listings_for_search(search_id, limit=per_page, offset=offset)
+    total = storage.count_listings_for_search(search_id)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return render_template(
+        "listings.html",
+        search=search,
+        listings=all_listings,
+        total=total,
+        page=page,
+        total_pages=total_pages,
+    )
+
+
+@web_bp.route("/health")
+def health():
+    return "OK", 200
+
+
+@web_bp.route("/cleanup", methods=["POST"])
+@require_login
+def cleanup():
+    days = int(request.form.get("days", 4))
+    deleted = current_app.storage.delete_old_listings(days=days)
+    flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
+    return redirect(url_for("web.dashboard"))

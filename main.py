@@ -1,223 +1,190 @@
-import time
-import yaml
-import json
+"""
+SeLoger API Platform — Point d'entrée unique.
+
+Sert à la fois l'API REST (/api/*) et le frontend web (/) depuis
+un seul processus Flask, compatible Render (un seul web service).
+
+Le scraping est fait côté serveur via les API SeLoger (BFF + classified-search).
+Architecture parallèle :
+  - ThreadPoolExecutor(max_workers=1) : max 1 scrape à la fois (évite OOM)
+  - APScheduler : scheduling propre sans threads bloqués
+  - Connexions DB thread-safe avec health check
+"""
+
+from __future__ import annotations
+
 import os
-import logging
-import requests
-import random
-from curl_cffi import requests as curl_requests
-from scrapers.seloger import SeLogerScraper
-from scrapers.bienici import BienIciScraper
-from scrapers.laforet import LaforetScraper
-from scrapers.century21 import Century21Scraper
-from scrapers.safar import SafarScraper
-from scrapers.valierecortez import ValiereCortezScraper
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("scraper.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
 
-CONFIG_PATH = "config.yaml"
-DATA_PATH = "annonces.json"
+load_dotenv(Path(__file__).parent / ".env")
+
+from flask import Flask, g
+from loguru import logger
+
+from config import load_config
+from notifier import Notifier
+from storage import Storage
+
+_scrape_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scrape")
+_scrape_futures: dict[int, object] = {}
 
 
-def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {}
-    with open(CONFIG_PATH, "r") as f:
-        return yaml.safe_load(f)
-
-
-def load_data():
-    if not os.path.exists(DATA_PATH):
-        return {}
-    with open(DATA_PATH, "r") as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return {}
-
-
-def save_data(data):
-    with open(DATA_PATH, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def send_notification(topic, message, url="", title="Nouveau Logement"):
-    if not topic:
-        return
-    try:
-        resp = requests.post(
-            f"https://ntfy.sh/{topic}", 
-            data=message.encode('utf-8'),
-            headers={"Title": title}
-        )
-        if resp.status_code == 200:
-            logger.info(f"Notification envoyée: {url}")
-        else:
-            logger.error(f"Échec notification: {resp.status_code}")
-    except Exception as e:
-        logger.error(f"Échec notification: {e}")
-
-
-def send_alert(topic, alert_type, details=""):
-    """Send an alert notification for errors/blocking."""
-    if not topic:
-        return
-    try:
-        message = f"ALERTE SCRAPER\n\nType: {alert_type}"
-        if details:
-            message += f"\nDetails: {details}"
-        
-        requests.post(
-            f"https://ntfy.sh/{topic}",
-            data=message.encode('utf-8'),
-            headers={
-                "Title": alert_type,
-                "Priority": "high",
-                "Tags": "warning"
-            },
-            timeout=10
-        )
-        logger.info(f"Alerte envoyee: {alert_type}")
-    except Exception as e:
-        logger.error(f"Echec envoi alerte: {e}")
-
-
-def create_session(config: dict) -> curl_requests.Session:
-    """Create a curl_cffi session with Safari impersonation."""
-    impersonate = config.get('anti_detection', {}).get('impersonate', 'safari17_0')
-    session = curl_requests.Session(impersonate=impersonate)
-    logger.info(f"Session créée (impersonate={impersonate})")
-    return session
-
-
-def run_scrapers():
-    """Main scraper function using curl_cffi."""
-    logger.info("=== Démarrage du scraping ===")
+def create_app() -> Flask:
+    startup_start = time.monotonic()
     config = load_config()
-    if not config:
-        return
 
-    previous_listings = load_data()
-    session = None
-    
-    try:
-        session = create_session(config)
-        
-        # Merge search_criteria into scraper configs
-        search_criteria = config.get('search_criteria', {})
-        
-        scrapers = []
-        if config.get('scrapers', {}).get('seloger', {}).get('enabled', False):
-            seloger_config = config['scrapers']['seloger'].copy()
-            seloger_config['filters'] = {**search_criteria, **seloger_config.get('filters', {})}
-            scrapers.append(SeLogerScraper(seloger_config))
-        if config.get('scrapers', {}).get('bienici', {}).get('enabled', False):
-            bienici_config = config['scrapers']['bienici'].copy()
-            bienici_config['filters'] = {**search_criteria, **bienici_config.get('filters', {})}
-            scrapers.append(BienIciScraper(bienici_config))
-        if config.get('scrapers', {}).get('laforet', {}).get('enabled', False):
-            laforet_config = config['scrapers']['laforet'].copy()
-            laforet_config['filters'] = {**search_criteria, **laforet_config.get('filters', {})}
-            scrapers.append(LaforetScraper(laforet_config))
-        if config.get('scrapers', {}).get('century21', {}).get('enabled', False):
-            century21_config = config['scrapers']['century21'].copy()
-            century21_config['filters'] = {**search_criteria, **century21_config.get('filters', {})}
-            scrapers.append(Century21Scraper(century21_config))
-        if config.get('scrapers', {}).get('safar', {}).get('enabled', False):
-            safar_config = config['scrapers']['safar'].copy()
-            safar_config['filters'] = {**search_criteria, **safar_config.get('filters', {})}
-            scrapers.append(SafarScraper(safar_config))
-        if config.get('scrapers', {}).get('valierecortez', {}).get('enabled', False):
-            valierecortez_config = config['scrapers']['valierecortez'].copy()
-            valierecortez_config['filters'] = {**search_criteria, **valierecortez_config.get('filters', {})}
-            scrapers.append(ValiereCortezScraper(valierecortez_config))
-            
-        for scraper in scrapers:
-            site_name = scraper.get_name()
-            logger.info(f"Scraping {site_name}...")
-            
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level=config.log_level,
+        format=(
+            "<green>{time:HH:mm:ss}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{module}</cyan>:<cyan>{function}</cyan> | "
+            "<level>{message}</level>"
+        ),
+        colorize=True,
+    )
+
+    app = Flask(
+        __name__,
+        template_folder="templates",
+        static_folder="static",
+    )
+    app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+
+    app.config["APP_CONFIG"] = config
+    app.storage = Storage(database_url=config.database.database_url)
+    app.notifier = Notifier(
+        server=config.ntfy.server,
+        priority=config.ntfy.priority,
+    )
+    app._scrape_executor = _scrape_executor
+    app._scrape_futures = _scrape_futures
+
+    @app.before_request
+    def before_request():
+        g._db_conn = app.storage._get_conn()
+
+    @app.teardown_request
+    def teardown_request(exception):
+        if hasattr(g, '_db_conn') and g._db_conn is not None:
             try:
-                delay = random.uniform(
-                    config.get('anti_detection', {}).get('min_delay', 5),
-                    config.get('anti_detection', {}).get('max_delay', 15)
-                )
-                time.sleep(delay)
-                
-                current_listings_list, is_blocked = scraper.scrape_with_curl(session, config)
-                
-                if is_blocked:
-                    logger.error(f"❌ {site_name} BLOQUÉ par anti-bot!")
-                    topic = config.get('notifications', {}).get('ntfy_topic')
-                    send_alert(topic, "Bot Détecté", f"{site_name} a été bloqué par le site")
-                    continue
-                
-                if site_name not in previous_listings:
-                    previous_listings[site_name] = {}
-                
-                site_data = previous_listings[site_name]
-                new_count = 0
-                
-                for listing in current_listings_list:
-                    lid = scraper.get_listing_id(listing)
-                    if not lid:
-                        continue
-                        
-                    if lid not in site_data:
-                        new_count += 1
-                        site_data[lid] = listing
-                        
-                        msg = scraper.format_notification(listing)
-                        topic = config.get('notifications', {}).get('ntfy_topic')
-                        url = listing.get('url', '')
-                        send_notification(topic, msg, url)
-                
-                if new_count > 0:
-                    logger.info(f"✅ {site_name}: {new_count} nouvelles annonces")
-                else:
-                    logger.info(f"📭 {site_name}: aucune nouvelle annonce")
-                    
-            except Exception as e:
-                logger.error(f"Erreur {site_name}: {e}", exc_info=True)
-    
-    finally:
-        if session:
-            session.close()
-    
-    save_data(previous_listings)
-    logger.info("=== Scraping terminé ===")
+                if not g._db_conn.closed:
+                    g._db_conn.close()
+            except Exception:
+                pass
+            g._db_conn = None
+
+    from datetime import datetime, timezone, date
+    from zoneinfo import ZoneInfo
+
+    @app.template_filter("parse_iso_date")
+    def parse_iso_date(value):
+        if not value:
+            return None
+        try:
+            value = value.replace("Z", "+00:00")
+            return datetime.fromisoformat(value)
+        except (ValueError, AttributeError):
+            return None
+
+    FR_TZ = ZoneInfo("Europe/Paris")
+
+    @app.template_filter("fr_time")
+    def fr_time(dt):
+        if dt is None:
+            return None
+        if isinstance(dt, date) and not isinstance(dt, datetime):
+            return datetime(dt.year, dt.month, dt.day, tzinfo=FR_TZ)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(FR_TZ)
+
+    import logging
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+    @app.context_processor
+    def inject_admin():
+        import datetime
+        return {
+            "admin_username": os.environ.get("ADMIN_USERNAME", "admin"),
+            "now": lambda: datetime.datetime.now(FR_TZ),
+        }
+
+    _start_background_tasks(app)
+
+    from routes import api_bp, web_bp, admin_bp
+    app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(web_bp)
+    app.register_blueprint(admin_bp)
+
+    startup_elapsed = time.monotonic() - startup_start
+    logger.info(f"Appart Tracker — démarré (mode scraper) en {startup_elapsed:.2f}s")
+    return app
+
+
+def _start_background_tasks(app: Flask):
+    """Démarre le scheduler APScheduler. Rien de bloquant."""
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from datetime import datetime, timedelta
+
+    scheduler = BackgroundScheduler(daemon=True)
+
+    def scheduled_scrape_job():
+        try:
+            with app.app_context():
+                all_users = app.storage.get_all_users()
+                now = datetime.utcnow()
+                for user in all_users:
+                    searches = app.storage.get_user_searches(user["id"])
+                    for s in searches:
+                        if not s.get("is_active", True):
+                            continue
+                        criteria = s.get("criteria", {})
+                        if not criteria or not isinstance(criteria, dict):
+                            continue
+                        if not criteria.get("placeIds"):
+                            continue
+
+                        interval = s.get("scrape_interval", 5)
+                        last_scraped = s.get("last_scraped")
+
+                        if last_scraped:
+                            if isinstance(last_scraped, str):
+                                last_scraped = datetime.fromisoformat(last_scraped)
+                            threshold = now - timedelta(minutes=interval)
+                            if last_scraped > threshold:
+                                continue
+
+                        search_id = s["id"]
+                        if search_id in _scrape_futures:
+                            fut = _scrape_futures[search_id]
+                            if not fut.done():
+                                continue
+                            else:
+                                del _scrape_futures[search_id]
+
+                        from services.scrape_service import ScrapeService
+                        fut = _scrape_executor.submit(
+                            ScrapeService(app).execute, search_id, user["id"]
+                        )
+                        _scrape_futures[search_id] = fut
+        except Exception as e:
+            logger.error(f"Erreur scheduled_scrape_job: {e}")
+
+    scheduler.add_job(scheduled_scrape_job, "interval", seconds=30, id="scrape_scheduler", max_instances=1)
+    scheduler.start()
+    logger.info("Scrape scheduler démarré (toutes les 30s)")
 
 
 if __name__ == "__main__":
-    logger.info("🚀 Scraper démarré")
-    
-    while True:
-        try:
-            run_scrapers()
-            
-            config = load_config()
-            interval = config.get('check_interval', 10)
-            logger.info(f"⏳ Prochain check dans {interval} min...")
-            time.sleep(interval * 60)
-            
-        except KeyboardInterrupt:
-            logger.info("🛑 Scraper arrêté")
-            config = load_config()
-            topic = config.get('notifications', {}).get('ntfy_topic')
-            send_alert(topic, "Scraper Arrêté", "Arrêt manuel (Ctrl+C)")
-            break
-        except Exception as e:
-            logger.error(f"Erreur critique: {e}", exc_info=True)
-            config = load_config()
-            topic = config.get('notifications', {}).get('ntfy_topic')
-            send_alert(topic, "Erreur Critique", str(e))
-            logger.info("Redémarrage dans 1 min...")
-            time.sleep(60)
+    app = create_app()
+    port = int(os.environ.get("PORT", 10000))
+    logger.info(f"Serveur Flask sur le port {port}")
+    app.run(host="0.0.0.0", port=port, debug=False)

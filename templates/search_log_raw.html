@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Logs bruts — {{ search.label }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="{{ url_for('web.search_logs', search_id=search.id) }}" class="back-link">← Retour aux logs</a>
+    <h1>📄 Logs bruts — {{ search.label }}</h1>
+</div>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+            <span class="badge {% if log_entry.status == 'success' %}badge-active{% elif log_entry.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
+                {% if log_entry.status == 'success' %}✅{% elif log_entry.status == 'error' %}❌{% else %}⚠️{% endif %}
+                {{ log_entry.status }}
+            </span>
+            <span class="text-muted" style="margin-left: 0.75rem;">
+                {{ (log_entry.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') }}
+                {% if log_entry.completed_at %} → {{ (log_entry.completed_at|fr_time).strftime('%H:%M:%S') }}{% endif %}
+            </span>
+        </div>
+        <a href="{{ url_for('web.search_log_download', search_id=search.id, log_id=log_entry.id) }}" class="btn btn-sm btn-ghost">⬇ Télécharger .log</a>
+    </div>
+</div>
+
+<div class="log-viewer" id="raw-viewer">
+    {% if log_entry.raw_logs %}
+        {{ log_entry.raw_logs | replace('&', '&amp;') | replace('<', '&lt;') | replace('>', '&gt;') | replace('\n', '<br>') | replace('ERROR', '<span class="log-error">ERROR</span>') | replace('WARNING', '<span class="log-warning">WARNING</span>') | replace('INFO', '<span class="log-info">INFO</span>') | replace('DEBUG', '<span class="log-debug">DEBUG</span>') | safe }}
+    {% else %}
+        <span class="text-muted">Aucun log brut disponible pour ce scrape.</span>
+    {% endif %}
+</div>
+
+{% endblock %}
