@@ -42,6 +42,7 @@ class ScrapeService:
                         error_message="Critères vides ou placeIds manquant",
                         started_at=started_at,
                     )
+                    log_mgr.cleanup_old_logs()
                     return 0
 
                 use_bff = storage.get_setting("use_bff_api", "true") == "true"
@@ -56,6 +57,7 @@ class ScrapeService:
                         error_message=f"Parser inconnu: {e}",
                         started_at=started_at,
                     )
+                    log_mgr.cleanup_old_logs()
                     return 0
 
                 try:
@@ -69,6 +71,7 @@ class ScrapeService:
                         error_message=err_msg,
                         started_at=started_at,
                     )
+                    log_mgr.cleanup_old_logs()
                     return 0
 
                 if not listings:
@@ -80,6 +83,7 @@ class ScrapeService:
                         listings_found=0, new_listings=0,
                         started_at=started_at,
                     )
+                    log_mgr.cleanup_old_logs()
                     return 0
 
                 new_listings, already = storage.save_and_link(listings, search_id)
@@ -112,6 +116,16 @@ class ScrapeService:
                 )
                 return len(new_listings)
 
-        except Exception:
-            log_mgr.stop()
+        except Exception as e:
+            logger.exception(f"[search:{search_id}] Exception dans execute: {e}")
+            try:
+                storage.update_last_scraped(search_id)
+                storage.create_scrape_log(
+                    search_id, "error",
+                    error_message=f"Exception: {e}",
+                    started_at=started_at,
+                )
+            except Exception as log_err:
+                logger.error(f"[search:{search_id}] Failed to log exception: {log_err}")
+            log_mgr.cleanup_old_logs()
             raise

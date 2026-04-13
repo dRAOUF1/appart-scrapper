@@ -12,6 +12,13 @@ from loguru import logger
 from repositories.base import BaseRepository
 
 
+def _clean_string(s: str) -> str:
+    """Remove surrogate characters that can't be encoded to UTF-8."""
+    if s is None:
+        return None
+    return s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+
 class ListingRepository(BaseRepository):
     """Listing CRUD operations."""
 
@@ -19,6 +26,9 @@ class ListingRepository(BaseRepository):
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
+                def clean(v):
+                    return _clean_string(v) if isinstance(v, str) else v
+
                 cur.execute(
                     """INSERT INTO listings
                        (listing_id, url, title, price, surface, rooms,
@@ -31,17 +41,17 @@ class ListingRepository(BaseRepository):
                                %s, %s, %s, %s, %s, %s, %s, %s, %s,
                                %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (
-                        listing.listing_id, listing.url, listing.title,
-                        listing.price, listing.surface, listing.rooms,
-                        listing.location, listing.image_url,
-                        listing.description, listing.agency, listing.source,
-                        listing.legacy_id, listing.price_value, listing.price_details,
-                        listing.city, listing.district, listing.zip_code,
-                        listing.property_type, listing.is_private, listing.phone,
+                        listing.listing_id, listing.url, clean(listing.title),
+                        clean(listing.price), listing.surface, listing.rooms,
+                        clean(listing.location), clean(listing.image_url),
+                        clean(listing.description), clean(listing.agency), listing.source,
+                        listing.legacy_id, listing.price_value, clean(listing.price_details),
+                        clean(listing.city), clean(listing.district), listing.zip_code,
+                        clean(listing.property_type), listing.is_private, clean(listing.phone),
                         listing.epc, listing.ges, listing.is_new,
                         listing.is_exclusive, listing.has_3d_visit,
                         listing.creation_date, listing.update_date,
-                        listing.headline, listing.photos,
+                        clean(listing.headline), clean(listing.photos),
                     ),
                 )
                 conn.commit()
@@ -82,14 +92,17 @@ class ListingRepository(BaseRepository):
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
+                def clean(v):
+                    return _clean_string(v) if isinstance(v, str) else v
+
                 listing_data = [
                     (
-                        l.listing_id, l.url, l.title, l.price, l.surface, l.rooms,
-                        l.location, l.image_url, l.description, l.agency, l.source,
-                        l.legacy_id, l.price_value, l.price_details, l.city, l.district,
-                        l.zip_code, l.property_type, l.is_private, l.phone,
+                        l.listing_id, l.url, clean(l.title), clean(l.price), l.surface, l.rooms,
+                        clean(l.location), clean(l.image_url), clean(l.description), clean(l.agency), l.source,
+                        l.legacy_id, l.price_value, clean(l.price_details), clean(l.city), clean(l.district),
+                        l.zip_code, clean(l.property_type), l.is_private, clean(l.phone),
                         l.epc, l.ges, l.is_new, l.is_exclusive, l.has_3d_visit,
-                        l.creation_date, l.update_date, l.headline, l.photos,
+                        l.creation_date, l.update_date, clean(l.headline), clean(l.photos),
                     )
                     for l in listings
                 ]
@@ -130,31 +143,42 @@ class ListingRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0) -> list[dict]:
+    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0, blacklisted_agencies: list[str] | None = None) -> list[dict]:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
-                cur.execute(
-                    """SELECT l.*, sl.found_at
+                query = """SELECT l.*, sl.found_at
                        FROM listings l
                        JOIN search_listings sl ON sl.listing_id = l.listing_id
-                       WHERE sl.search_id = %s
-                       ORDER BY sl.found_at DESC
-                       LIMIT %s OFFSET %s""",
-                    (search_id, limit, offset),
-                )
+                       WHERE sl.search_id = %s"""
+                params = [search_id]
+
+                if blacklisted_agencies:
+                    placeholders = ",".join(["%s"] * len(blacklisted_agencies))
+                    query += f" AND l.agency NOT IN ({placeholders})"
+
+                query += " ORDER BY sl.found_at DESC LIMIT %s OFFSET %s"
+                params.extend(blacklisted_agencies if blacklisted_agencies else [])
+                params.extend([limit, offset])
+
+                cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
         finally:
             self._release_conn(conn)
 
-    def count_listings_for_search(self, search_id: int) -> int:
+    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None) -> int:
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) AS cnt FROM search_listings WHERE search_id = %s",
-                    (search_id,),
-                )
+                query = "SELECT COUNT(*) AS cnt FROM search_listings sl JOIN listings l ON l.listing_id = sl.listing_id WHERE sl.search_id = %s"
+                params = [search_id]
+
+                if blacklisted_agencies:
+                    placeholders = ",".join(["%s"] * len(blacklisted_agencies))
+                    query += f" AND l.agency NOT IN ({placeholders})"
+                    params.extend(blacklisted_agencies)
+
+                cur.execute(query, params)
                 return cur.fetchone()[0]
         finally:
             self._release_conn(conn)
@@ -288,5 +312,22 @@ class ListingRepository(BaseRepository):
                 )
                 result["linked_searches"] = [dict(r) for r in cur.fetchall()]
                 return result
+        finally:
+            self._release_conn(conn)
+
+    def get_unique_agencies_for_user(self, user_id: int) -> list[str]:
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT DISTINCT l.agency
+                       FROM listings l
+                       JOIN search_listings sl ON sl.listing_id = l.listing_id
+                       JOIN searches s ON s.id = sl.search_id
+                       WHERE s.user_id = %s AND l.agency IS NOT NULL AND l.agency != ''
+                       ORDER BY l.agency""",
+                    (user_id,),
+                )
+                return [row[0] for row in cur.fetchall()]
         finally:
             self._release_conn(conn)
