@@ -89,8 +89,18 @@ class ScrapeService:
                 new_listings, already = storage.save_and_link(listings, search_id)
                 storage.update_last_scraped(search_id)
                 topic = search["ntfy_topic"]
+                blacklist_mode = search.get("blacklist_mode", "exclude")
+                blacklisted_agencies = search.get("blacklisted_agencies", [])
+
+                needs_filter = blacklist_mode == "exclude" and blacklisted_agencies
+                skip_notify_agencies = set(blacklisted_agencies) if blacklist_mode == "no_notify" else set()
 
                 for listing in new_listings:
+                    agency = listing.agency
+                    if needs_filter and agency in blacklisted_agencies:
+                        continue
+                    if agency in skip_notify_agencies:
+                        continue
                     notifier.notify_new_listing(topic, listing)
                     time.sleep(0.3)
 

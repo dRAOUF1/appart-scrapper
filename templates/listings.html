@@ -40,6 +40,36 @@
     <div id="filter-count" class="filter-count text-muted"></div>
 </div>
 
+<!-- Agency Blacklist -->
+{% if available_agencies %}
+<details class="card" style="margin-bottom: 1rem;">
+    <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">
+        🚫 Blacklist agences ({{ search.blacklisted_agencies|length }})
+    </summary>
+    <form method="POST" action="{{ url_for('web.update_blacklist_mode', search_id=search.id) }}" style="margin-top: 0.75rem;">
+        <div class="form-group">
+            <label style="font-size: 0.85rem; color: var(--text-secondary);">Mode de blacklist</label>
+            <select name="mode" style="width: 100%; padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                <option value="exclude" {% if blacklist_mode == 'exclude' %}selected{% endif %}>🚫 Exclure (pas dans les résultats, pas de notif)</option>
+                <option value="no_notify" {% if blacklist_mode == 'no_notify' %}selected{% endif %}>🔕 Ne pas notifier (visible mais pas de notification)</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-ghost btn-sm" style="margin-top: 0.5rem;">Changer le mode</button>
+    </form>
+    <form method="POST" action="{{ url_for('web.update_blacklist_agencies', search_id=search.id) }}" style="margin-top: 0.75rem;">
+        <div class="agency-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 0.75rem;">
+            {% for agency in available_agencies %}
+            <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: var(--radius-sm); transition: var(--transition-fast);">
+                <input type="checkbox" name="agencies" value="{{ agency }}" {% if search.blacklisted_agencies and agency in search.blacklisted_agencies %}checked{% endif %} style="width: auto;">
+                <span style="font-size: 0.85rem;">{{ agency }}</span>
+            </label>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Mettre à jour la blacklist</button>
+    </form>
+</details>
+{% endif %}
+
 {% if listings %}
 <div class="listing-grid" id="listing-grid">
     {% for li in listings %}

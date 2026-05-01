@@ -54,14 +54,14 @@ class TestSearch:
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
             criteria={"placeIds": ["123"]}, scrape_interval=5,
-            is_active=True, last_scraped=None,
+            is_active=True, last_scraped=None, blacklist_mode="exclude",
         )
         assert search.should_scrape(datetime.utcnow()) is True
 
     def test_should_scrape_inactive(self):
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
-            criteria={"placeIds": ["123"]}, is_active=False,
+            criteria={"placeIds": ["123"]}, is_active=False, blacklist_mode="exclude",
         )
         assert search.should_scrape(datetime.utcnow()) is False
 
@@ -69,7 +69,7 @@ class TestSearch:
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
             criteria={"placeIds": ["123"]}, scrape_interval=5,
-            is_active=True, last_scraped=datetime.utcnow(),
+            is_active=True, last_scraped=datetime.utcnow(), blacklist_mode="exclude",
         )
         assert search.should_scrape(datetime.utcnow()) is False
 
@@ -77,41 +77,42 @@ class TestSearch:
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
             criteria={"placeIds": ["123"]}, scrape_interval=5,
-            is_active=True, last_scraped=datetime.utcnow() - timedelta(minutes=10),
+            is_active=True, last_scraped=datetime.utcnow() - timedelta(minutes=10), blacklist_mode="exclude",
         )
         assert search.should_scrape(datetime.utcnow()) is True
 
     def test_should_scrape_empty_criteria(self):
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
-            criteria={}, is_active=True,
+            criteria={}, is_active=True, blacklist_mode="exclude",
         )
         assert search.should_scrape(datetime.utcnow()) is False
 
     def test_should_scrape_no_placeids(self):
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
-            criteria={"priceMax": 1500}, is_active=True,
+            criteria={"priceMax": 1500}, is_active=True, blacklist_mode="exclude",
         )
         assert search.should_scrape(datetime.utcnow()) is False
 
     def test_to_dict(self):
-        search = Search(id=1, user_id=1, label="Paris", ntfy_topic="paris")
+        search = Search(id=1, user_id=1, label="Paris", ntfy_topic="paris", blacklist_mode="exclude")
         d = search.to_dict()
         assert d["label"] == "Paris"
         assert d["criteria"] == {}
         assert d["is_active"] is True
+        assert d["blacklist_mode"] == "exclude"
 
     def test_has_valid_criteria(self):
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
-            criteria={"placeIds": ["750113"]},
+            criteria={"placeIds": ["750113"]}, blacklist_mode="exclude",
         )
         assert search.has_valid_criteria() is True
 
     def test_has_valid_criteria_empty(self):
         search = Search(
             id=1, user_id=1, label="Test", ntfy_topic="test",
-            criteria={},
+            criteria={}, blacklist_mode="exclude",
         )
         assert search.has_valid_criteria() is False

@@ -117,6 +117,7 @@ class SearchRepository(BaseRepository):
                 cur.execute(
                     """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
                               s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
+                              s.blacklisted_agencies, s.blacklist_mode,
                               (SELECT COUNT(*) FROM search_listings WHERE search_id = s.id) AS listing_count
                        FROM searches s
                        WHERE s.user_id = %s
@@ -137,7 +138,7 @@ class SearchRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT id, user_id, label, ntfy_topic, source, criteria, scrape_interval, last_scraped, created_at, is_active FROM searches WHERE id = %s",
+                    "SELECT id, user_id, label, ntfy_topic, source, criteria, scrape_interval, last_scraped, created_at, is_active, blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
                     (search_id,),
                 )
                 row = cur.fetchone()
@@ -242,5 +243,33 @@ class SearchRepository(BaseRepository):
                 )
                 result["total_listings"] = cur.fetchone()["cnt"]
                 return result
+        finally:
+            self._release_conn(conn)
+
+    def update_blacklisted_agencies(self, search_id: int, agencies: list[str]) -> bool:
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE searches SET blacklisted_agencies = %s WHERE id = %s",
+                    (agencies, search_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
+        finally:
+            self._release_conn(conn)
+
+    def update_blacklist_mode(self, search_id: int, mode: str) -> bool:
+        if mode not in ("exclude", "no_notify"):
+            return False
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE searches SET blacklist_mode = %s WHERE id = %s",
+                    (mode, search_id),
+                )
+                conn.commit()
+                return cur.rowcount > 0
         finally:
             self._release_conn(conn)

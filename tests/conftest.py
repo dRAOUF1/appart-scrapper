@@ -34,4 +34,5 @@ def sample_search_data():
         },
         "scrape_interval": 5,
         "is_active": True,
+        "blacklist_mode": "exclude",
     }

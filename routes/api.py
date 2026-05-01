@@ -103,6 +103,37 @@ def toggle_search_active(search_id: int):
     return jsonify({"ok": True, "is_active": new_value}), 200
 
 
+@api_bp.route("/searches/<int:search_id>/blacklist-mode", methods=["PUT"])
+@require_token
+def update_blacklist_mode(search_id: int):
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode", "exclude")
+    
+    if mode not in ("exclude", "no_notify"):
+        return jsonify({"error": "Mode invalide. Options: exclude, no_notify"}), 400
+    
+    current_app.storage.update_blacklist_mode(search_id, mode)
+    return jsonify({"ok": True, "blacklist_mode": mode}), 200
+
+
+@api_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["PUT"])
+@require_token
+def update_blacklist_agencies(search_id: int):
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    
+    data = request.get_json(silent=True) or {}
+    agencies = data.get("agencies", [])
+    
+    current_app.storage.update_blacklisted_agencies(search_id, agencies)
+    return jsonify({"ok": True, "blacklisted_agencies": agencies}), 200
+
+
 @api_bp.route("/scrape/<int:search_id>", methods=["POST"])
 @require_token
 def scrape_search(search_id: int):

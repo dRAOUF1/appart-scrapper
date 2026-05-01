@@ -207,12 +207,41 @@ def toggle_search_active_web(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
     new_value = storage.toggle_search_active(search_id)
-    if new_value is None:
+
+
+@web_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["POST"])
+@require_login
+def update_blacklist_agencies(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
-    else:
-        status = "activée" if new_value else "désactivée"
-        flash(f"Recherche {status}", "success")
-    return redirect(url_for("web.searches"))
+        return redirect(url_for("web.searches"))
+
+    agencies = request.form.getlist("agencies")
+    storage.update_blacklisted_agencies(search_id, agencies)
+    flash(f"Blacklist mise à jour : {len(agencies)} agences", "success")
+    return redirect(url_for("web.listings", search_id=search_id))
+
+
+@web_bp.route("/searches/<int:search_id>/blacklist-mode", methods=["POST"])
+@require_login
+def update_blacklist_mode(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    mode = request.form.get("mode", "exclude")
+    if mode not in ("exclude", "no_notify"):
+        flash("Mode invalide", "error")
+        return redirect(url_for("web.listings", search_id=search_id))
+
+    storage.update_blacklist_mode(search_id, mode)
+    mode_label = "Exclure complètement" if mode == "exclude" else "Ne pas notifier"
+    flash(f"Mode blacklist: {mode_label}", "success")
+    return redirect(url_for("web.listings", search_id=search_id))
 
 
 @web_bp.route("/searches/<int:search_id>/edit", methods=["GET", "POST"])
@@ -370,9 +399,18 @@ def listings(search_id: int):
     per_page = 20
     offset = (page - 1) * per_page
 
-    all_listings = storage.get_listings_for_search(search_id, limit=per_page, offset=offset)
-    total = storage.count_listings_for_search(search_id)
+    blacklisted = search.get("blacklisted_agencies") or []
+    blacklist_mode = search.get("blacklist_mode", "exclude")
+    
+    agencies_to_filter = []
+    if blacklist_mode == "exclude" and blacklisted:
+        agencies_to_filter = blacklisted
+    
+    all_listings = storage.get_listings_for_search(search_id, limit=per_page, offset=offset, blacklisted_agencies=agencies_to_filter)
+    total = storage.count_listings_for_search(search_id, blacklisted_agencies=agencies_to_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
+
+    available_agencies = storage.get_unique_agencies_for_user(g.user["id"])
 
     return render_template(
         "listings.html",
@@ -381,6 +419,8 @@ def listings(search_id: int):
         total=total,
         page=page,
         total_pages=total_pages,
+        available_agencies=available_agencies,
+        blacklist_mode=blacklist_mode,
     )
 
 

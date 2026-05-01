@@ -20,6 +20,12 @@ class Search:
     last_scraped: datetime | None = None
     created_at: datetime | None = None
     is_active: bool = True
+    blacklisted_agencies: list[str] = field(default_factory=list)
+    blacklist_mode: str = "exclude"
+
+    @staticmethod
+    def valid_blacklist_modes() -> list[str]:
+        return ["exclude", "no_notify"]
 
     def to_dict(self) -> dict:
         d = asdict(self)

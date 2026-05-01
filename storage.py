@@ -292,7 +292,9 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS criteria JSONB DEFAULT '{}',
                         ADD COLUMN IF NOT EXISTS scrape_interval INTEGER DEFAULT 5,
                         ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
-                        ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+                        ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
+                        ADD COLUMN IF NOT EXISTS blacklisted_agencies TEXT[] DEFAULT '{}',
+                        ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude';
                 """)
                 cur.execute("""
                     ALTER TABLE scrape_logs
@@ -383,11 +385,11 @@ class Storage:
     def save_and_link(self, listings: list, search_id: int) -> tuple:
         return self.listings.save_and_link(listings, search_id)
 
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0) -> list[dict]:
-        return self.listings.get_listings_for_search(search_id, limit, offset)
+    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0, blacklisted_agencies: list[str] | None = None) -> list[dict]:
+        return self.listings.get_listings_for_search(search_id, limit, offset, blacklisted_agencies)
 
-    def count_listings_for_search(self, search_id: int) -> int:
-        return self.listings.count_listings_for_search(search_id)
+    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None) -> int:
+        return self.listings.count_listings_for_search(search_id, blacklisted_agencies)
 
     def delete_old_listings(self, days: int = 4) -> int:
         return self.listings.delete_old_listings(days)
@@ -409,6 +411,15 @@ class Storage:
 
     def get_listing_detail(self, listing_id: str) -> Optional[dict]:
         return self.listings.get_listing_detail(listing_id)
+
+    def get_unique_agencies_for_user(self, user_id: int) -> list[str]:
+        return self.listings.get_unique_agencies_for_user(user_id)
+
+    def update_blacklisted_agencies(self, search_id: int, agencies: list[str]) -> bool:
+        return self.searches.update_blacklisted_agencies(search_id, agencies)
+
+    def update_blacklist_mode(self, search_id: int, mode: str) -> bool:
+        return self.searches.update_blacklist_mode(search_id, mode)
 
     # Scrape Logs
     def create_scrape_log(self, search_id: int, status: str, listings_found: int = 0, new_listings: int = 0, error_message: str = "", details: dict | None = None, started_at=None) -> int:
