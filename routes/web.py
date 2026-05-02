@@ -47,8 +47,9 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["priceMax"] = int(price_max)
         if space_min:
             criteria["spaceMin"] = int(space_min)
-        criteria["distributionTypes"] = [distribution]
-        criteria["estateTypes"] = [estate_type]
+    criteria["distributionTypes"] = [distribution]
+    criteria["estateTypes"] = [estate_type]
+    criteria["order"] = "DateDesc"
 
     return criteria
 

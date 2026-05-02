@@ -229,8 +229,7 @@ def parse_search_url(url: str) -> dict:
     if "bedrooms" in params:
         criteria["bedrooms"] = _split_csv_values(params["bedrooms"])
 
-    if "order" in params:
-        criteria["order"] = params["order"][0]
+    criteria["order"] = "DateDesc"
 
     if "locationsInBuildingExcluded" in params:
         criteria["locationsInBuildingExcluded"] = _split_csv_values(params["locationsInBuildingExcluded"])
