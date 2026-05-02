@@ -113,4 +113,4 @@ class SeLogerParser(BaseParser):
     def build_search_url(self, criteria: dict) -> str:
         """Reconstruct SeLoger search URL from criteria."""
         from scraper.seloger import build_search_url
-        return build_search_url(criteria)
+        return build_search_url(criteria, order="DateDesc")

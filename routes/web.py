@@ -50,16 +50,15 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["priceMax"] = int(price_max)
         if space_min:
             criteria["spaceMin"] = int(space_min)
-        if space_max:
-            criteria["spaceMax"] = int(space_max)
-        criteria["distributionTypes"] = [distribution]
-        criteria["estateTypes"] = [estate_type]
-        if rooms:
-            criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
-        if bedrooms:
-            criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
-        if order:
-            criteria["order"] = order
+    if space_max:
+        criteria["spaceMax"] = int(space_max)
+    criteria["distributionTypes"] = [distribution]
+    criteria["estateTypes"] = [estate_type]
+    if rooms:
+        criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
+    if bedrooms:
+        criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
+    criteria["order"] = "DateDesc"
 
     return criteria
 
