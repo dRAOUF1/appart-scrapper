@@ -112,7 +112,7 @@ def admin_delete_search(search_id):
     storage = current_app.storage
     search = storage.get_search(search_id)
     if search:
-        storage.delete_search_admin(search_id)
+        storage.delete_search(search_id)
         storage.log_admin_action("search_deleted", f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}", g.user["username"])
         flash(f"Recherche '{search['label']}' supprimée", "success")
     return redirect(url_for("admin.admin_searches"))

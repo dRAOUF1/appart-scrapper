@@ -219,9 +219,7 @@ def toggle_search_active_web(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
     new_value = storage.toggle_search_active(search_id)
-
-
-@web_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["POST"])
+    return redirect(url_for("web.searches"))
 @require_login
 def update_blacklist_agencies(search_id: int):
     storage = current_app.storage
