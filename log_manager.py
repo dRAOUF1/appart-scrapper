@@ -13,6 +13,8 @@ import time
 
 from loguru import logger
 
+from log_storage import cleanup_old_logs as cleanup_scrape_logs
+
 LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 RETENTION_DAYS = 5
 
@@ -86,4 +88,5 @@ class SearchLogManager:
                     pass
         if deleted:
             logger.info(f"[LogManager] {deleted} anciens fichiers de log supprimés")
+        cleanup_scrape_logs(RETENTION_DAYS)
         return deleted

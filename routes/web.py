@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 from flask import (
     Blueprint, request, render_template, redirect, url_for,
@@ -384,6 +385,75 @@ def search_log_download(search_id: int, log_id: int):
         )
 
     return "No logs available", 404
+
+
+@web_bp.route("/searches/<int:search_id>/logs/export", methods=["GET"])
+@require_login
+def search_logs_export(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    zip_path = storage.export_scrape_logs(search_id)
+    return send_file(
+        zip_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=Path(zip_path).name,
+    )
+
+
+@web_bp.route("/searches/<int:search_id>/logs/import", methods=["POST"])
+@require_login
+def search_logs_import(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+
+    upload = request.files.get("log_archive")
+    if not upload or not upload.filename:
+        flash("Fichier manquant", "error")
+        return redirect(url_for("web.search_logs", search_id=search_id))
+
+    upload.seek(0, 2)
+    size = upload.tell()
+    upload.seek(0)
+    if size > 200 * 1024 * 1024:
+        flash("Fichier trop volumineux (max 200MB)", "error")
+        return redirect(url_for("web.search_logs", search_id=search_id))
+
+    allow_override = request.form.get("allow_override") == "true"
+    tmp_dir = Path("/tmp")
+    tmp_path = tmp_dir / f"logs_import_{search_id}_{int(datetime.utcnow().timestamp())}.zip"
+    upload.save(tmp_path)
+
+    try:
+        result = storage.import_scrape_logs(
+            search_id,
+            str(tmp_path),
+            allow_override=allow_override,
+            performed_by=g.user.get("username", ""),
+        )
+        flash(
+            f"Import terminé — {result['imported']} ajoutés, {result['skipped']} ignorés",
+            "success",
+        )
+    except ValueError as e:
+        if str(e) == "override_required":
+            flash("Archive d'un autre search_id — cochez l'override pour forcer", "warning")
+        else:
+            flash(f"Import impossible: {e}", "error")
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return redirect(url_for("web.search_logs", search_id=search_id))
 
 
 @web_bp.route("/listings/<int:search_id>")

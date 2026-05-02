@@ -7,6 +7,20 @@
     <h1>📋 Logs — {{ search.label }}</h1>
 </div>
 
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+        <a href="{{ url_for('web.search_logs_export', search_id=search.id) }}" class="btn btn-sm btn-ghost">⬇ Exporter (.zip)</a>
+        <form method="POST" action="{{ url_for('web.search_logs_import', search_id=search.id) }}" enctype="multipart/form-data" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            <input type="file" name="log_archive" accept=".zip" required>
+            <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;">
+                <input type="checkbox" name="allow_override" value="true">
+                Override si search_id diff
+            </label>
+            <button type="submit" class="btn btn-sm btn-primary">⬆ Importer</button>
+        </form>
+    </div>
+</div>
+
 <!-- Live panel -->
 <div class="card live-panel" id="live-panel" style="display: none;">
     <div class="live-header">

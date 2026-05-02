@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, request, render_template, redirect, url_for, flash, current_app, g
+from datetime import datetime
+from pathlib import Path
+
+from flask import Blueprint, request, render_template, redirect, url_for, flash, current_app, g, send_file
 
 from routes.auth import require_admin
 
@@ -247,6 +250,72 @@ def admin_truncate_table():
     else:
         flash(f"Impossible de vider la table '{table_name}'", "error")
     return redirect(url_for("admin.admin_database"))
+
+
+@admin_bp.route("/admin/searches/<int:search_id>/logs/export", methods=["GET"])
+@require_admin
+def admin_export_search_logs(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+    zip_path = storage.export_scrape_logs(search_id)
+    return send_file(
+        zip_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=Path(zip_path).name,
+    )
+
+
+@admin_bp.route("/admin/searches/<int:search_id>/logs/import", methods=["POST"])
+@require_admin
+def admin_import_search_logs(search_id: int):
+    storage = current_app.storage
+    search = storage.get_search(search_id)
+    if not search:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+
+    upload = request.files.get("log_archive")
+    if not upload or not upload.filename:
+        flash("Fichier manquant", "error")
+        return redirect(url_for("admin.admin_search_detail", search_id=search_id))
+
+    upload.seek(0, 2)
+    size = upload.tell()
+    upload.seek(0)
+    if size > 200 * 1024 * 1024:
+        flash("Fichier trop volumineux (max 200MB)", "error")
+        return redirect(url_for("admin.admin_search_detail", search_id=search_id))
+
+    allow_override = request.form.get("allow_override") == "true"
+    tmp_path = Path("/tmp") / f"admin_logs_import_{search_id}_{int(datetime.utcnow().timestamp())}.zip"
+    upload.save(tmp_path)
+    try:
+        result = storage.import_scrape_logs(
+            search_id,
+            str(tmp_path),
+            allow_override=allow_override,
+            performed_by=g.user.get("username", "admin"),
+        )
+        flash(
+            f"Import terminé — {result['imported']} ajoutés, {result['skipped']} ignorés",
+            "success",
+        )
+    except ValueError as e:
+        if str(e) == "override_required":
+            flash("Archive d'un autre search_id — cochez l'override pour forcer", "warning")
+        else:
+            flash(f"Import impossible: {e}", "error")
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return redirect(url_for("admin.admin_search_detail", search_id=search_id))
 
 
 @admin_bp.route("/admin/logs")

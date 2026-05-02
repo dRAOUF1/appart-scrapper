@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, request, jsonify, current_app, g
+from datetime import datetime
+from pathlib import Path
+
+from flask import Blueprint, request, jsonify, current_app, g, send_file
 
 from parsers import list_sources
 from routes.auth import require_token
@@ -227,3 +230,57 @@ def cleanup_listings():
     days = int(request.args.get("days", 4))
     deleted = current_app.storage.delete_old_listings(days=days)
     return jsonify({"deleted": deleted, "days": days}), 200
+
+
+@api_bp.route("/searches/<int:search_id>/logs/export", methods=["GET"])
+@require_token
+def export_search_logs_api(search_id: int):
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+    zip_path = current_app.storage.export_scrape_logs(search_id)
+    return send_file(
+        zip_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=Path(zip_path).name,
+    )
+
+
+@api_bp.route("/searches/<int:search_id>/logs/import", methods=["POST"])
+@require_token
+def import_search_logs_api(search_id: int):
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    upload = request.files.get("log_archive")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Fichier manquant"}), 400
+
+    upload.seek(0, 2)
+    size = upload.tell()
+    upload.seek(0)
+    if size > 200 * 1024 * 1024:
+        return jsonify({"error": "Fichier trop volumineux (max 200MB)"}), 413
+
+    allow_override = request.args.get("allow_override") == "true"
+    tmp_path = Path("/tmp") / f"logs_import_{search_id}_{int(datetime.utcnow().timestamp())}.zip"
+    upload.save(tmp_path)
+    try:
+        result = current_app.storage.import_scrape_logs(
+            search_id,
+            str(tmp_path),
+            allow_override=allow_override,
+            performed_by=g.user.get("username", ""),
+        )
+        return jsonify(result), 200
+    except ValueError as e:
+        if str(e) == "override_required":
+            return jsonify({"error": "override_required"}), 409
+        return jsonify({"error": str(e)}), 400
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass

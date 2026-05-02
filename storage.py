@@ -443,6 +443,12 @@ class Storage:
     def get_latest_scrape_log_id(self, search_id: int) -> int | None:
         return self.scrape_logs.get_latest_scrape_log_id(search_id)
 
+    def export_scrape_logs(self, search_id: int) -> str:
+        return self.scrape_logs.export_scrape_logs(search_id)
+
+    def import_scrape_logs(self, search_id: int, zip_path: str, allow_override: bool = False, performed_by: str = "") -> dict:
+        return self.scrape_logs.import_scrape_logs(search_id, zip_path, allow_override, performed_by)
+
     # Settings
     def get_setting(self, key: str, default: str = "") -> str:
         return self.settings.get_setting(key, default)

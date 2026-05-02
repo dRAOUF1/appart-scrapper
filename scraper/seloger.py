@@ -296,7 +296,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
     1. Essai direct avec User-Agent iPhone mobile Safari
     2. Si 403, rotation de proxies gratuits
     """
-    url = _build_search_url(criteria, order)
+    url = build_search_url(criteria, order)
     logger.debug(f"  URL de recherche: {url[:120]}...")
 
     for attempt in range(max_retries):

@@ -444,6 +444,17 @@
     <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Lancer le scraping maintenant ?')">
         <button type="submit" class="btn btn-success">🔄 Scrapper maintenant</button>
     </form>
+    <form method="GET" action="{{ url_for('admin.admin_export_search_logs', search_id=search_detail.id) }}" class="inline-form">
+        <button type="submit" class="btn btn-ghost">⬇ Exporter logs (.zip)</button>
+    </form>
+    <form method="POST" action="{{ url_for('admin.admin_import_search_logs', search_id=search_detail.id) }}" class="inline-form" enctype="multipart/form-data">
+        <input type="file" name="log_archive" accept=".zip" required>
+        <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;">
+            <input type="checkbox" name="allow_override" value="true">
+            Override si search_id diff
+        </label>
+        <button type="submit" class="btn btn-ghost">⬆ Importer logs</button>
+    </form>
     <form method="POST" action="{{ url_for('admin.admin_delete_search', search_id=search_detail.id) }}" class="inline-form" onsubmit="return confirm('Supprimer la recherche « {{ search_detail.label }} » ?')">
         <button type="submit" class="btn btn-danger">🗑 Supprimer cette recherche</button>
     </form>

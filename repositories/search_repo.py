@@ -151,12 +151,16 @@ class SearchRepository(BaseRepository):
             self._release_conn(conn)
 
     def delete_search(self, search_id: int) -> bool:
+        from log_storage import delete_search_logs
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM searches WHERE id = %s", (search_id,))
                 conn.commit()
-                return cur.rowcount > 0
+                deleted = cur.rowcount > 0
+                if deleted:
+                    delete_search_logs(search_id)
+                return deleted
         finally:
             self._release_conn(conn)
 
