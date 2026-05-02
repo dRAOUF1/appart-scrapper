@@ -35,9 +35,12 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
         price_min = form_data.get("price_min", "").strip()
         price_max = form_data.get("price_max", "").strip()
         space_min = form_data.get("space_min", "").strip()
+        space_max = form_data.get("space_max", "").strip()
         distribution = form_data.get("distribution", "Rent")
         estate_type = form_data.get("estate_type", "Apartment")
-
+        rooms = form_data.getlist("rooms") if hasattr(form_data, "getlist") else form_data.get("rooms", [])
+        bedrooms = form_data.getlist("bedrooms") if hasattr(form_data, "getlist") else form_data.get("bedrooms", [])
+        order = form_data.get("order", "").strip()
         if place_ids:
             criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
             criteria["location"] = {"placeIds": criteria["placeIds"]}
@@ -47,8 +50,16 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["priceMax"] = int(price_max)
         if space_min:
             criteria["spaceMin"] = int(space_min)
+        if space_max:
+            criteria["spaceMax"] = int(space_max)
         criteria["distributionTypes"] = [distribution]
         criteria["estateTypes"] = [estate_type]
+        if rooms:
+            criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
+        if bedrooms:
+            criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
+        if order:
+            criteria["order"] = order
 
     return criteria
 
@@ -264,7 +275,7 @@ def edit_search(search_id: int):
 
         if not criteria.get("placeIds"):
             flash("L'URL ne contient pas de lieu valide", "error")
-            return render_template("search_edit.html", search=search, now=datetime.utcnow)
+            return render_template("search_edit.html", search=search, sources=list_sources(), now=datetime.utcnow)
 
         if label and ntfy_topic and criteria.get("placeIds"):
             storage.update_search(
@@ -278,7 +289,7 @@ def edit_search(search_id: int):
             flash("Label, topic ntfy et au moins un lieu requis", "error")
 
     stats = storage.get_scrape_stats(search_id)
-    return render_template("search_edit.html", search=search, stats=stats, now=datetime.utcnow)
+    return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)
 
 
 @web_bp.route("/searches/<int:search_id>/logs", methods=["GET"])

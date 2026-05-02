@@ -76,51 +76,91 @@
             </small>
         </div>
 
-        <details style="margin-top: 1rem;">
-            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Critères manuels</summary>
-            <div class="form-grid" style="margin-top: 0.75rem;">
-                <div class="form-group">
-                    <label for="place_ids">Place IDs</label>
-                    <input type="text" id="place_ids" name="place_ids"
-                        value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
-                        placeholder="Ex: AD08FR31096">
-                </div>
-                <div class="form-group">
-                    <label for="price_min">Prix min (€)</label>
-                    <input type="number" id="price_min" name="price_min"
-                        value="{{ search.criteria.priceMin if search.criteria.priceMin else '' }}"
-                        placeholder="600">
-                </div>
-                <div class="form-group">
-                    <label for="price_max">Prix max (€)</label>
-                    <input type="number" id="price_max" name="price_max"
-                        value="{{ search.criteria.priceMax if search.criteria.priceMax else '' }}"
-                        placeholder="850">
-                </div>
-                <div class="form-group">
-                    <label for="space_min">Surface min (m²)</label>
-                    <input type="number" id="space_min" name="space_min"
-                        value="{{ search.criteria.spaceMin if search.criteria.spaceMin else '' }}"
-                        placeholder="19">
-                </div>
-                <div class="form-group">
-                    <label for="distribution">Type de transaction</label>
-                    <select id="distribution" name="distribution">
-                        <option value="Rent" {% if search.criteria.distributionTypes and 'Rent' in search.criteria.distributionTypes %}selected{% endif %}>Location</option>
-                        <option value="Sale" {% if search.criteria.distributionTypes and 'Sale' in search.criteria.distributionTypes %}selected{% endif %}>Achat</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="estate_type">Type de bien</label>
-                    <select id="estate_type" name="estate_type">
-                        <option value="Apartment" {% if search.criteria.estateTypes and 'Apartment' in search.criteria.estateTypes %}selected{% endif %}>Appartement</option>
-                        <option value="House" {% if search.criteria.estateTypes and 'House' in search.criteria.estateTypes %}selected{% endif %}>Maison</option>
-                        <option value="Parking" {% if search.criteria.estateTypes and 'Parking' in search.criteria.estateTypes %}selected{% endif %}>Parking</option>
-                        <option value="Land" {% if search.criteria.estateTypes and 'Land' in search.criteria.estateTypes %}selected{% endif %}>Terrain</option>
-                    </select>
-                </div>
-            </div>
-        </details>
+  <details style="margin-top: 1rem;">
+    <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Critères manuels</summary>
+    <div class="form-grid" style="margin-top: 0.75rem;">
+      <div class="form-group">
+        <label for="place_ids">Place IDs</label>
+        <input type="text" id="place_ids" name="place_ids"
+          value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
+          placeholder="Ex: AD08FR31096">
+      </div>
+      <div class="form-group">
+        <label for="price_min">Prix min (€)</label>
+        <input type="number" id="price_min" name="price_min"
+          value="{{ search.criteria.priceMin if search.criteria.priceMin else '' }}"
+          placeholder="600">
+      </div>
+      <div class="form-group">
+        <label for="price_max">Prix max (€)</label>
+        <input type="number" id="price_max" name="price_max"
+          value="{{ search.criteria.priceMax if search.criteria.priceMax else '' }}"
+          placeholder="850">
+      </div>
+      <div class="form-group">
+        <label for="space_min">Surface min (m²)</label>
+        <input type="number" id="space_min" name="space_min"
+          value="{{ search.criteria.spaceMin if search.criteria.spaceMin else '' }}"
+          placeholder="19">
+      </div>
+      <div class="form-group">
+        <label for="space_max">Surface max (m²)</label>
+        <input type="number" id="space_max" name="space_max"
+          value="{{ search.criteria.spaceMax if search.criteria.spaceMax else '' }}"
+          placeholder="80">
+      </div>
+      <div class="form-group">
+        <label for="distribution">Type de transaction</label>
+        <select id="distribution" name="distribution">
+          <option value="Rent" {% if search.criteria.distributionTypes and 'Rent' in search.criteria.distributionTypes %}selected{% endif %}>Location</option>
+          <option value="Sale" {% if search.criteria.distributionTypes and 'Sale' in search.criteria.distributionTypes %}selected{% endif %}>Achat</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="estate_type">Type de bien</label>
+        <select id="estate_type" name="estate_type">
+          <option value="Apartment" {% if search.criteria.estateTypes and 'Apartment' in search.criteria.estateTypes %}selected{% endif %}>Appartement</option>
+          <option value="House" {% if search.criteria.estateTypes and 'House' in search.criteria.estateTypes %}selected{% endif %}>Maison</option>
+          <option value="Parking" {% if search.criteria.estateTypes and 'Parking' in search.criteria.estateTypes %}selected{% endif %}>Parking</option>
+          <option value="Land" {% if search.criteria.estateTypes and 'Land' in search.criteria.estateTypes %}selected{% endif %}>Terrain</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="rooms">Pièces</label>
+        <select id="rooms" name="rooms" multiple class="multi-select">
+          <option value="1" {% if search.criteria.rooms and '1' in search.criteria.rooms %}selected{% endif %}>1</option>
+          <option value="2" {% if search.criteria.rooms and '2' in search.criteria.rooms %}selected{% endif %}>2</option>
+          <option value="3" {% if search.criteria.rooms and '3' in search.criteria.rooms %}selected{% endif %}>3</option>
+          <option value="4" {% if search.criteria.rooms and '4' in search.criteria.rooms %}selected{% endif %}>4</option>
+          <option value="5" {% if search.criteria.rooms and '5' in search.criteria.rooms %}selected{% endif %}>5+</option>
+        </select>
+        <small class="form-help">Maintenez Ctrl/Cmd pour sélectionner plusieurs</small>
+      </div>
+      <div class="form-group">
+        <label for="bedrooms">Chambres</label>
+        <select id="bedrooms" name="bedrooms" multiple class="multi-select">
+          <option value="1" {% if search.criteria.bedrooms and '1' in search.criteria.bedrooms %}selected{% endif %}>1</option>
+          <option value="2" {% if search.criteria.bedrooms and '2' in search.criteria.bedrooms %}selected{% endif %}>2</option>
+          <option value="3" {% if search.criteria.bedrooms and '3' in search.criteria.bedrooms %}selected{% endif %}>3</option>
+          <option value="4" {% if search.criteria.bedrooms and '4' in search.criteria.bedrooms %}selected{% endif %}>4</option>
+          <option value="5" {% if search.criteria.bedrooms and '5' in search.criteria.bedrooms %}selected{% endif %}>5+</option>
+        </select>
+        <small class="form-help">Maintenez Ctrl/Cmd pour sélectionner plusieurs</small>
+      </div>
+      <div class="form-group">
+        <label for="order">Tri</label>
+        <select id="order" name="order">
+          <option value="">— Par défaut —</option>
+          <option value="DateDesc" {% if search.criteria.order == 'DateDesc' %}selected{% endif %}>Plus récent d'abord</option>
+          <option value="DateAsc" {% if search.criteria.order == 'DateAsc' %}selected{% endif %}>Plus ancien d'abord</option>
+          <option value="PriceAsc" {% if search.criteria.order == 'PriceAsc' %}selected{% endif %}>Prix croissant</option>
+          <option value="PriceDesc" {% if search.criteria.order == 'PriceDesc' %}selected{% endif %}>Prix décroissant</option>
+          <option value="SurfaceAsc" {% if search.criteria.order == 'SurfaceAsc' %}selected{% endif %}>Surface croissante</option>
+          <option value="SurfaceDesc" {% if search.criteria.order == 'SurfaceDesc' %}selected{% endif %}>Surface décroissante</option>
+        </select>
+      </div>
+    </div>
+  </details>
 
         <!-- Current criteria display -->
         {% if search.criteria %}
