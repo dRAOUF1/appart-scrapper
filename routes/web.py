@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlencode
 
 from flask import (
     Blueprint, request, render_template, redirect, url_for,
@@ -456,6 +457,67 @@ def search_logs_import(search_id: int):
     return redirect(url_for("web.search_logs", search_id=search_id))
 
 
+def _parse_listing_filters(args: dict) -> dict:
+    filters = {}
+    if args.get("q", "").strip():
+        filters["q"] = args["q"].strip()
+    if args.get("price_min", "").strip():
+        try:
+            filters["price_min"] = float(args["price_min"])
+        except ValueError:
+            pass
+    if args.get("price_max", "").strip():
+        try:
+            filters["price_max"] = float(args["price_max"])
+        except ValueError:
+            pass
+    if args.get("surface_min", "").strip():
+        try:
+            filters["surface_min"] = float(args["surface_min"])
+        except ValueError:
+            pass
+    if args.get("surface_max", "").strip():
+        try:
+            filters["surface_max"] = float(args["surface_max"])
+        except ValueError:
+            pass
+    if args.get("rooms_min", "").strip():
+        try:
+            filters["rooms_min"] = float(args["rooms_min"])
+        except ValueError:
+            pass
+    if args.get("rooms_max", "").strip():
+        try:
+            filters["rooms_max"] = float(args["rooms_max"])
+        except ValueError:
+            pass
+    if args.get("city", "").strip():
+        filters["city"] = args["city"].strip()
+    if args.get("district", "").strip():
+        filters["district"] = args["district"].strip()
+    if args.get("zip_code", "").strip():
+        filters["zip_code"] = args["zip_code"].strip()
+    if args.get("property_type", "").strip():
+        filters["property_type"] = args["property_type"].strip()
+    if args.get("agency", "").strip():
+        filters["agency"] = args["agency"].strip()
+    if args.get("epc", "").strip():
+        filters["epc"] = args["epc"].strip()
+    if args.get("ges", "").strip():
+        filters["ges"] = args["ges"].strip()
+    if args.get("is_private", "").strip():
+        val = args["is_private"].strip()
+        if val in ("true", "false"):
+            filters["is_private"] = val == "true"
+    if args.get("is_new", "").strip():
+        val = args["is_new"].strip()
+        if val in ("true", "false"):
+            filters["is_new"] = val == "true"
+    if args.get("date_min", "").strip():
+        filters["date_min"] = args["date_min"].strip()
+    return filters
+
+
 @web_bp.route("/listings/<int:search_id>")
 @require_login
 def listings(search_id: int):
@@ -471,16 +533,30 @@ def listings(search_id: int):
 
     blacklisted = search.get("blacklisted_agencies") or []
     blacklist_mode = search.get("blacklist_mode", "exclude")
-    
+
     agencies_to_filter = []
     if blacklist_mode == "exclude" and blacklisted:
         agencies_to_filter = blacklisted
-    
-    all_listings = storage.get_listings_for_search(search_id, limit=per_page, offset=offset, blacklisted_agencies=agencies_to_filter)
-    total = storage.count_listings_for_search(search_id, blacklisted_agencies=agencies_to_filter)
+
+    filters = _parse_listing_filters(request.args)
+    sort = request.args.get("sort", "found_at_desc")
+
+    all_listings = storage.get_listings_for_search(
+        search_id, limit=per_page, offset=offset,
+        blacklisted_agencies=agencies_to_filter,
+        filters=filters, sort=sort,
+    )
+    total = storage.count_listings_for_search(
+        search_id, blacklisted_agencies=agencies_to_filter,
+        filters=filters,
+    )
     total_pages = max(1, (total + per_page - 1) // per_page)
 
     available_agencies = storage.get_unique_agencies_for_user(g.user["id"])
+    filter_options = storage.get_filter_options(search_id)
+
+    active_filters = {k: str(v) for k, v in request.args.items() if k != "page" and v}
+    query_string = urlencode(active_filters)
 
     return render_template(
         "listings.html",
@@ -491,6 +567,10 @@ def listings(search_id: int):
         total_pages=total_pages,
         available_agencies=available_agencies,
         blacklist_mode=blacklist_mode,
+        filter_options=filter_options,
+        active_filters=active_filters,
+        sort=sort,
+        query_string=query_string,
     )
 
 

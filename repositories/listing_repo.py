@@ -143,22 +143,100 @@ class ListingRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0, blacklisted_agencies: list[str] | None = None) -> list[dict]:
+    def _build_filter_clauses(self, filters: dict, params: list, prefix: str = "l.") -> str:
+        clauses = []
+        if filters.get("q"):
+            val = f"%{filters['q']}%"
+            clauses.append(f"({prefix}title ILIKE %s OR {prefix}location ILIKE %s OR {prefix}agency ILIKE %s OR {prefix}description ILIKE %s)")
+            params.extend([val, val, val, val])
+        if filters.get("price_min") is not None:
+            clauses.append(f"{prefix}price_value >= %s")
+            params.append(filters["price_min"])
+        if filters.get("price_max") is not None:
+            clauses.append(f"{prefix}price_value <= %s")
+            params.append(filters["price_max"])
+        if filters.get("surface_min") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) >= %s")
+            params.append(filters["surface_min"])
+        if filters.get("surface_max") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) <= %s")
+            params.append(filters["surface_max"])
+        if filters.get("rooms_min") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}rooms, '[^0-9.]', '', 'g'), '') AS NUMERIC) >= %s")
+            params.append(filters["rooms_min"])
+        if filters.get("rooms_max") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}rooms, '[^0-9.]', '', 'g'), '') AS NUMERIC) <= %s")
+            params.append(filters["rooms_max"])
+        if filters.get("city"):
+            clauses.append(f"{prefix}city ILIKE %s")
+            params.append(f"%{filters['city']}%")
+        if filters.get("district"):
+            clauses.append(f"{prefix}district ILIKE %s")
+            params.append(f"%{filters['district']}%")
+        if filters.get("zip_code"):
+            clauses.append(f"{prefix}zip_code = %s")
+            params.append(filters["zip_code"])
+        if filters.get("property_type"):
+            clauses.append(f"{prefix}property_type = %s")
+            params.append(filters["property_type"])
+        if filters.get("agency"):
+            clauses.append(f"{prefix}agency = %s")
+            params.append(filters["agency"])
+        if filters.get("epc"):
+            clauses.append(f"{prefix}epc = %s")
+            params.append(filters["epc"])
+        if filters.get("ges"):
+            clauses.append(f"{prefix}ges = %s")
+            params.append(filters["ges"])
+        if filters.get("is_private") is not None:
+            clauses.append(f"{prefix}is_private = %s")
+            params.append(filters["is_private"])
+        if filters.get("is_new") is not None:
+            clauses.append(f"{prefix}is_new = %s")
+            params.append(filters["is_new"])
+        if filters.get("date_min"):
+            clauses.append(f"{prefix}creation_date >= %s")
+            params.append(filters["date_min"])
+        if filters.get("blacklisted_agencies"):
+            placeholders = ",".join(["%s"] * len(filters["blacklisted_agencies"]))
+            clauses.append(f"{prefix}agency NOT IN ({placeholders})")
+            params.extend(filters["blacklisted_agencies"])
+        return " AND ".join(clauses)
+
+    def _build_order_clause(self, sort: str = "found_at_desc") -> str:
+        sort_map = {
+            "found_at_desc": "sl.found_at DESC",
+            "found_at_asc": "sl.found_at ASC",
+            "price_asc": "l.price_value ASC NULLS LAST",
+            "price_desc": "l.price_value DESC NULLS LAST",
+            "surface_asc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) ASC NULLS LAST",
+            "surface_desc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST",
+            "date_desc": "l.creation_date DESC NULLS LAST",
+            "date_asc": "l.creation_date ASC NULLS LAST",
+        }
+        return sort_map.get(sort, "sl.found_at DESC")
+
+    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0,
+                                blacklisted_agencies: list[str] | None = None,
+                                filters: dict | None = None, sort: str = "found_at_desc") -> list[dict]:
+        effective_filters = dict(filters) if filters else {}
+        if blacklisted_agencies:
+            effective_filters["blacklisted_agencies"] = blacklisted_agencies
+
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
                 query = """SELECT l.*, sl.found_at
-                       FROM listings l
-                       JOIN search_listings sl ON sl.listing_id = l.listing_id
-                       WHERE sl.search_id = %s"""
+FROM listings l
+JOIN search_listings sl ON sl.listing_id = l.listing_id
+WHERE sl.search_id = %s"""
                 params = [search_id]
 
-                if blacklisted_agencies:
-                    placeholders = ",".join(["%s"] * len(blacklisted_agencies))
-                    query += f" AND l.agency NOT IN ({placeholders})"
+                filter_clauses = self._build_filter_clauses(effective_filters, params)
+                if filter_clauses:
+                    query += " AND " + filter_clauses
 
-                query += " ORDER BY sl.found_at DESC LIMIT %s OFFSET %s"
-                params.extend(blacklisted_agencies if blacklisted_agencies else [])
+                query += f" ORDER BY {self._build_order_clause(sort)} LIMIT %s OFFSET %s"
                 params.extend([limit, offset])
 
                 cur.execute(query, params)
@@ -166,20 +244,57 @@ class ListingRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None) -> int:
+    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None,
+                                  filters: dict | None = None) -> int:
+        effective_filters = dict(filters) if filters else {}
+        if blacklisted_agencies:
+            effective_filters["blacklisted_agencies"] = blacklisted_agencies
+
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 query = "SELECT COUNT(*) AS cnt FROM search_listings sl JOIN listings l ON l.listing_id = sl.listing_id WHERE sl.search_id = %s"
                 params = [search_id]
 
-                if blacklisted_agencies:
-                    placeholders = ",".join(["%s"] * len(blacklisted_agencies))
-                    query += f" AND l.agency NOT IN ({placeholders})"
-                    params.extend(blacklisted_agencies)
+                filter_clauses = self._build_filter_clauses(effective_filters, params)
+                if filter_clauses:
+                    query += " AND " + filter_clauses
 
                 cur.execute(query, params)
                 return cur.fetchone()[0]
+        finally:
+            self._release_conn(conn)
+
+    def get_filter_options(self, search_id: int) -> dict:
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                result = {}
+                for col in ("city", "district", "zip_code", "property_type", "agency", "epc", "ges"):
+                    cur.execute(
+                        f"""SELECT DISTINCT l.{col}
+FROM listings l
+JOIN search_listings sl ON sl.listing_id = l.listing_id
+WHERE sl.search_id = %s AND l.{col} IS NOT NULL AND l.{col} != ''
+ORDER BY l.{col}""",
+                        (search_id,),
+                    )
+                    result[col] = [row[0] for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT COUNT(*) FILTER (WHERE l.is_private = TRUE),
+COUNT(*) FILTER (WHERE l.is_private = FALSE),
+COUNT(*) FILTER (WHERE l.is_new = TRUE),
+COUNT(*) FILTER (WHERE l.is_new = FALSE)
+FROM listings l JOIN search_listings sl ON sl.listing_id = l.listing_id
+WHERE sl.search_id = %s""",
+                    (search_id,),
+                )
+                row = cur.fetchone()
+                result["has_private"] = row[0] > 0
+                result["has_non_private"] = row[1] > 0
+                result["has_new"] = row[2] > 0
+                result["has_not_new"] = row[3] > 0
+                return result
         finally:
             self._release_conn(conn)
 

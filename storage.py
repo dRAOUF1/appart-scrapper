@@ -239,12 +239,28 @@ class Storage:
                         ON searches(source);
                 """)
                 cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_listings_source
-                        ON listings(source);
+                CREATE INDEX IF NOT EXISTS idx_listings_source
+                ON listings(source);
                 """)
                 cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_admin_logs_created
-                        ON admin_logs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_listings_price_value
+                ON listings(price_value);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listings_property_type
+                ON listings(property_type);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listings_city
+                ON listings(city);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listings_creation_date
+                ON listings(creation_date);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_admin_logs_created
+                ON admin_logs(created_at);
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_admin_logs_action
@@ -385,11 +401,17 @@ class Storage:
     def save_and_link(self, listings: list, search_id: int) -> tuple:
         return self.listings.save_and_link(listings, search_id)
 
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0, blacklisted_agencies: list[str] | None = None) -> list[dict]:
-        return self.listings.get_listings_for_search(search_id, limit, offset, blacklisted_agencies)
+    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0,
+                                blacklisted_agencies: list[str] | None = None,
+                                filters: dict | None = None, sort: str = "found_at_desc") -> list[dict]:
+        return self.listings.get_listings_for_search(search_id, limit, offset, blacklisted_agencies, filters, sort)
 
-    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None) -> int:
-        return self.listings.count_listings_for_search(search_id, blacklisted_agencies)
+    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None,
+                                  filters: dict | None = None) -> int:
+        return self.listings.count_listings_for_search(search_id, blacklisted_agencies, filters)
+
+    def get_filter_options(self, search_id: int) -> dict:
+        return self.listings.get_filter_options(search_id)
 
     def delete_old_listings(self, days: int = 4) -> int:
         return self.listings.delete_old_listings(days)

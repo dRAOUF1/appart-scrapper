@@ -194,6 +194,28 @@ def scrape_search(search_id: int):
     return jsonify({"message": "Scraping démarré en arrière-plan"}), 202
 
 
+def _parse_listing_filters(args: dict) -> dict:
+    filters = {}
+    if args.get("q", "").strip():
+        filters["q"] = args["q"].strip()
+    for key in ("price_min", "price_max", "surface_min", "surface_max", "rooms_min", "rooms_max"):
+        if args.get(key, "").strip():
+            try:
+                filters[key] = float(args[key])
+            except ValueError:
+                pass
+    for key in ("city", "district", "zip_code", "property_type", "agency", "epc", "ges"):
+        if args.get(key, "").strip():
+            filters[key] = args[key].strip()
+    for key in ("is_private", "is_new"):
+        val = args.get(key, "").strip()
+        if val in ("true", "false"):
+            filters[key] = val == "true"
+    if args.get("date_min", "").strip():
+        filters["date_min"] = args["date_min"].strip()
+    return filters
+
+
 @api_bp.route("/listings/<int:search_id>", methods=["GET"])
 @require_token
 def get_listings(search_id: int):
@@ -205,8 +227,22 @@ def get_listings(search_id: int):
     limit = min(int(request.args.get("limit", 50)), 200)
     offset = int(request.args.get("offset", 0))
 
-    listings = storage.get_listings_for_search(search_id, limit=limit, offset=offset)
-    total = storage.count_listings_for_search(search_id)
+    blacklisted = search.get("blacklisted_agencies") or []
+    blacklist_mode = search.get("blacklist_mode", "exclude")
+    agencies_to_filter = blacklisted if blacklist_mode == "exclude" and blacklisted else []
+
+    filters = _parse_listing_filters(request.args)
+    sort = request.args.get("sort", "found_at_desc")
+
+    listings = storage.get_listings_for_search(
+        search_id, limit=limit, offset=offset,
+        blacklisted_agencies=agencies_to_filter,
+        filters=filters, sort=sort,
+    )
+    total = storage.count_listings_for_search(
+        search_id, blacklisted_agencies=agencies_to_filter,
+        filters=filters,
+    )
 
     return jsonify({
         "search": search,
