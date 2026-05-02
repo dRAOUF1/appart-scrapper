@@ -69,6 +69,40 @@ def list_searches():
     return jsonify(searches), 200
 
 
+@api_bp.route("/searches/<int:search_id>/urls", methods=["GET"])
+@require_token
+def get_search_urls(search_id: int):
+    """Get reconstructed search URLs for the search's source."""
+    search = current_app.storage.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    source = search.get("source", "seloger")
+    criteria = search.get("criteria", {})
+
+    try:
+        from parsers import get_parser
+        parser = get_parser(source)
+        
+        if hasattr(parser, 'build_search_url') and callable(parser.build_search_url):
+            url = parser.build_search_url(criteria)
+            if url:
+                return jsonify({
+                    "source": source,
+                    "url": url,
+                    "source_name": parser.SOURCE_NAME
+                }), 200
+        
+        return jsonify({
+            "source": source,
+            "url": None,
+            "source_name": parser.SOURCE_NAME,
+            "error": "URL reconstruction non disponible pour cette source"
+        }), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @api_bp.route("/searches/<int:search_id>", methods=["DELETE"])
 @require_token
 def delete_search(search_id: int):

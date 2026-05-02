@@ -147,7 +147,7 @@ def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | N
     return None
 
 
-def _build_search_url(criteria: dict, order: str | None = None) -> str:
+def build_search_url(criteria: dict, order: str | None = None) -> str:
     params = {}
     if criteria.get("distributionTypes"):
         params["distributionTypes"] = criteria["distributionTypes"]

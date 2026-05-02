@@ -88,6 +88,20 @@ class BaseParser(ABC):
         """
         raise NotImplementedError("scrape() not implemented for this source")
 
+    def build_search_url(self, criteria: dict) -> str | None:
+        """
+        Reconstruct a search URL from criteria.
+        
+        Override in subclasses for each source.
+        
+        Args:
+            criteria: Search criteria dict (placeIds, priceMin, etc.)
+        
+        Returns:
+            Search URL string or None if not implemented for this source.
+        """
+        return None
+
     def __init_subclass__(cls, **kwargs):
         """Auto-register subclasses that have a SOURCE_ID."""
         super().__init_subclass__(**kwargs)

@@ -1,7 +1,7 @@
 """SeLoger.com listing scraper wrapper.
 
-Au lieu de parser du HTML, ce wrapper appelle le scraper API
-qui récupère directement les données depuis les endpoints SeLoger.
+Primary: Mobile iOS API (app-seloger.enigmatic-parrot-live.aws.aviv.eu)
+Fallback: Legacy BFF + classified-search with LZ-string
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from loguru import logger
 
-from parsers.base import BaseParser
+from parsers.base import BaseParser, ParserRegistry
 from storage import Listing
 
 
@@ -59,21 +59,56 @@ def _dict_to_listing(data: dict) -> Listing:
     )
 
 
+@ParserRegistry.register
 class SeLogerParser(BaseParser):
-    """Scrape SeLoger via API BFF + classified-search."""
+    """Scrape SeLoger via mobile iOS API (primary) + legacy fallback."""
 
     SOURCE_ID = "seloger"
     SOURCE_NAME = "SeLoger"
-    SOURCE_DESCRIPTION = "SeLoger.com — Scraping automatique via API"
+    SOURCE_DESCRIPTION = "SeLoger.com — API mobile iOS (bypass DataDome)"
 
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
-        """Execute le scraping avec les critères donnés et retourne les listings."""
+        """Execute le scraping — mobile API en priorité, fallback legacy."""
+        try:
+            return self._scrape_mobile(criteria)
+        except Exception as e:
+            logger.warning(f"[SeLoger] Mobile API échouée: {e}, fallback legacy...")
+
+        try:
+            return self._scrape_legacy(criteria, use_bff=use_bff)
+        except Exception as e:
+            logger.error(f"[SeLoger] Legacy scraping échoué: {e}")
+            return []
+
+    def _scrape_mobile(self, criteria: dict) -> list[Listing]:
+        """Scrape via the mobile iOS API."""
+        from scraper.seloger_mobile import scrape_mobile
+
+        listings_data, all_ids, total = scrape_mobile(criteria)
+
+        if not listings_data:
+            raise ValueError("Mobile API: aucune annonce retournée")
+
+        listings = [_dict_to_listing(d) for d in listings_data]
+
+        seen: set[str] = set()
+        unique: list[Listing] = []
+        for li in listings:
+            if li.listing_id not in seen:
+                seen.add(li.listing_id)
+                unique.append(li)
+
+        logger.info(f"[SeLoger] Mobile API: {len(unique)} annonces uniques sur {total}")
+        return unique
+
+    def _scrape_legacy(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
+        """Scrape via the legacy BFF + HTML method."""
         from scraper.seloger import scrape as do_scrape
 
         detailed, all_ids, total = do_scrape(criteria, use_bff=use_bff)
 
         if not detailed:
-            logger.warning(f"[SeLoger] Aucune donnée détaillée, fallback sur IDs seuls")
+            logger.warning(f"[SeLoger] Legacy: aucune donnée détaillée, fallback sur IDs seuls")
             listings = []
             for lid in all_ids:
                 listings.append(Listing(
@@ -93,7 +128,7 @@ class SeLogerParser(BaseParser):
                 seen.add(li.listing_id)
                 unique.append(li)
 
-        logger.info(f"[SeLoger] Scraping terminé : {len(unique)} annonces uniques")
+        logger.info(f"[SeLoger] Legacy: {len(unique)} annonces uniques")
         return unique
 
     def parse(self, html: str) -> list[Listing]:
@@ -101,3 +136,8 @@ class SeLogerParser(BaseParser):
         raise NotImplementedError(
             "SeLogerParser.parse() n'est plus supporté. Utilisez scrape(criteria) à la place."
         )
+
+    def build_search_url(self, criteria: dict) -> str:
+        """Reconstruct SeLoger search URL from criteria."""
+        from scraper.seloger import build_search_url
+        return build_search_url(criteria)
