@@ -1,7 +1,6 @@
 """SeLoger.com listing scraper wrapper.
 
-Primary: Mobile iOS API (app-seloger.enigmatic-parrot-live.aws.aviv.eu)
-Fallback: Legacy BFF + classified-search with LZ-string
+Uses legacy BFF + classified-search with LZ-string.
 """
 
 from __future__ import annotations
@@ -61,45 +60,19 @@ def _dict_to_listing(data: dict) -> Listing:
 
 @ParserRegistry.register
 class SeLogerParser(BaseParser):
-    """Scrape SeLoger via mobile iOS API (primary) + legacy fallback."""
+    """Scrape SeLoger via legacy BFF + HTML method."""
 
     SOURCE_ID = "seloger"
     SOURCE_NAME = "SeLoger"
-    SOURCE_DESCRIPTION = "SeLoger.com — API mobile iOS (bypass DataDome)"
+    SOURCE_DESCRIPTION = "SeLoger.com — Scraping via API BFF"
 
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
-        """Execute le scraping — mobile API en priorité, fallback legacy."""
-        try:
-            return self._scrape_mobile(criteria)
-        except Exception as e:
-            logger.warning(f"[SeLoger] Mobile API échouée: {e}, fallback legacy...")
-
+        """Execute le scraping avec les criteres donnes."""
         try:
             return self._scrape_legacy(criteria, use_bff=use_bff)
         except Exception as e:
-            logger.error(f"[SeLoger] Legacy scraping échoué: {e}")
+            logger.error(f"[SeLoger] Scraping echoue: {e}")
             return []
-
-    def _scrape_mobile(self, criteria: dict) -> list[Listing]:
-        """Scrape via the mobile iOS API."""
-        from scraper.seloger_mobile import scrape_mobile
-
-        listings_data, all_ids, total = scrape_mobile(criteria)
-
-        if not listings_data:
-            raise ValueError("Mobile API: aucune annonce retournée")
-
-        listings = [_dict_to_listing(d) for d in listings_data]
-
-        seen: set[str] = set()
-        unique: list[Listing] = []
-        for li in listings:
-            if li.listing_id not in seen:
-                seen.add(li.listing_id)
-                unique.append(li)
-
-        logger.info(f"[SeLoger] Mobile API: {len(unique)} annonces uniques sur {total}")
-        return unique
 
     def _scrape_legacy(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """Scrape via the legacy BFF + HTML method."""
@@ -108,7 +81,7 @@ class SeLogerParser(BaseParser):
         detailed, all_ids, total = do_scrape(criteria, use_bff=use_bff)
 
         if not detailed:
-            logger.warning(f"[SeLoger] Legacy: aucune donnée détaillée, fallback sur IDs seuls")
+            logger.warning("[SeLoger] Aucune donnée detaillee, fallback sur IDs seuls")
             listings = []
             for lid in all_ids:
                 listings.append(Listing(
@@ -128,7 +101,7 @@ class SeLogerParser(BaseParser):
                 seen.add(li.listing_id)
                 unique.append(li)
 
-        logger.info(f"[SeLoger] Legacy: {len(unique)} annonces uniques")
+        logger.info(f"[SeLoger] Scraping termine : {len(unique)} annonces uniques")
         return unique
 
     def parse(self, html: str) -> list[Listing]:
