@@ -35,107 +35,108 @@ class ScrapeService:
                 if not search or search["user_id"] != user_id:
                     return 0
 
-                if not search.get("criteria", {}).get("placeIds"):
-                    logger.warning(f"[search:{search_id}] Critères vides, skip")
-                    storage.create_scrape_log(
-                        search_id, "error",
-                        error_message="Critères vides ou placeIds manquant",
-                        started_at=started_at,
-                    )
-                    log_mgr.cleanup_old_logs()
-                    return 0
-
-                use_bff = storage.get_setting("use_bff_api", "true") == "true"
-
-                try:
-                    from parsers import get_parser
-                    parser = get_parser(search["source"])
-                except ValueError as e:
-                    logger.error(f"[search:{search_id}] Parser inconnu: {e}")
-                    storage.create_scrape_log(
-                        search_id, "error",
-                        error_message=f"Parser inconnu: {e}",
-                        started_at=started_at,
-                    )
-                    log_mgr.cleanup_old_logs()
-                    return 0
-
-                try:
-                    listings = parser.scrape(search["criteria"], use_bff=use_bff)
-                except Exception as e:
-                    err_msg = str(e)
-                    logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
-                    storage.update_last_scraped(search_id)
-                    storage.create_scrape_log(
-                        search_id, "error",
-                        error_message=err_msg,
-                        started_at=started_at,
-                    )
-                    log_mgr.cleanup_old_logs()
-                    return 0
-
-                if not listings:
-                    logger.info(f"[search:{search_id}] Aucune annonce trouvée")
-                    storage.update_last_scraped(search_id)
-                    storage.create_scrape_log(
-                        search_id, "error",
-                        error_message="Aucune annonce trouvée",
-                        listings_found=0, new_listings=0,
-                        started_at=started_at,
-                    )
-                    log_mgr.cleanup_old_logs()
-                    return 0
-
-                new_listings, already = storage.save_and_link(listings, search_id)
                 storage.update_last_scraped(search_id)
-                topic = search["ntfy_topic"]
-                blacklist_mode = search.get("blacklist_mode", "exclude")
-                blacklisted_agencies = search.get("blacklisted_agencies", [])
 
-                needs_filter = blacklist_mode == "exclude" and blacklisted_agencies
-                skip_notify_agencies = set(blacklisted_agencies) if blacklist_mode == "no_notify" else set()
+                result = self._do_scrape(search, search_id, storage, notifier, started_at, log_mgr)
 
-                for listing in new_listings:
-                    agency = listing.agency
-                    if needs_filter and agency in blacklisted_agencies:
-                        continue
-                    if agency in skip_notify_agencies:
-                        continue
-                    notifier.notify_new_listing(topic, listing)
-                    time.sleep(0.3)
-
-                # Désactivé pour éviter le spam de notifications quand il y a beaucoup de nouvelles annonces
-                # if new_listings:
-                #     notifier.notify_summary(topic, len(new_listings), len(listings))
-
-                log_id = storage.create_scrape_log(
-                    search_id, "success",
-                    listings_found=len(listings),
-                    new_listings=len(new_listings),
-                    details={"already_known": len(already)},
-                    started_at=started_at,
-                )
-
-                raw_logs = log_mgr.stop()
-                storage.update_scrape_log_raw(log_id, raw_logs)
-                log_mgr.cleanup_old_logs()
-
-                logger.info(
-                    f"[search:{search_id}] Scraped {len(listings)}, "
-                    f"{len(new_listings)} new, {len(already)} already known"
-                )
-                return len(new_listings)
+            log_mgr.cleanup_old_logs()
+            return result
 
         except Exception as e:
             logger.exception(f"[search:{search_id}] Exception dans execute: {e}")
             try:
-                storage.update_last_scraped(search_id)
-                storage.create_scrape_log(
-                    search_id, "error",
-                    error_message=f"Exception: {e}",
-                    started_at=started_at,
-                )
+                with self.app.app_context():
+                    storage = self.app.storage
+                    storage.create_scrape_log(
+                        search_id, "error",
+                        error_message=f"Exception: {e}",
+                        started_at=started_at,
+                    )
             except Exception as log_err:
                 logger.error(f"[search:{search_id}] Failed to log exception: {log_err}")
             log_mgr.cleanup_old_logs()
             raise
+
+    def _do_scrape(self, search, search_id, storage, notifier, started_at, log_mgr):
+        if not search.get("criteria", {}).get("placeIds"):
+            logger.warning(f"[search:{search_id}] Critères vides, skip")
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message="Critères vides ou placeIds manquant",
+                started_at=started_at,
+            )
+            return 0
+
+        use_bff = storage.get_setting("use_bff_api", "true") == "true"
+
+        try:
+            from parsers import get_parser
+            parser = get_parser(search["source"])
+        except ValueError as e:
+            logger.error(f"[search:{search_id}] Parser inconnu: {e}")
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message=f"Parser inconnu: {e}",
+                started_at=started_at,
+            )
+            return 0
+
+        try:
+            listings = parser.scrape(search["criteria"], use_bff=use_bff)
+        except Exception as e:
+            err_msg = str(e)
+            logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message=err_msg,
+                started_at=started_at,
+            )
+            return 0
+
+        if not listings:
+            logger.info(f"[search:{search_id}] Aucune annonce trouvée")
+            storage.create_scrape_log(
+                search_id, "error",
+                error_message="Aucune annonce trouvée",
+                listings_found=0, new_listings=0,
+                started_at=started_at,
+            )
+            return 0
+
+        new_listings, already = storage.save_and_link(listings, search_id)
+        topic = search["ntfy_topic"]
+        blacklist_mode = search.get("blacklist_mode", "exclude")
+        blacklisted_agencies = search.get("blacklisted_agencies", [])
+
+        needs_filter = blacklist_mode == "exclude" and blacklisted_agencies
+        skip_notify_agencies = set(blacklisted_agencies) if blacklist_mode == "no_notify" else set()
+
+        for listing in new_listings:
+            agency = listing.agency
+            if needs_filter and agency in blacklisted_agencies:
+                continue
+            if agency in skip_notify_agencies:
+                continue
+            notifier.notify_new_listing(topic, listing)
+            time.sleep(0.3)
+
+        # Désactivé pour éviter le spam de notifications quand il y a beaucoup de nouvelles annonces
+        # if new_listings:
+        #     notifier.notify_summary(topic, len(new_listings), len(listings))
+
+        log_id = storage.create_scrape_log(
+            search_id, "success",
+            listings_found=len(listings),
+            new_listings=len(new_listings),
+            details={"already_known": len(already)},
+            started_at=started_at,
+        )
+
+        raw_logs = log_mgr.stop()
+        storage.update_scrape_log_raw(log_id, raw_logs)
+
+        logger.info(
+            f"[search:{search_id}] Scraped {len(listings)}, "
+            f"{len(new_listings)} new, {len(already)} already known"
+        )
+        return len(new_listings)
