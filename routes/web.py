@@ -36,7 +36,6 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
         price_max = form_data.get("price_max", "").strip()
         space_min = form_data.get("space_min", "").strip()
         space_max = form_data.get("space_max", "").strip()
-        space_max = form_data.get("space_max", "").strip()
         distribution = form_data.get("distribution", "Rent")
         estate_type = form_data.get("estate_type", "Apartment")
         rooms = form_data.getlist("rooms") if hasattr(form_data, "getlist") else form_data.get("rooms", [])
@@ -53,15 +52,13 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["spaceMin"] = int(space_min)
         if space_max:
             criteria["spaceMax"] = int(space_max)
-    if space_max:
-        criteria["spaceMax"] = int(space_max)
-    criteria["distributionTypes"] = [distribution]
-    criteria["estateTypes"] = [estate_type]
-    if rooms:
-        criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
-    if bedrooms:
-        criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
-    criteria["order"] = "DateDesc"
+        criteria["distributionTypes"] = [distribution]
+        criteria["estateTypes"] = [estate_type]
+        if rooms:
+            criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
+        if bedrooms:
+            criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
+        criteria["order"] = "DateDesc"
 
     return criteria
 
