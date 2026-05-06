@@ -35,7 +35,6 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
         price_min = form_data.get("price_min", "").strip()
         price_max = form_data.get("price_max", "").strip()
         space_min = form_data.get("space_min", "").strip()
-        space_max = form_data.get("space_max", "").strip()
         distribution = form_data.get("distribution", "Rent")
         estate_type = form_data.get("estate_type", "Apartment")
 
@@ -48,8 +47,6 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["priceMax"] = int(price_max)
         if space_min:
             criteria["spaceMin"] = int(space_min)
-        if space_max:
-            criteria["spaceMax"] = int(space_max)
         criteria["distributionTypes"] = [distribution]
         criteria["estateTypes"] = [estate_type]
 
