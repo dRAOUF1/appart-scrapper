@@ -220,6 +220,7 @@ def toggle_search_active_web(search_id: int):
         return redirect(url_for("web.searches"))
     new_value = storage.toggle_search_active(search_id)
     return redirect(url_for("web.searches"))
+@web_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["POST"])
 @require_login
 def update_blacklist_agencies(search_id: int):
     storage = current_app.storage
