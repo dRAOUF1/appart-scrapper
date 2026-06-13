@@ -346,7 +346,9 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 continue
 
             raw = match.group(1)
-            decoded = raw.encode("utf-8").decode("unicode_escape")
+            # Fix double-encoded UTF-8 (unicode_escape produces mojibake,
+            # so encode back to latin-1 and decode as proper UTF-8)
+            decoded = raw.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
             outer = json.loads(decoded)
             raw_data = outer["data"]["classified-serp-init-data"]
 
