@@ -18,7 +18,7 @@ import lzstring
 from loguru import logger
 
 BFF_ONLY_KEYS = {
-    "placeIds", "priceMin", "priceMax", "spaceMin", "spaceMax",
+    "location", "placeIds", "priceMin", "priceMax", "spaceMin", "spaceMax",
     "rooms", "bedrooms", "distributionTypes", "estateTypes",
     "locationsInBuildingExcluded",
 }
@@ -348,15 +348,20 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             raw = match.group(1)
             decoded = raw.encode("utf-8").decode("unicode_escape")
             outer = json.loads(decoded)
-            encoded = outer["data"]["classified-serp-init-data"]
+            raw_data = outer["data"]["classified-serp-init-data"]
 
-            lzs = lzstring.LZString()
-            decompressed = lzs.decompressFromBase64(encoded)
-            if not decompressed:
-                logger.warning(f"    Échec décodage LZ-string")
-                continue
+            # SeLoger a changé le format : maintenant un dict JSON direct,
+            # mais on garde le fallback LZ-string au cas où.
+            if isinstance(raw_data, str):
+                lzs = lzstring.LZString()
+                decompressed = lzs.decompressFromBase64(raw_data)
+                if not decompressed:
+                    logger.warning(f"    Échec décodage LZ-string")
+                    continue
+                data = json.loads(decompressed)
+            else:
+                data = raw_data
 
-            data = json.loads(decompressed)
             page_props = data.get("pageProps", {})
             classified_ids = page_props.get("classifieds", [])
             classifieds_data = page_props.get("classifiedsData", {})
