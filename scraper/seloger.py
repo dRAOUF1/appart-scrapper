@@ -103,94 +103,11 @@ def _get_free_proxies(count: int = 5000) -> list[str]:
     return _PROXY_CACHE
 
 
-def _parse_classified_html(html: str) -> list[dict] | None:
-    """Parse classified listings from SeLoger HTML (LZ-string compressed)."""
-    match = re.search(
-        r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
-        html, re.DOTALL,
-    )
-    if not match:
-        return None
-
-    try:
-        raw = match.group(1)
-        decoded = raw.encode("utf-8").decode("unicode_escape")
-        outer = json.loads(decoded)
-        encoded = outer["data"]["classified-serp-init-data"]
-
-        lzs = lzstring.LZString()
-        decompressed = lzs.decompressFromBase64(encoded)
-        if not decompressed:
-            return None
-
-        data = json.loads(decompressed)
-        page_props = data.get("pageProps", {})
-        classified_ids = page_props.get("classifieds", [])
-        classifieds_data = page_props.get("classifiedsData", {})
-
-        listings = []
-        for listing_id in classified_ids:
-            item = classifieds_data.get(listing_id, {})
-            if not item:
-                continue
-
-            hf = item.get("hardFacts", {})
-            price_info = hf.get("price", {})
-            location = item.get("location", {}).get("address", {})
-            metadata = item.get("metadata", {})
-            provider = item.get("provider", {})
-            card_provider = item.get("cardProvider", {})
-            main_desc = item.get("mainDescription", {})
-            tags = item.get("tags", {})
-            raw_data = item.get("rawData", {})
-            gallery = item.get("gallery", {})
-            media = item.get("media", {})
-
-            surface_data = raw_data.get("surface", {})
-            surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data
-
-            listings.append({
-                "id": listing_id,
-                "legacyId": metadata.get("legacyId"),
-                "title": hf.get("title", ""),
-                "headline": main_desc.get("headline", ""),
-                "description": main_desc.get("description", ""),
-                "price": price_info.get("formatted"),
-                "priceValue": raw_data.get("price"),
-                "priceDetails": price_info.get("additionalInformation"),
-                "surface": surface_value,
-                "rooms": raw_data.get("nbroom"),
-                "propertyType": raw_data.get("propertyTypeLabel"),
-                "city": location.get("city"),
-                "district": location.get("district"),
-                "zipCode": location.get("zipCode"),
-                "url": item.get("url", ""),
-                "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
-                "agency": card_provider.get("title"),
-                "isPrivate": provider.get("isPrivateOwner", False),
-                "phone": provider.get("phoneNumbers", []),
-                "epc": item.get("energyClass", ""),
-                "ges": item.get("gesClass", ""),
-                "isNew": tags.get("isNew", False),
-                "isExclusive": tags.get("isExclusive", False),
-                "has3DVisit": tags.get("has3DVisit", False),
-                "creationDate": metadata.get("creationDate"),
-                "updateDate": metadata.get("updateDate"),
-                "keyfacts": hf.get("keyfacts", []),
-            })
-
-        return listings
-
-    except Exception:
-        return None
-
-
-def _try_with_proxies(url: str, max_proxies: int = 100) -> list[dict] | None:
+def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | None:
     """Try fetching URL through free proxies in parallel (10 workers).
 
     Each proxy test runs in its own thread with its own Session.
-    Fully parses the response before considering it a success.
-    First proxy that yields valid listings cancels all remaining tests.
+    First proxy that succeeds cancels all remaining tests.
     """
     proxies = _get_free_proxies()
     logger.info(f"  Testing up to {min(max_proxies, len(proxies))} proxies in parallel (from {len(proxies)} available)...")
@@ -210,10 +127,8 @@ def _try_with_proxies(url: str, max_proxies: int = 100) -> list[dict] | None:
             session.get("https://www.seloger.com/", timeout=8)
             resp = session.get(url, timeout=12)
 
-            if resp.status_code == 200:
-                listings = _parse_classified_html(resp.text)
-                if listings is not None:
-                    return proxy, listings
+            if resp.status_code == 200 and "__UFRN_FETCHER__" in resp.text:
+                return proxy, resp
         except Exception:
             pass
         return proxy, None
@@ -221,12 +136,13 @@ def _try_with_proxies(url: str, max_proxies: int = 100) -> list[dict] | None:
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(test_proxy, p): p for p in proxies[:max_proxies]}
         for future in as_completed(futures):
-            proxy, listings = future.result()
-            if listings is not None:
+            proxy, resp = future.result()
+            if resp is not None:
+                # Cancel remaining tests
                 for f in futures:
                     f.cancel()
                 logger.info(f"  Proxy {proxy} worked")
-                return listings
+                return resp
 
     return None
 
@@ -377,12 +293,14 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
 
     Stratégie :
     1. Essai direct avec User-Agent iPhone mobile Safari
-    2. Si échec, rotation de proxies gratuits (validation via vrai parsing)
+    2. Si 403, rotation de proxies gratuits
     """
     url = build_search_url(criteria, order)
     logger.debug(f"  URL de recherche: {url[:120]}...")
 
     for attempt in range(max_retries):
+        resp = None
+
         try:
             if attempt > 0:
                 wait = (2 ** attempt) + random.uniform(1.0, 3.0)
@@ -402,29 +320,106 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             resp = session.get(url, timeout=20)
 
             if resp.status_code == 403 or "__UFRN_FETCHER__" not in resp.text:
-                logger.warning("    IP bloquée ou pas de données, tentative avec proxies gratuits...")
-                listings = _try_with_proxies(url, max_proxies=5000)
-                if listings is not None:
-                    logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
-                    return listings
+                # IP bloquée — essayer avec proxies
+                logger.warning(f"    IP bloquée ou pas de données, tentative avec proxies gratuits...")
+                resp = _try_with_proxies(url, max_proxies=5000)
+                if resp is None:
+                    logger.warning(f"    Aucun proxy gratuit n'a fonctionné")
+                    continue
+
+            if resp.status_code == 403:
+                logger.warning(f"    Bloqué (403) même avec proxy")
                 continue
 
-            listings = _parse_classified_html(resp.text)
-            if listings is not None:
-                logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
-                return listings
+            resp.raise_for_status()
 
-            logger.warning("    Réponse directe sans données exploitables, tentative avec proxies gratuits...")
-            listings = _try_with_proxies(url, max_proxies=5000)
-            if listings is not None:
-                logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
-                return listings
+            if "__UFRN_FETCHER__" not in resp.text:
+                logger.warning(f"    Pas de données trouvées dans le HTML")
+                continue
+
+            match = re.search(
+                r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
+                resp.text, re.DOTALL,
+            )
+            if not match:
+                logger.warning(f"    Format HTML inattendu")
+                continue
+
+            raw = match.group(1)
+            decoded = raw.encode("utf-8").decode("unicode_escape")
+            outer = json.loads(decoded)
+            encoded = outer["data"]["classified-serp-init-data"]
+
+            lzs = lzstring.LZString()
+            decompressed = lzs.decompressFromBase64(encoded)
+            if not decompressed:
+                logger.warning(f"    Échec décodage LZ-string")
+                continue
+
+            data = json.loads(decompressed)
+            page_props = data.get("pageProps", {})
+            classified_ids = page_props.get("classifieds", [])
+            classifieds_data = page_props.get("classifiedsData", {})
+
+            listings = []
+            for listing_id in classified_ids:
+                item = classifieds_data.get(listing_id, {})
+                if not item:
+                    continue
+
+                hf = item.get("hardFacts", {})
+                price_info = hf.get("price", {})
+                location = item.get("location", {}).get("address", {})
+                metadata = item.get("metadata", {})
+                provider = item.get("provider", {})
+                card_provider = item.get("cardProvider", {})
+                main_desc = item.get("mainDescription", {})
+                tags = item.get("tags", {})
+                raw_data = item.get("rawData", {})
+                gallery = item.get("gallery", {})
+                media = item.get("media", {})
+
+                surface_data = raw_data.get("surface", {})
+                surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data
+
+                listings.append({
+                    "id": listing_id,
+                    "legacyId": metadata.get("legacyId"),
+                    "title": hf.get("title", ""),
+                    "headline": main_desc.get("headline", ""),
+                    "description": main_desc.get("description", ""),
+                    "price": price_info.get("formatted"),
+                    "priceValue": raw_data.get("price"),
+                    "priceDetails": price_info.get("additionalInformation"),
+                    "surface": surface_value,
+                    "rooms": raw_data.get("nbroom"),
+                    "propertyType": raw_data.get("propertyTypeLabel"),
+                    "city": location.get("city"),
+                    "district": location.get("district"),
+                    "zipCode": location.get("zipCode"),
+                    "url": item.get("url", ""),
+                    "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
+                    "agency": card_provider.get("title"),
+                    "isPrivate": provider.get("isPrivateOwner", False),
+                    "phone": provider.get("phoneNumbers", []),
+                    "epc": item.get("energyClass", ""),
+                    "ges": item.get("gesClass", ""),
+                    "isNew": tags.get("isNew", False),
+                    "isExclusive": tags.get("isExclusive", False),
+                    "has3DVisit": tags.get("has3DVisit", False),
+                    "creationDate": metadata.get("creationDate"),
+                    "updateDate": metadata.get("updateDate"),
+                    "keyfacts": hf.get("keyfacts", []),
+                })
+
+            logger.info(f"[SeLoger] {len(listings)} annonces détaillées récupérées")
+            return listings
 
         except requests.exceptions.RequestException as e:
             logger.error(f"    Erreur réseau: {e}")
             continue
-        except Exception:
-            logger.exception("    Erreur lors du parsing")
+        except Exception as e:
+            logger.error(f"    Erreur: {e}")
             continue
 
     raise ValueError("Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome. Attends 15-30 minutes et réessaie.")
@@ -442,15 +437,15 @@ def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]
         try:
             all_ids, total, bff_classifieds = get_all_ids(criteria)
             logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces via BFF")
-        except Exception:
-            logger.exception("[SeLoger] Échec BFF")
+        except Exception as e:
+            logger.error(f"[SeLoger] Échec BFF: {e}")
 
     detailed = []
     try:
         detailed = get_detailed_listings(criteria, order="DateDesc")
         logger.info(f"[SeLoger] {len(detailed)} annonces détaillées via mobile UA")
-    except Exception:
-        logger.exception("[SeLoger] Échec données détaillées")
+    except Exception as e:
+        logger.warning(f"[SeLoger] Échec données détaillées: {e}")
 
     if detailed:
         return detailed, [l["id"] for l in detailed], len(detailed)
