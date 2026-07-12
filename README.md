@@ -67,6 +67,20 @@ Sur la page **Annonces**, consultez toutes les annonces trouvées avec prix, sur
 
 Auth via header : `X-API-Token: <token>`
 
+## Tests
+
+La suite est divisée en deux :
+- **Tests unitaires** (`tests/`, mocks, aucune dépendance externe) :
+  ```bash
+  pip install -r requirements-dev.txt
+  pytest tests/ -m "not integration"
+  ```
+- **Tests d'intégration** (`tests/integration/`, vrai Postgres) : sautés automatiquement si `DATABASE_URL` n'est pas défini. Pour les exécuter réellement :
+  ```bash
+  docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+  ```
+  Ce compose démarre un Postgres jetable et lance toute la suite (unitaires + intégration) dedans.
+
 ## Structure
 
 ```
@@ -78,11 +92,16 @@ Auth via header : `X-API-Token: <token>`
 ├── scraper/         # Scraping SeLoger (API BFF + classified-search)
 ├── services/        # Orchestration du scraping (ScrapeService)
 ├── routes/          # Blueprints Flask (api, web, admin, auth)
+├── scrape_control.py # Soumission thread-safe des jobs de scrape
+├── schemas.py       # Validation Pydantic des payloads (criteria, scrape_interval)
+├── web_utils.py     # Helpers partagés par les routes (to_int, ...)
 ├── notifier.py       # Notifications ntfy
 ├── config.py        # Chargement config
 ├── config.yaml      # Configuration
 ├── templates/       # Pages HTML (Jinja2)
 ├── static/          # CSS
+├── tests/           # Tests unitaires (+ tests/integration/ pour les tests DB réels)
 ├── Dockerfile       # Déploiement
+├── Dockerfile.test  # Image de test (docker-compose.test.yml)
 └── requirements.txt
 ```

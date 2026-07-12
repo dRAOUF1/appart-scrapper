@@ -30,13 +30,14 @@ class TestBlacklistMode:
             return listings, []
 
         mock_app.storage.listings.save_and_link = mock_save_and_link
+        mock_app.storage.listings.get_unnotified_listings_for_search.return_value = [mock_listing]
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
         mock_parser.scrape.return_value = [mock_listing]
 
-        service = ScrapeService(mock_app)
+        service = ScrapeService(mock_app.storage, mock_app.notifier)
         from unittest.mock import patch
         with patch("parsers.get_parser", return_value=mock_parser):
             result = service.execute(search_id=1, user_id=1)
@@ -67,13 +68,14 @@ class TestBlacklistMode:
             return listings, []
 
         mock_app.storage.listings.save_and_link = mock_save_and_link
+        mock_app.storage.listings.get_unnotified_listings_for_search.return_value = [mock_listing]
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
         mock_parser.scrape.return_value = [mock_listing]
 
-        service = ScrapeService(mock_app)
+        service = ScrapeService(mock_app.storage, mock_app.notifier)
         from unittest.mock import patch
         with patch("parsers.get_parser", return_value=mock_parser):
             result = service.execute(search_id=1, user_id=1)
@@ -106,13 +108,16 @@ class TestBlacklistMode:
             return listings, []
 
         mock_app.storage.listings.save_and_link = mock_save_and_link
+        mock_app.storage.listings.get_unnotified_listings_for_search.return_value = [
+            mock_listing_blacklisted, mock_listing_good
+        ]
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
         mock_parser.scrape.return_value = [mock_listing_blacklisted, mock_listing_good]
 
-        service = ScrapeService(mock_app)
+        service = ScrapeService(mock_app.storage, mock_app.notifier)
         from unittest.mock import patch
         with patch("parsers.get_parser", return_value=mock_parser):
             result = service.execute(search_id=1, user_id=1)
@@ -144,13 +149,14 @@ class TestBlacklistMode:
             return listings, []
 
         mock_app.storage.listings.save_and_link = mock_save_and_link
+        mock_app.storage.listings.get_unnotified_listings_for_search.return_value = [mock_listing]
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
         mock_parser.scrape.return_value = [mock_listing]
 
-        service = ScrapeService(mock_app)
+        service = ScrapeService(mock_app.storage, mock_app.notifier)
         from unittest.mock import patch
         with patch("parsers.get_parser", return_value=mock_parser):
             result = service.execute(search_id=1, user_id=1)

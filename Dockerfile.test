@@ -1,0 +1,17 @@
+# ---- Test image — not used in production, only by docker-compose.test.yml ----
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+# Full source tree, including tests/ (unlike the prod Dockerfile's explicit
+# file-by-file COPY list, which deliberately excludes it).
+COPY . .
+
+CMD ["pytest", "tests/", "-v", "--tb=short"]

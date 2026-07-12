@@ -16,7 +16,9 @@ services:
       retries: 10
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.test
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,4 +27,4 @@ services:
       SECRET_KEY: test-secret-key
     volumes:
       - .:/app
-    command: python -m pytest tests/ -v --tb=short
+    command: pytest tests/ -v --tb=short

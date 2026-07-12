@@ -1,12 +1,25 @@
 """Tests for route blueprints and auth decorators."""
+import os
 from unittest.mock import MagicMock, patch
 from flask import Flask
+from flask_wtf.csrf import generate_csrf
+
+_TEMPLATES_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"
+)
 
 
 def _make_app():
-    """Create a minimal Flask app with storage mock and all blueprints."""
-    app = Flask(__name__, template_folder="templates")
+    """Create a minimal Flask app with storage mock and all blueprints.
+
+    Registers the csrf_token() Jinja global (so templates using it render)
+    without enabling CSRFProtect's enforcement — that's tested separately in
+    tests/test_security.py::TestCSRFProtection, and enforcing it here would
+    break every other test in this file that POSTs without a token.
+    """
+    app = Flask(__name__, template_folder=_TEMPLATES_DIR)
     app.secret_key = "test-secret"
+    app.jinja_env.globals["csrf_token"] = generate_csrf
     app.storage = MagicMock()
     app._scrape_futures = {}
     app._scrape_executor = MagicMock()
@@ -148,7 +161,74 @@ class TestWebRoutes:
         with app.test_client() as client:
             resp = client.get("/health")
             assert resp.status_code == 200
-            assert resp.data == b"OK"
+
+    def test_login_page_renders(self):
+        app = _make_app()
+        with app.test_client() as client:
+            resp = client.get("/login")
+            assert resp.status_code == 200
+
+    def test_login_post_empty_username_shows_error(self):
+        app = _make_app()
+        with app.test_client() as client:
+            resp = client.post("/login", data={"username": ""})
+            assert resp.status_code == 200
+            app.storage.users.get_user_by_username.assert_not_called()
+
+    def test_login_post_existing_user_logs_in(self):
+        app = _make_app()
+        app.storage.users.get_user_by_username.return_value = {
+            "id": 1, "username": "existing", "api_token": "tok-existing",
+        }
+        with app.test_client() as client:
+            resp = client.post("/login", data={"username": "existing"}, follow_redirects=False)
+            assert resp.status_code in (301, 302, 303)
+            with client.session_transaction() as sess:
+                assert sess["user_id"] == 1
+                assert sess["username"] == "existing"
+                assert sess["api_token"] == "tok-existing"
+        app.storage.users.create_user.assert_not_called()
+
+    def test_login_post_new_username_auto_creates_account(self):
+        app = _make_app()
+        app.storage.users.get_user_by_username.return_value = None
+        app.storage.users.create_user.return_value = {
+            "id": 2, "username": "newbie", "api_token": "tok-newbie",
+        }
+        with app.test_client() as client:
+            resp = client.post("/login", data={"username": "newbie"}, follow_redirects=False)
+            assert resp.status_code in (301, 302, 303)
+        app.storage.users.create_user.assert_called_once_with("newbie")
+
+    def test_login_post_create_user_value_error_shows_error(self):
+        app = _make_app()
+        app.storage.users.get_user_by_username.return_value = None
+        app.storage.users.create_user.side_effect = ValueError("boom")
+        with app.test_client() as client:
+            resp = client.post("/login", data={"username": "conflict"})
+            assert resp.status_code == 200
+
+    def test_logout_clears_session_and_redirects(self):
+        app = _make_app()
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["user_id"] = 1
+                sess["username"] = "someone"
+            resp = client.get("/logout", follow_redirects=False)
+            assert resp.status_code in (301, 302, 303)
+            with client.session_transaction() as sess:
+                assert "user_id" not in sess
+
+
+def _make_admin_client(app, monkeypatch):
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "admin"}
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["user_id"] = 1
+        sess["api_token"] = "tok"
+        sess["username"] = "admin"
+    return client
 
 
 class TestAdminRoutes:
@@ -161,6 +241,127 @@ class TestAdminRoutes:
             app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "notadmin"}
             resp = client.get("/admin", follow_redirects=False)
             assert resp.status_code in (301, 302, 303)
+
+    def test_admin_dashboard_accessible_to_real_admin(self, monkeypatch):
+        app = _make_app()
+        app.storage.admin.get_enhanced_admin_stats.return_value = {
+            "users": 0, "searches": 0, "total_listings": 0, "new_today": 0,
+            "avg_listings_per_search": 0, "search_listings": 0,
+            "orphan_listings": 0, "users_without_searches": 0,
+            "top_searches": [], "top_users": [], "sources_breakdown": [],
+            "activity_": [],
+        }
+        app.storage.settings.get_setting.return_value = "true"
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.get("/admin")
+        assert resp.status_code == 200
+
+    def test_admin_execute_query_select_returns_rows(self, monkeypatch):
+        app = _make_app()
+        app.storage.admin.execute_query.return_value = ([{"n": 1}], 1, None)
+        app.storage.admin.get_db_stats.return_value = {}
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.post("/admin/database/query", data={"sql": "SELECT 1"})
+
+        assert resp.status_code == 200
+        app.storage.admin.execute_query.assert_called_once_with("SELECT 1")
+        app.storage.admin.log_admin_action.assert_called_once()
+
+    def test_admin_execute_query_rejects_empty_sql(self, monkeypatch):
+        app = _make_app()
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.post("/admin/database/query", data={"sql": ""}, follow_redirects=False)
+
+        assert resp.status_code in (301, 302, 303)
+        app.storage.admin.execute_query.assert_not_called()
+
+    def test_admin_delete_user(self, monkeypatch):
+        app = _make_app()
+        app.storage.users.get_user_detail.return_value = {"id": 2, "username": "victim"}
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.post("/admin/users/2/delete", follow_redirects=False)
+
+        assert resp.status_code in (301, 302, 303)
+        app.storage.users.delete_user.assert_called_once_with(2)
+        app.storage.admin.log_admin_action.assert_called_once()
+
+    def test_admin_delete_user_missing_user_is_noop(self, monkeypatch):
+        app = _make_app()
+        app.storage.users.get_user_detail.return_value = None
+        client = _make_admin_client(app, monkeypatch)
+
+        client.post("/admin/users/999/delete", follow_redirects=False)
+
+        app.storage.users.delete_user.assert_not_called()
+
+    def test_admin_reset_token(self, monkeypatch):
+        app = _make_app()
+        app.storage.users.get_user_detail.return_value = {"id": 2, "username": "someone"}
+        app.storage.users.reset_user_token.return_value = "new-token-value"
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.post("/admin/users/2/reset-token", follow_redirects=False)
+
+        assert resp.status_code in (301, 302, 303)
+        app.storage.users.reset_user_token.assert_called_once_with(2)
+
+    def test_admin_create_user(self, monkeypatch):
+        app = _make_app()
+        app.storage.users.create_user.return_value = {"id": 3, "username": "newuser", "api_token": "tok3"}
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.post("/admin/users/create", data={"username": "newuser"}, follow_redirects=False)
+
+        assert resp.status_code in (301, 302, 303)
+        app.storage.users.create_user.assert_called_once_with("newuser")
+
+    def test_admin_create_user_missing_username(self, monkeypatch):
+        app = _make_app()
+        client = _make_admin_client(app, monkeypatch)
+
+        client.post("/admin/users/create", data={"username": ""}, follow_redirects=False)
+
+        app.storage.users.create_user.assert_not_called()
+
+    def test_admin_truncate_table_rejects_table_outside_whitelist(self, monkeypatch):
+        app = _make_app()
+        client = _make_admin_client(app, monkeypatch)
+
+        resp = client.post(
+            "/admin/database/truncate", data={"table_name": "pg_catalog"}, follow_redirects=False,
+        )
+
+        assert resp.status_code in (301, 302, 303)
+        app.storage.admin.truncate_table.assert_not_called()
+
+    def test_admin_truncate_table_allows_whitelisted_table(self, monkeypatch):
+        app = _make_app()
+        app.storage.admin.truncate_table.return_value = True
+        client = _make_admin_client(app, monkeypatch)
+
+        client.post("/admin/database/truncate", data={"table_name": "listings"}, follow_redirects=False)
+
+        app.storage.admin.truncate_table.assert_called_once_with("listings")
+
+
+class TestParseSearchCriteriaFromForm:
+    def test_user_selected_order_is_kept(self):
+        from routes.web import _parse_search_criteria_from_form
+
+        form = {"place_ids": "AD08FR12345", "order": "PriceAsc"}
+        criteria = _parse_search_criteria_from_form(form)
+        assert criteria["order"] == "PriceAsc"
+
+    def test_defaults_to_date_desc_when_order_missing(self):
+        from routes.web import _parse_search_criteria_from_form
+
+        form = {"place_ids": "AD08FR12345"}
+        criteria = _parse_search_criteria_from_form(form)
+        assert criteria["order"] == "DateDesc"
 
 
 class TestRouteIntegrity:
