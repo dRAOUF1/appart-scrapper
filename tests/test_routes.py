@@ -364,6 +364,71 @@ class TestParseSearchCriteriaFromForm:
         assert criteria["order"] == "DateDesc"
 
 
+class TestValidateSourcesCriteria:
+    """Per-source validation must give a precise, actionable reason instead
+    of one generic message covering every selected source indiscriminately."""
+
+    def test_laforet_valid_with_city_and_postal_code(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["laforet"], {"city": "Paris", "postalCode": "75018"})
+        assert results == [{"id": "laforet", "name": "Laforêt", "ok": True, "reason": ""}]
+
+    def test_laforet_invalid_without_location_gives_generic_reason(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["laforet"], {})
+        assert len(results) == 1
+        assert results[0]["ok"] is False
+        assert "Ville" in results[0]["reason"]
+
+    def test_seloger_invalid_gives_source_specific_help_text(self):
+        """SeLoger's failure reason must be its own EXTRA_LOCATION_HELP, not
+        the generic "Ville et code postal requis" — it needs a Place ID."""
+        from routes.web import _validate_sources_criteria
+        from parsers.seloger import SeLogerParser
+
+        results = _validate_sources_criteria(["seloger"], {"city": "Paris", "postalCode": "75018"})
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == SeLogerParser.EXTRA_LOCATION_HELP
+
+    def test_unknown_source_reported_as_invalid(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["totally_unknown"], {"city": "Paris", "postalCode": "75018"})
+        assert results == [{"id": "totally_unknown", "name": "totally_unknown", "ok": False, "reason": "Source inconnue"}]
+
+    def test_multiple_sources_validated_independently(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(
+            ["seloger", "laforet"], {"city": "Paris", "postalCode": "75018"}
+        )
+        by_id = {r["id"]: r for r in results}
+        assert by_id["seloger"]["ok"] is False
+        assert by_id["laforet"]["ok"] is True
+
+
+class TestValidationErrorMessage:
+    def test_lists_only_failing_sources_with_their_reason(self):
+        from routes.web import _validation_error_message
+
+        results = [
+            {"id": "seloger", "name": "SeLoger", "ok": False, "reason": "besoin d'un Place ID"},
+            {"id": "laforet", "name": "Laforêt", "ok": True, "reason": ""},
+        ]
+        message = _validation_error_message(results)
+        assert "SeLoger" in message
+        assert "besoin d'un Place ID" in message
+        assert "Laforêt" not in message
+
+    def test_empty_when_all_valid(self):
+        from routes.web import _validation_error_message
+
+        results = [{"id": "laforet", "name": "Laforêt", "ok": True, "reason": ""}]
+        assert _validation_error_message(results) == ""
+
+
 class TestRouteIntegrity:
     def test_all_blueprints_importable(self):
         from routes import api_bp, web_bp, admin_bp

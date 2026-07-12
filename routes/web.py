@@ -44,7 +44,6 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
         order = form_data.get("order", "").strip()
         if place_ids:
             criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
-            criteria["location"] = {"placeIds": criteria["placeIds"]}
         if price_min:
             criteria["priceMin"] = int(price_min)
         if price_max:
@@ -61,9 +60,9 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
         criteria["order"] = order or "DateDesc"
 
-    # Générique (utilisé par Laforet, indépendant de l'URL SeLoger ci-dessus) :
-    # ville + code postal, saisis à part car SeLoger ne peut pas s'en servir
-    # directement (il lui faut un placeId opaque).
+    # Ville + code postal : l'entrée de localisation universelle, utilisée
+    # par toutes les sources compatibles (indépendante de l'URL SeLoger
+    # ci-dessus, qui alimente le champ d'appoint propre à SeLoger).
     city = form_data.get("city", "").strip()
     postal_code = form_data.get("postal_code", "").strip()
     if city:
@@ -74,18 +73,42 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
     return criteria
 
 
-def _sources_have_valid_criteria(sources: list[str], criteria: dict) -> bool:
-    """True if at least one of `sources` can run with `criteria` — each
-    source has its own location encoding (placeIds vs. city/postal code)."""
+def _validate_sources_criteria(sources: list[str], criteria: dict) -> list[dict]:
+    """Per-source validity of `criteria`, with a precise, actionable reason
+    when a selected source can't run — instead of one generic "invalid
+    criteria" message covering every source indiscriminately."""
     from parsers import get_parser
+
+    results = []
     for src in sources:
         try:
             parser = get_parser(src)
         except ValueError:
+            results.append({"id": src, "name": src, "ok": False, "reason": "Source inconnue"})
             continue
-        if parser.has_valid_criteria(criteria):
-            return True
-    return False
+
+        ok = parser.has_valid_criteria(criteria)
+        reason = ""
+        if not ok:
+            reason = parser.EXTRA_LOCATION_HELP if parser.REQUIRES_EXTRA_LOCATION else "Ville et code postal requis"
+        results.append({"id": src, "name": parser.SOURCE_NAME, "ok": ok, "reason": reason})
+    return results
+
+
+def _validation_error_message(results: list[dict]) -> str:
+    """Format a precise, per-source error message from _validate_sources_criteria().
+
+    A source's own reason (e.g. SeLoger's EXTRA_LOCATION_HELP) may already
+    name that source — avoid an awkward "SeLoger : SeLoger ne peut pas...".
+    """
+    failing = [r for r in results if not r["ok"]]
+    parts = []
+    for r in failing:
+        if r["reason"] and r["name"] in r["reason"]:
+            parts.append(r["reason"])
+        else:
+            parts.append(f"{r['name']} : {r['reason']}")
+    return " / ".join(parts)
 
 
 def _submit_scrape(search_id: int, user_id: int):
@@ -158,8 +181,9 @@ def searches():
 
         criteria = _parse_search_criteria_from_form(request.form)
 
-        if not _sources_have_valid_criteria(selected_sources, criteria):
-            flash("Aucune des sources sélectionnées n'a de lieu valide dans les critères", "error")
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not all(r["ok"] for r in validation):
+            flash(_validation_error_message(validation), "error")
             return redirect(url_for("web.searches"))
 
         if label and ntfy_topic:
@@ -290,8 +314,9 @@ def edit_search(search_id: int):
 
         criteria = _parse_search_criteria_from_form(request.form)
 
-        if not _sources_have_valid_criteria(selected_sources, criteria):
-            flash("Aucune des sources sélectionnées n'a de lieu valide dans les critères", "error")
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not all(r["ok"] for r in validation):
+            flash(_validation_error_message(validation), "error")
             return render_template("search_edit.html", search=search, sources=list_sources(), now=datetime.utcnow)
 
         if label and ntfy_topic:

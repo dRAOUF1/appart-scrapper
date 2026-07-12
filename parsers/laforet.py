@@ -213,8 +213,8 @@ class LaforetParser(BaseParser):
     SOURCE_NAME = "Laforêt"
     SOURCE_DESCRIPTION = "Laforet.com — scraping HTML serveur (ville + code postal)"
 
-    def has_valid_criteria(self, criteria: dict) -> bool:
-        return bool(criteria.get("city") and criteria.get("postalCode"))
+    # has_valid_criteria: no override needed — city+postalCode is exactly
+    # BaseParser's default contract, and Laforet needs nothing else.
 
     def build_search_url(self, criteria: dict) -> str | None:
         city = criteria.get("city")

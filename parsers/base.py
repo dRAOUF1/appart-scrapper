@@ -33,12 +33,21 @@ class ParserRegistry:
 
     @classmethod
     def list_sources(cls) -> list[dict]:
-        """Return metadata for all registered parsers."""
+        """Return metadata for all registered parsers.
+
+        Includes the "extra location field" metadata (see BaseParser) so
+        the UI can generically render a per-source input for any source
+        that can't work from city+postalCode alone — no template change
+        needed when a future source needs one too.
+        """
         return [
             {
                 "id": pid,
                 "name": pcls.SOURCE_NAME,
                 "description": pcls.SOURCE_DESCRIPTION,
+                "requires_extra_location": pcls.REQUIRES_EXTRA_LOCATION,
+                "extra_location_label": pcls.EXTRA_LOCATION_LABEL,
+                "extra_location_help": pcls.EXTRA_LOCATION_HELP,
             }
             for pid, pcls in sorted(cls._parsers.items())
         ]
@@ -60,6 +69,17 @@ class BaseParser(ABC):
     SOURCE_ID: str = ""
     SOURCE_NAME: str = ""
     SOURCE_DESCRIPTION: str = ""
+
+    # City + postal code is the universal location contract every source is
+    # expected to work from (see has_valid_criteria below). A source that
+    # cannot derive its own search identifier from city+postalCode alone
+    # (e.g. SeLoger needs an opaque placeId with no public geocoding API)
+    # sets REQUIRES_EXTRA_LOCATION = True and describes the extra field it
+    # needs — the UI renders it generically from this metadata, so a future
+    # source in the same situation needs no template changes.
+    REQUIRES_EXTRA_LOCATION: bool = False
+    EXTRA_LOCATION_LABEL: str = ""
+    EXTRA_LOCATION_HELP: str = ""
 
     @abstractmethod
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
@@ -106,14 +126,14 @@ class BaseParser(ABC):
 
     def has_valid_criteria(self, criteria: dict) -> bool:
         """
-        Whether `criteria` contains what this source needs to run a search
-        (e.g. a location). Each source encodes location differently (opaque
-        place IDs, city + postal code, ...), so this is deliberately
-        delegated per-parser instead of checking a single hardcoded key.
+        Whether `criteria` contains what this source needs to run a search.
 
-        Override in subclasses. Default: any non-empty dict is accepted.
+        Default: city + postalCode is the universal location contract —
+        every source (present or future) is expected to work from this pair
+        unless it truly can't (see REQUIRES_EXTRA_LOCATION), in which case
+        it overrides this to also check its own extra field.
         """
-        return bool(criteria)
+        return bool(criteria.get("city") and criteria.get("postalCode"))
 
     def __init_subclass__(cls, **kwargs):
         """Auto-register subclasses that have a SOURCE_ID."""

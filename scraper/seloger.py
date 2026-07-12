@@ -214,9 +214,7 @@ def parse_search_url(url: str) -> dict:
     criteria = {}
 
     if "locations" in params:
-        place_ids = [v for v in params["locations"]]
-        criteria["placeIds"] = place_ids
-        criteria["location"] = {"placeIds": place_ids}
+        criteria["placeIds"] = [v for v in params["locations"]]
 
     if "distributionTypes" in params:
         criteria["distributionTypes"] = _split_csv_values(params["distributionTypes"])

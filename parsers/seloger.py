@@ -66,6 +66,17 @@ class SeLogerParser(BaseParser):
     SOURCE_NAME = "SeLoger"
     SOURCE_DESCRIPTION = "SeLoger.com — Scraping via API BFF"
 
+    # SeLoger a besoin d'un placeId opaque (ex: AD08FR31096) qu'on ne peut
+    # pas dériver d'une ville + code postal : il n'expose aucune API de
+    # géocodage publique (vérifié — voir has_valid_criteria ci-dessous).
+    REQUIRES_EXTRA_LOCATION = True
+    EXTRA_LOCATION_LABEL = "URL de recherche ou Place ID SeLoger"
+    EXTRA_LOCATION_HELP = (
+        "SeLoger ne peut pas encore chercher automatiquement par ville — "
+        "collez une URL de recherche SeLoger (elle sera parsée automatiquement) "
+        "ou un Place ID directement."
+    )
+
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """Execute le scraping avec les criteres donnes.
 

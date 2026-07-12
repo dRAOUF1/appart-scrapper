@@ -28,14 +28,50 @@
     </div>
   </div>
 
-  <div class="form-group" style="margin-top: 1rem;">
+  <div class="form-group" style="margin-top: 1.25rem;">
+    <label>📍 Localisation</label>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="city">Ville</label>
+        <input type="text" id="city" name="city" placeholder="Ex: Paris">
+      </div>
+      <div class="form-group">
+        <label for="postal_code">Code postal</label>
+        <input type="text" id="postal_code" name="postal_code" placeholder="Ex: 75018">
+      </div>
+    </div>
+    <small class="form-help">
+      Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
+    </small>
+  </div>
+
+  <div class="form-group" style="margin-top: 1.25rem;">
       <label>Sources</label>
-      <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
           {% for src in sources %}
-          <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal;">
-              <input type="checkbox" name="sources" value="{{ src.id }}" {% if src.id == 'seloger' %}checked{% endif %}>
-              {{ src.name }}
-          </label>
+          <div>
+            <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal;">
+                <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
+                    data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
+                    data-extra-target="extra-{{ src.id }}"
+                    {% if src.id == 'seloger' %}checked{% endif %}>
+                {{ src.name }}
+            </label>
+            {% if src.requires_extra_location %}
+            <div id="extra-{{ src.id }}" class="source-extra-block" style="margin-left: 1.6rem; margin-top: 0.5rem; padding: 0.75rem; border-left: 2px solid var(--border, #444);">
+              <small class="form-help">{{ src.extra_location_help }}</small>
+              <div class="form-group" style="margin-top: 0.5rem;">
+                <label for="search_url">{{ src.extra_location_label }}</label>
+                <input type="url" id="search_url" name="search_url"
+                    placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
+              </div>
+              <details style="margin-top: 0.5rem;">
+                <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
+                <input type="text" name="place_ids" placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
+              </details>
+            </div>
+            {% endif %}
+          </div>
           {% endfor %}
       </div>
       <small class="form-help">
@@ -43,31 +79,9 @@
       </small>
   </div>
 
-        <div class="form-group" style="margin-top: 1rem;">
-            <label for="search_url">URL de recherche SeLoger (optionnel)</label>
-            <input type="url" id="search_url" name="search_url"
-                placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096&priceMin=600&priceMax=850">
-            <small class="form-help">
-                Allez sur <a href="https://www.seloger.com" target="_blank">SeLoger</a>, faites votre recherche, copiez l'URL —
-                ou remplissez les champs manuels ci-dessous (Ville + Code postal pour Laforet).
-            </small>
-        </div>
-
-  <details style="margin-top: 1rem;">
-    <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem 0;">⚙️ Ou remplir manuellement</summary>
-    <div class="form-grid" style="margin-top: 0.75rem;">
-      <div class="form-group">
-        <label for="place_ids">Place IDs (SeLoger)</label>
-        <input type="text" id="place_ids" name="place_ids" placeholder="Ex: AD08FR31096">
-      </div>
-      <div class="form-group">
-        <label for="city">Ville (Laforet)</label>
-        <input type="text" id="city" name="city" placeholder="Ex: Paris">
-      </div>
-      <div class="form-group">
-        <label for="postal_code">Code postal (Laforet)</label>
-        <input type="text" id="postal_code" name="postal_code" placeholder="Ex: 75018">
-      </div>
+  <div class="form-group" style="margin-top: 1.25rem;">
+    <label>Filtres (optionnels)</label>
+    <div class="form-grid" style="margin-top: 0.5rem;">
       <div class="form-group">
         <label for="price_min">Prix min (€)</label>
         <input type="number" id="price_min" name="price_min" placeholder="600">
@@ -135,9 +149,9 @@
         </select>
       </div>
     </div>
-  </details>
+  </div>
 
-        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1rem;">Créer la recherche</button>
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1.25rem;">Créer la recherche</button>
     </form>
 </div>
 
@@ -296,6 +310,17 @@
 
 {% block scripts %}
 <script>
+// Affiche le champ d'appoint d'une source (ex: URL/Place ID SeLoger) seulement
+// quand cette source est cochée — générique, marche pour toute source future
+// qui déclarerait aussi requires_extra_location.
+document.querySelectorAll('.source-checkbox[data-requires-extra="true"]').forEach(cb => {
+    const target = document.getElementById(cb.dataset.extraTarget);
+    if (!target) return;
+    const sync = () => { target.style.display = cb.checked ? 'block' : 'none'; };
+    cb.addEventListener('change', sync);
+    sync();
+});
+
 function copyText(elementId) {
 const text = document.getElementById(elementId).textContent;
 navigator.clipboard.writeText(text).then(() => {
