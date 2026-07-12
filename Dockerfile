@@ -24,6 +24,7 @@ COPY services/ services/
 COPY routes/ routes/
 COPY parsers/ parsers/
 COPY scraper/ scraper/
+COPY scripts/ scripts/
 COPY templates/ templates/
 COPY static/ static/
 

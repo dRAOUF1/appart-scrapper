@@ -47,6 +47,16 @@ Le serveur démarre sur `http://localhost:10000`.
 
 Le conteneur tourne avec `gunicorn --workers 1` : le scheduler et la déduplication des scrapes en mémoire ne sont pas partagés entre process, ce nombre de workers ne doit pas être augmenté sans revoir `core/scrape_control.py`.
 
+### Migrations
+
+L'app **ne modifie jamais le schéma automatiquement au démarrage** (`main.py` vérifie juste que les tables existent, et refuse de démarrer sinon). Après tout déploiement qui touche au schéma (nouvelle colonne, nouvelle table...), il faut lancer manuellement :
+
+```bash
+python -m scripts.migrate
+```
+
+Chaque instruction du script est idempotente (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) — sans risque de la relancer plusieurs fois, y compris sur une base déjà à jour. Sur Render, ouvrir un shell sur le service et exécuter la même commande.
+
 ## Usage
 
 ### 1. Créer un compte

@@ -36,6 +36,22 @@ class Storage:
         self.settings = SettingsRepository(database_url)
         self._init_db()
 
+    @classmethod
+    def run_migrations(cls, database_url: str) -> None:
+        """Apply the DDL migrations against database_url.
+
+        Safe to run against a fresh OR an already-populated database: every
+        statement is idempotent (CREATE ... IF NOT EXISTS / ADD COLUMN ...
+        IF NOT EXISTS). Bypasses __init__'s _init_db() check (which requires
+        tables to already exist) since this IS how they get created/updated.
+        Used by scripts/migrate.py — run this after every deploy that
+        changes the schema.
+        """
+        instance = cls.__new__(cls)
+        instance.database_url = database_url
+        instance.users = UserRepository(database_url)
+        instance._run_ddl_migrations()
+
     # ------------------------------------------------------------------
     # Connection management (shared by all repos via inheritance)
     # ------------------------------------------------------------------

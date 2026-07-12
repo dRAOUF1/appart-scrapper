@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from repositories.user_repo import UserRepository
 from storage import Storage
 
 _THIS_DIR = Path(__file__).resolve().parent
@@ -28,16 +27,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
 
 
-def _bootstrap_schema(pg_url: str) -> None:
-    """Run the real DDL migrations once, bypassing Storage.__init__'s
-    _init_db() check (which requires tables to already exist — by design,
-    production never runs DDL implicitly at boot)."""
-    tmp = Storage.__new__(Storage)
-    tmp.database_url = pg_url
-    tmp.users = UserRepository(pg_url)
-    tmp._run_ddl_migrations()
-
-
 @pytest.fixture(scope="session")
 def pg_url():
     url = os.environ.get("DATABASE_URL")
@@ -48,7 +37,10 @@ def pg_url():
 
 @pytest.fixture(scope="session")
 def storage(pg_url):
-    _bootstrap_schema(pg_url)
+    # Exercises the exact same path as scripts/migrate.py — this is what
+    # caught (this time, retroactively) that DDL changes need a real
+    # migration step, not just "CREATE TABLE IF NOT EXISTS" on next boot.
+    Storage.run_migrations(pg_url)
     return Storage(pg_url)
 
 
