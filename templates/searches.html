@@ -4,156 +4,165 @@
 {% block content %}
 <div class="page-header">
     <h1>Mes Recherches</h1>
-    <p class="text-muted">Collez l'URL d'une recherche SeLoger et le serveur scrape automatiquement.</p>
+    <p class="text-muted">Renseigne une ville et les sources à surveiller — le serveur scrape automatiquement.</p>
 </div>
 
 <!-- Create search form -->
-<div class="card">
-    <h2>➕ Nouvelle recherche</h2>
+{% set _flash_categories = get_flashed_messages(with_categories=true) | map(attribute=0) | list %}
+<details class="card create-search-card" {% if not searches or 'error' in _flash_categories %}open{% endif %}>
+    <summary>➕ Nouvelle recherche</summary>
     <form method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="form-grid">
-    <div class="form-group">
-      <label for="label">Label</label>
-      <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
-    </div>
-    <div class="form-group">
-      <label for="ntfy_topic">Topic ntfy</label>
-      <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
-      <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
-    </div>
-    <div class="form-group">
-      <label for="scrape_interval">Intervalle (min)</label>
-      <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
-    </div>
-  </div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-  <div class="form-group" style="margin-top: 1.25rem;">
-    <label>📍 Localisation</label>
-    <div class="form-grid">
-      <div class="form-group">
-        <label for="city">Ville</label>
-        <input type="text" id="city" name="city" placeholder="Ex: Paris">
-      </div>
-      <div class="form-group">
-        <label for="postal_code">Code postal</label>
-        <input type="text" id="postal_code" name="postal_code" placeholder="Ex: 75018">
-      </div>
-    </div>
-    <small class="form-help">
-      Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
-    </small>
-  </div>
-
-  <div class="form-group" style="margin-top: 1.25rem;">
-      <label>Sources</label>
-      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-          {% for src in sources %}
-          <div>
-            <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal;">
-                <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
-                    data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
-                    data-extra-target="extra-{{ src.id }}"
-                    {% if src.id == 'seloger' %}checked{% endif %}>
-                {{ src.name }}
-            </label>
-            {% if src.requires_extra_location %}
-            <div id="extra-{{ src.id }}" class="source-extra-block" style="margin-left: 1.6rem; margin-top: 0.5rem; padding: 0.75rem; border-left: 2px solid var(--border, #444);">
-              <small class="form-help">{{ src.extra_location_help }}</small>
-              <div class="form-group" style="margin-top: 0.5rem;">
-                <label for="search_url">{{ src.extra_location_label }}</label>
-                <input type="url" id="search_url" name="search_url"
-                    placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
-              </div>
-              <details style="margin-top: 0.5rem;">
-                <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
-                <input type="text" name="place_ids" placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
-              </details>
+        <div class="form-section">
+            <div class="form-section-label">Informations générales</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="label">Label</label>
+                    <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
+                </div>
+                <div class="form-group">
+                    <label for="ntfy_topic">Topic ntfy</label>
+                    <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
+                    <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
+                </div>
+                <div class="form-group">
+                    <label for="scrape_interval">Intervalle (min)</label>
+                    <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
+                </div>
             </div>
-            {% endif %}
-          </div>
-          {% endfor %}
-      </div>
-      <small class="form-help">
-          Une même recherche peut être scrapée sur plusieurs sources à la fois.
-      </small>
-  </div>
+        </div>
 
-  <div class="form-group" style="margin-top: 1.25rem;">
-    <label>Filtres (optionnels)</label>
-    <div class="form-grid" style="margin-top: 0.5rem;">
-      <div class="form-group">
-        <label for="price_min">Prix min (€)</label>
-        <input type="number" id="price_min" name="price_min" placeholder="600">
-      </div>
-      <div class="form-group">
-        <label for="price_max">Prix max (€)</label>
-        <input type="number" id="price_max" name="price_max" placeholder="850">
-      </div>
-      <div class="form-group">
-        <label for="space_min">Surface min (m²)</label>
-        <input type="number" id="space_min" name="space_min" placeholder="19">
-      </div>
-      <div class="form-group">
-        <label for="space_max">Surface max (m²)</label>
-        <input type="number" id="space_max" name="space_max" placeholder="80">
-      </div>
-      <div class="form-group">
-        <label for="distribution">Transaction</label>
-        <select id="distribution" name="distribution">
-          <option value="Rent">Location</option>
-          <option value="Sale">Achat</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="estate_type">Type de bien</label>
-        <select id="estate_type" name="estate_type">
-          <option value="Apartment">Appartement</option>
-          <option value="House">Maison</option>
-          <option value="Parking">Parking</option>
-          <option value="Land">Terrain</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="rooms">Pièces</label>
-        <select id="rooms" name="rooms" multiple class="multi-select">
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5+</option>
-        </select>
-        <small class="form-help">Maintenez Ctrl/Cmd pour sélectionner plusieurs</small>
-      </div>
-      <div class="form-group">
-        <label for="bedrooms">Chambres</label>
-        <select id="bedrooms" name="bedrooms" multiple class="multi-select">
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5+</option>
-        </select>
-        <small class="form-help">Maintenez Ctrl/Cmd pour sélectionner plusieurs</small>
-      </div>
-      <div class="form-group">
-        <label for="order">Tri</label>
-        <select id="order" name="order">
-          <option value="">— Par défaut —</option>
-          <option value="DateDesc">Plus récent d'abord</option>
-          <option value="DateAsc">Plus ancien d'abord</option>
-          <option value="PriceAsc">Prix croissant</option>
-          <option value="PriceDesc">Prix décroissant</option>
-          <option value="SurfaceAsc">Surface croissante</option>
-          <option value="SurfaceDesc">Surface décroissante</option>
-        </select>
-      </div>
-    </div>
-  </div>
+        <div class="form-section">
+            <div class="form-section-label">📍 Localisation</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="city">Ville</label>
+                    <input type="text" id="city" name="city" placeholder="Ex: Paris">
+                </div>
+                <div class="form-group">
+                    <label for="postal_code">Code postal</label>
+                    <input type="text" id="postal_code" name="postal_code" placeholder="Ex: 75018">
+                </div>
+            </div>
+            <small class="form-help">
+                Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
+            </small>
+        </div>
 
-        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1.25rem;">Créer la recherche</button>
+        <div class="form-section">
+            <div class="form-section-label">Sources</div>
+            <div class="source-picker">
+                {% for src in sources %}
+                <label class="source-card">
+                    <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
+                        data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
+                        data-extra-target="extra-{{ src.id }}"
+                        {% if src.id == 'seloger' %}checked{% endif %}>
+                    <span class="source-card-body">
+                        <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
+                        <span class="source-card-name">{{ src.name }}</span>
+                        <span class="source-card-check">✓</span>
+                    </span>
+                </label>
+                {% if src.requires_extra_location %}
+                <div id="extra-{{ src.id }}" class="source-extra-panel" style="display: none;">
+                    <small class="form-help">{{ src.extra_location_help }}</small>
+                    <div class="form-group" style="margin-top: 0.5rem;">
+                        <label for="search_url">{{ src.extra_location_label }}</label>
+                        <input type="url" id="search_url" name="search_url"
+                            placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
+                    </div>
+                    <details style="margin-top: 0.5rem;">
+                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
+                        <input type="text" name="place_ids" placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
+                    </details>
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            <small class="form-help">
+                Une même recherche peut être scrapée sur plusieurs sources à la fois.
+            </small>
+        </div>
+
+        <div class="form-section">
+            <div class="form-section-label">Filtres (optionnels)</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="price_min">Prix min (€)</label>
+                    <input type="number" id="price_min" name="price_min" placeholder="600">
+                </div>
+                <div class="form-group">
+                    <label for="price_max">Prix max (€)</label>
+                    <input type="number" id="price_max" name="price_max" placeholder="850">
+                </div>
+                <div class="form-group">
+                    <label for="space_min">Surface min (m²)</label>
+                    <input type="number" id="space_min" name="space_min" placeholder="19">
+                </div>
+                <div class="form-group">
+                    <label for="space_max">Surface max (m²)</label>
+                    <input type="number" id="space_max" name="space_max" placeholder="80">
+                </div>
+                <div class="form-group">
+                    <label for="distribution">Transaction</label>
+                    <select id="distribution" name="distribution">
+                        <option value="Rent">Location</option>
+                        <option value="Sale">Achat</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="estate_type">Type de bien</label>
+                    <select id="estate_type" name="estate_type">
+                        <option value="Apartment">Appartement</option>
+                        <option value="House">Maison</option>
+                        <option value="Parking">Parking</option>
+                        <option value="Land">Terrain</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="order">Tri</label>
+                    <select id="order" name="order">
+                        <option value="">— Par défaut —</option>
+                        <option value="DateDesc">Plus récent d'abord</option>
+                        <option value="DateAsc">Plus ancien d'abord</option>
+                        <option value="PriceAsc">Prix croissant</option>
+                        <option value="PriceDesc">Prix décroissant</option>
+                        <option value="SurfaceAsc">Surface croissante</option>
+                        <option value="SurfaceDesc">Surface décroissante</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                    <label>Pièces</label>
+                    <div class="pill-toggle-group">
+                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="rooms" value="{{ n }}">
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Chambres</label>
+                    <div class="pill-toggle-group">
+                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="bedrooms" value="{{ n }}">
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1.5rem;">Créer la recherche</button>
     </form>
-</div>
+</details>
 
 <!-- Existing searches -->
 {% if searches %}

@@ -57,73 +57,79 @@
 <div class="card">
     <h2>⚙️ Paramètres de la recherche</h2>
     <form method="POST">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="form-grid">
-            <div class="form-group">
-                <label for="label">Label</label>
-                <input type="text" id="label" name="label" value="{{ search.label }}" required>
-            </div>
-            <div class="form-group">
-                <label for="ntfy_topic">Topic ntfy</label>
-                <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ search.ntfy_topic }}" required>
-            </div>
-            <div class="form-group">
-                <label for="scrape_interval">Intervalle (min)</label>
-                <input type="number" id="scrape_interval" name="scrape_interval" value="{{ search.scrape_interval or 5 }}" min="1" max="1440">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="form-section">
+            <div class="form-section-label">Informations générales</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="label">Label</label>
+                    <input type="text" id="label" name="label" value="{{ search.label }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="ntfy_topic">Topic ntfy</label>
+                    <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ search.ntfy_topic }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="scrape_interval">Intervalle (min)</label>
+                    <input type="number" id="scrape_interval" name="scrape_interval" value="{{ search.scrape_interval or 5 }}" min="1" max="1440">
+                </div>
             </div>
         </div>
 
-        <div class="form-group" style="margin-top: 1.25rem;">
-          <label>📍 Localisation</label>
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="city">Ville</label>
-              <input type="text" id="city" name="city"
-                value="{{ search.criteria.city if search.criteria.city else '' }}"
-                placeholder="Ex: Paris">
+        <div class="form-section">
+            <div class="form-section-label">📍 Localisation</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="city">Ville</label>
+                    <input type="text" id="city" name="city"
+                        value="{{ search.criteria.city if search.criteria.city else '' }}"
+                        placeholder="Ex: Paris">
+                </div>
+                <div class="form-group">
+                    <label for="postal_code">Code postal</label>
+                    <input type="text" id="postal_code" name="postal_code"
+                        value="{{ search.criteria.postalCode if search.criteria.postalCode else '' }}"
+                        placeholder="Ex: 75018">
+                </div>
             </div>
-            <div class="form-group">
-              <label for="postal_code">Code postal</label>
-              <input type="text" id="postal_code" name="postal_code"
-                value="{{ search.criteria.postalCode if search.criteria.postalCode else '' }}"
-                placeholder="Ex: 75018">
-            </div>
-          </div>
-          <small class="form-help">
-            Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
-          </small>
+            <small class="form-help">
+                Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
+            </small>
         </div>
 
-        <div class="form-group" style="margin-top: 1.25rem;">
-            <label>Sources</label>
-            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <div class="form-section">
+            <div class="form-section-label">Sources</div>
+            <div class="source-picker">
                 {% for src in sources %}
-                <div>
-                  <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal;">
-                      <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
-                          data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
-                          data-extra-target="extra-{{ src.id }}"
-                          {% if src.id in (search.sources or [search.source]) %}checked{% endif %}>
-                      {{ src.name }}
-                  </label>
-                  {% if src.requires_extra_location %}
-                  <div id="extra-{{ src.id }}" class="source-extra-block" style="margin-left: 1.6rem; margin-top: 0.5rem; padding: 0.75rem; border-left: 2px solid var(--border, #444);">
+                <label class="source-card">
+                    <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
+                        data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
+                        data-extra-target="extra-{{ src.id }}"
+                        {% if src.id in (search.sources or [search.source]) %}checked{% endif %}>
+                    <span class="source-card-body">
+                        <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
+                        <span class="source-card-name">{{ src.name }}</span>
+                        <span class="source-card-check">✓</span>
+                    </span>
+                </label>
+                {% if src.requires_extra_location %}
+                <div id="extra-{{ src.id }}" class="source-extra-panel" style="display: none;">
                     <small class="form-help">{{ src.extra_location_help }}</small>
                     <div class="form-group" style="margin-top: 0.5rem;">
-                      <label for="search_url">{{ src.extra_location_label }}</label>
-                      <input type="url" id="search_url" name="search_url"
-                          placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
-                      <small class="form-help">Laissez vide pour garder le Place ID déjà enregistré.</small>
+                        <label for="search_url">{{ src.extra_location_label }}</label>
+                        <input type="url" id="search_url" name="search_url"
+                            placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
+                        <small class="form-help">Laissez vide pour garder le Place ID déjà enregistré.</small>
                     </div>
                     <details style="margin-top: 0.5rem;">
-                      <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
-                      <input type="text" name="place_ids"
-                        value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
-                        placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
+                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
+                        <input type="text" name="place_ids"
+                            value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
+                            placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
                     </details>
-                  </div>
-                  {% endif %}
                 </div>
+                {% endif %}
                 {% endfor %}
             </div>
             <small class="form-help">
@@ -131,85 +137,89 @@
             </small>
         </div>
 
-  <div class="form-group" style="margin-top: 1.25rem;">
-    <label>Filtres (optionnels)</label>
-    <div class="form-grid" style="margin-top: 0.5rem;">
-      <div class="form-group">
-        <label for="price_min">Prix min (€)</label>
-        <input type="number" id="price_min" name="price_min"
-          value="{{ search.criteria.priceMin if search.criteria.priceMin else '' }}"
-          placeholder="600">
-      </div>
-      <div class="form-group">
-        <label for="price_max">Prix max (€)</label>
-        <input type="number" id="price_max" name="price_max"
-          value="{{ search.criteria.priceMax if search.criteria.priceMax else '' }}"
-          placeholder="850">
-      </div>
-      <div class="form-group">
-        <label for="space_min">Surface min (m²)</label>
-        <input type="number" id="space_min" name="space_min"
-          value="{{ search.criteria.spaceMin if search.criteria.spaceMin else '' }}"
-          placeholder="19">
-      </div>
-      <div class="form-group">
-        <label for="space_max">Surface max (m²)</label>
-        <input type="number" id="space_max" name="space_max"
-          value="{{ search.criteria.spaceMax if search.criteria.spaceMax else '' }}"
-          placeholder="80">
-      </div>
-      <div class="form-group">
-        <label for="distribution">Type de transaction</label>
-        <select id="distribution" name="distribution">
-          <option value="Rent" {% if search.criteria.distributionTypes and 'Rent' in search.criteria.distributionTypes %}selected{% endif %}>Location</option>
-          <option value="Sale" {% if search.criteria.distributionTypes and 'Sale' in search.criteria.distributionTypes %}selected{% endif %}>Achat</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="estate_type">Type de bien</label>
-        <select id="estate_type" name="estate_type">
-          <option value="Apartment" {% if search.criteria.estateTypes and 'Apartment' in search.criteria.estateTypes %}selected{% endif %}>Appartement</option>
-          <option value="House" {% if search.criteria.estateTypes and 'House' in search.criteria.estateTypes %}selected{% endif %}>Maison</option>
-          <option value="Parking" {% if search.criteria.estateTypes and 'Parking' in search.criteria.estateTypes %}selected{% endif %}>Parking</option>
-          <option value="Land" {% if search.criteria.estateTypes and 'Land' in search.criteria.estateTypes %}selected{% endif %}>Terrain</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="rooms">Pièces</label>
-        <select id="rooms" name="rooms" multiple class="multi-select">
-          <option value="1" {% if search.criteria.rooms and '1' in search.criteria.rooms %}selected{% endif %}>1</option>
-          <option value="2" {% if search.criteria.rooms and '2' in search.criteria.rooms %}selected{% endif %}>2</option>
-          <option value="3" {% if search.criteria.rooms and '3' in search.criteria.rooms %}selected{% endif %}>3</option>
-          <option value="4" {% if search.criteria.rooms and '4' in search.criteria.rooms %}selected{% endif %}>4</option>
-          <option value="5" {% if search.criteria.rooms and '5' in search.criteria.rooms %}selected{% endif %}>5+</option>
-        </select>
-        <small class="form-help">Maintenez Ctrl/Cmd pour sélectionner plusieurs</small>
-      </div>
-      <div class="form-group">
-        <label for="bedrooms">Chambres</label>
-        <select id="bedrooms" name="bedrooms" multiple class="multi-select">
-          <option value="1" {% if search.criteria.bedrooms and '1' in search.criteria.bedrooms %}selected{% endif %}>1</option>
-          <option value="2" {% if search.criteria.bedrooms and '2' in search.criteria.bedrooms %}selected{% endif %}>2</option>
-          <option value="3" {% if search.criteria.bedrooms and '3' in search.criteria.bedrooms %}selected{% endif %}>3</option>
-          <option value="4" {% if search.criteria.bedrooms and '4' in search.criteria.bedrooms %}selected{% endif %}>4</option>
-          <option value="5" {% if search.criteria.bedrooms and '5' in search.criteria.bedrooms %}selected{% endif %}>5+</option>
-        </select>
-        <small class="form-help">Maintenez Ctrl/Cmd pour sélectionner plusieurs</small>
-      </div>
-      <div class="form-group">
-        <label for="order">Tri</label>
-        <select id="order" name="order">
-          <option value="">— Par défaut —</option>
-          <option value="DateDesc" {% if search.criteria.order == 'DateDesc' %}selected{% endif %}>Plus récent d'abord</option>
-          <option value="DateAsc" {% if search.criteria.order == 'DateAsc' %}selected{% endif %}>Plus ancien d'abord</option>
-          <option value="PriceAsc" {% if search.criteria.order == 'PriceAsc' %}selected{% endif %}>Prix croissant</option>
-          <option value="PriceDesc" {% if search.criteria.order == 'PriceDesc' %}selected{% endif %}>Prix décroissant</option>
-          <option value="SurfaceAsc" {% if search.criteria.order == 'SurfaceAsc' %}selected{% endif %}>Surface croissante</option>
-          <option value="SurfaceDesc" {% if search.criteria.order == 'SurfaceDesc' %}selected{% endif %}>Surface décroissante</option>
-        </select>
-      </div>
-    </div>
-  </div>
+        <div class="form-section">
+            <div class="form-section-label">Filtres (optionnels)</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="price_min">Prix min (€)</label>
+                    <input type="number" id="price_min" name="price_min"
+                        value="{{ search.criteria.priceMin if search.criteria.priceMin else '' }}"
+                        placeholder="600">
+                </div>
+                <div class="form-group">
+                    <label for="price_max">Prix max (€)</label>
+                    <input type="number" id="price_max" name="price_max"
+                        value="{{ search.criteria.priceMax if search.criteria.priceMax else '' }}"
+                        placeholder="850">
+                </div>
+                <div class="form-group">
+                    <label for="space_min">Surface min (m²)</label>
+                    <input type="number" id="space_min" name="space_min"
+                        value="{{ search.criteria.spaceMin if search.criteria.spaceMin else '' }}"
+                        placeholder="19">
+                </div>
+                <div class="form-group">
+                    <label for="space_max">Surface max (m²)</label>
+                    <input type="number" id="space_max" name="space_max"
+                        value="{{ search.criteria.spaceMax if search.criteria.spaceMax else '' }}"
+                        placeholder="80">
+                </div>
+                <div class="form-group">
+                    <label for="distribution">Type de transaction</label>
+                    <select id="distribution" name="distribution">
+                        <option value="Rent" {% if search.criteria.distributionTypes and 'Rent' in search.criteria.distributionTypes %}selected{% endif %}>Location</option>
+                        <option value="Sale" {% if search.criteria.distributionTypes and 'Sale' in search.criteria.distributionTypes %}selected{% endif %}>Achat</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="estate_type">Type de bien</label>
+                    <select id="estate_type" name="estate_type">
+                        <option value="Apartment" {% if search.criteria.estateTypes and 'Apartment' in search.criteria.estateTypes %}selected{% endif %}>Appartement</option>
+                        <option value="House" {% if search.criteria.estateTypes and 'House' in search.criteria.estateTypes %}selected{% endif %}>Maison</option>
+                        <option value="Parking" {% if search.criteria.estateTypes and 'Parking' in search.criteria.estateTypes %}selected{% endif %}>Parking</option>
+                        <option value="Land" {% if search.criteria.estateTypes and 'Land' in search.criteria.estateTypes %}selected{% endif %}>Terrain</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="order">Tri</label>
+                    <select id="order" name="order">
+                        <option value="">— Par défaut —</option>
+                        <option value="DateDesc" {% if search.criteria.order == 'DateDesc' %}selected{% endif %}>Plus récent d'abord</option>
+                        <option value="DateAsc" {% if search.criteria.order == 'DateAsc' %}selected{% endif %}>Plus ancien d'abord</option>
+                        <option value="PriceAsc" {% if search.criteria.order == 'PriceAsc' %}selected{% endif %}>Prix croissant</option>
+                        <option value="PriceDesc" {% if search.criteria.order == 'PriceDesc' %}selected{% endif %}>Prix décroissant</option>
+                        <option value="SurfaceAsc" {% if search.criteria.order == 'SurfaceAsc' %}selected{% endif %}>Surface croissante</option>
+                        <option value="SurfaceDesc" {% if search.criteria.order == 'SurfaceDesc' %}selected{% endif %}>Surface décroissante</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                    <label>Pièces</label>
+                    <div class="pill-toggle-group">
+                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="rooms" value="{{ n }}"
+                                {% if search.criteria.rooms and n in search.criteria.rooms %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Chambres</label>
+                    <div class="pill-toggle-group">
+                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="bedrooms" value="{{ n }}"
+                                {% if search.criteria.bedrooms and n in search.criteria.bedrooms %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- Current criteria display -->
         {% if search.criteria %}

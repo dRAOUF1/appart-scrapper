@@ -208,6 +208,24 @@ class TestWebRoutes:
             resp = client.post("/login", data={"username": "conflict"})
             assert resp.status_code == 200
 
+    def test_searches_create_form_reopens_after_validation_error(self):
+        """The create-search form is collapsed by default once searches
+        exist, but a failed validation must reopen it — otherwise the error
+        toast appears with no visible form to act on it."""
+        app = _make_app()
+        app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "u", "api_token": "tok"}
+        app.storage.searches.get_user_searches.return_value = [
+            {"id": 1, "label": "Existing", "sources": ["laforet"], "source": "laforet", "criteria": {}}
+        ]
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["user_id"] = 1
+                sess["username"] = "u"
+                sess["api_token"] = "tok"
+            client.post("/searches", data={"label": "Bad", "ntfy_topic": "test"}, follow_redirects=False)
+            resp = client.get("/searches")
+        assert b'<details class="card create-search-card" open>' in resp.data
+
     def test_logout_clears_session_and_redirects(self):
         app = _make_app()
         with app.test_client() as client:

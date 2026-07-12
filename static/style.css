@@ -629,6 +629,211 @@ code {
 }
 
 /* ============================================================
+   Form Sections — labeled groups within a longer form
+   ============================================================ */
+
+.form-section {
+    margin-top: 1.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--glass-border);
+}
+
+.form-section:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.form-section-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    margin-bottom: 1rem;
+}
+
+/* Collapsible "+ Nouvelle recherche" card, native <details> — no JS needed */
+.create-search-card > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.create-search-card > summary::-webkit-details-marker {
+    display: none;
+}
+
+.create-search-card > summary::after {
+    content: '›';
+    margin-left: auto;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: var(--text-tertiary);
+    transform: rotate(90deg);
+    transition: var(--transition-fast);
+}
+
+.create-search-card[open] > summary::after {
+    transform: rotate(-90deg);
+}
+
+.create-search-card form {
+    margin-top: 1.5rem;
+}
+
+/* ============================================================
+   Source Picker — one glass tile per source, click to toggle.
+   Mirrors the app's own model: each source is its own choice,
+   and some need an extra field the others don't (see .source-extra-panel).
+   ============================================================ */
+
+.source-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.75rem;
+}
+
+.source-card {
+    position: relative;
+    display: block;
+    cursor: pointer;
+}
+
+.source-card input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.source-card-body {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+}
+
+.source-card:hover .source-card-body {
+    border-color: var(--glass-border-hover);
+    background: rgba(0, 0, 0, 0.35);
+}
+
+.source-card input:checked ~ .source-card-body {
+    border-color: var(--accent);
+    background: rgba(10, 132, 255, 0.12);
+    box-shadow: inset 0 0 0 1px var(--accent-glow);
+}
+
+.source-card input:focus-visible ~ .source-card-body {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.source-card-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.source-card-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    flex: 1;
+}
+
+.source-card-check {
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    border: 1.5px solid var(--glass-border-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: transparent;
+    flex-shrink: 0;
+    transition: var(--transition-fast);
+}
+
+.source-card input:checked ~ .source-card-body .source-card-check {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.source-extra-panel {
+    grid-column: 1 / -1;
+    padding: 0.9rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--glass-border);
+    border-left: 2px solid var(--accent);
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   Pill Toggle Group — chip-style multi-select (rooms, bedrooms)
+   replacing native <select multiple> (no ctrl/cmd-click needed)
+   ============================================================ */
+
+.pill-toggle-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.pill-toggle {
+    position: relative;
+    cursor: pointer;
+}
+
+.pill-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.pill-toggle-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.9rem;
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: var(--transition-fast);
+}
+
+.pill-toggle:hover .pill-toggle-label {
+    border-color: var(--glass-border-hover);
+    color: var(--text-primary);
+}
+
+.pill-toggle input:checked ~ .pill-toggle-label {
+    background: rgba(10, 132, 255, 0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.pill-toggle input:focus-visible ~ .pill-toggle-label {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ============================================================
    Toast Notifications
    ============================================================ */
 
