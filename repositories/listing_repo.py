@@ -22,46 +22,6 @@ def _clean_string(s: str) -> str:
 class ListingRepository(BaseRepository):
     """Listing CRUD operations."""
 
-    def save_listing(self, listing) -> bool:
-        conn = self._get_conn_for_request()
-        try:
-            with conn.cursor() as cur:
-                def clean(v):
-                    return _clean_string(v) if isinstance(v, str) else v
-
-                cur.execute(
-                    """INSERT INTO listings
-                       (listing_id, url, title, price, surface, rooms,
-                        location, image_url, description, agency, source,
-                        legacy_id, price_value, price_details, city, district,
-                        zip_code, property_type, is_private, phone,
-                        epc, ges, is_new, is_exclusive, has_3d_visit,
-                        creation_date, update_date, headline, photos)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                               %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                               %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (
-                        listing.listing_id, listing.url, clean(listing.title),
-                        clean(listing.price), listing.surface, listing.rooms,
-                        clean(listing.location), clean(listing.image_url),
-                        clean(listing.description), clean(listing.agency), listing.source,
-                        listing.legacy_id, listing.price_value, clean(listing.price_details),
-                        clean(listing.city), clean(listing.district), listing.zip_code,
-                        clean(listing.property_type), listing.is_private, clean(listing.phone),
-                        listing.epc, listing.ges, listing.is_new,
-                        listing.is_exclusive, listing.has_3d_visit,
-                        listing.creation_date, listing.update_date,
-                        clean(listing.headline), clean(listing.photos),
-                    ),
-                )
-                conn.commit()
-                return True
-        except psycopg2.IntegrityError:
-            conn.rollback()
-            return False
-        finally:
-            self._release_conn(conn)
-
     def link_listing_to_search(self, search_id: int, listing_id: str) -> bool:
         conn = self._get_conn_for_request()
         try:
@@ -84,8 +44,6 @@ class ListingRepository(BaseRepository):
         Returns:
             (new_listings, already_linked)
         """
-        from datetime import datetime, timedelta
-
         if not listings:
             return [], []
 
@@ -118,28 +76,63 @@ class ListingRepository(BaseRepository):
                     ON CONFLICT (listing_id) DO NOTHING
                 """, listing_data, page_size=100)
 
-                link_data = [(search_id, l.listing_id) for l in listings]
-                execute_values(cur, """
-                    INSERT INTO search_listings (search_id, listing_id)
+                # notified=FALSE explicitly on every new link, regardless of the
+                # column's DEFAULT TRUE (which exists only to backfill pre-existing
+                # rows as "already notified" when the column was introduced).
+                link_data = [(search_id, l.listing_id, False) for l in listings]
+                inserted = execute_values(cur, """
+                    INSERT INTO search_listings (search_id, listing_id, notified)
                     VALUES %s
                     ON CONFLICT DO NOTHING
-                """, link_data, page_size=100)
+                    RETURNING listing_id
+                """, link_data, page_size=100, fetch=True)
 
                 conn.commit()
 
-                threshold = datetime.utcnow() - timedelta(seconds=30)
-                cur.execute(
-                    "SELECT listing_id FROM search_listings WHERE search_id = %s AND found_at >= %s",
-                    (search_id, threshold),
-                )
-                linked_ids = {row[0] for row in cur.fetchall()}
-
-            new_for_search = [l for l in listings if l.listing_id in linked_ids]
-            already_linked = [l for l in listings if l.listing_id not in linked_ids]
+            newly_linked_ids = {row[0] for row in inserted}
+            new_for_search = [l for l in listings if l.listing_id in newly_linked_ids]
+            already_linked = [l for l in listings if l.listing_id not in newly_linked_ids]
             return new_for_search, already_linked
         except Exception:
             conn.rollback()
             raise
+        finally:
+            self._release_conn(conn)
+
+    def get_unnotified_listings_for_search(self, search_id: int) -> list:
+        """Listings linked to a search but not yet successfully notified.
+
+        Includes this run's new listings plus any left over from a previous
+        scrape that crashed or failed to deliver the notification, so nothing
+        is silently lost.
+        """
+        from models.listing import Listing
+
+        conn = self._get_conn_for_request()
+        try:
+            with self._dict_cursor(conn) as cur:
+                cur.execute("""
+                    SELECT l.* FROM search_listings sl
+                    JOIN listings l ON l.listing_id = sl.listing_id
+                    WHERE sl.search_id = %s AND sl.notified = FALSE
+                """, (search_id,))
+                return [Listing.from_dict(dict(row)) for row in cur.fetchall()]
+        finally:
+            self._release_conn(conn)
+
+    def mark_listings_notified(self, search_id: int, listing_ids: list[str]) -> None:
+        """Mark listings as successfully notified for this search."""
+        if not listing_ids:
+            return
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE search_listings SET notified = TRUE "
+                    "WHERE search_id = %s AND listing_id = ANY(%s)",
+                    (search_id, listing_ids),
+                )
+                conn.commit()
         finally:
             self._release_conn(conn)
 
@@ -303,8 +296,8 @@ WHERE sl.search_id = %s""",
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM listings WHERE first_seen < NOW() - INTERVAL '%s days'",
-                    (str(days),),
+                    "DELETE FROM listings WHERE first_seen < NOW() - make_interval(days => %s)",
+                    (days,),
                 )
                 conn.commit()
                 deleted = cur.rowcount

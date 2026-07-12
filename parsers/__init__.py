@@ -1,5 +1,5 @@
 """
-parsers — Modular HTML parsers for real estate listing sources.
+parsers — Modular parsers for real estate listing sources.
 
 Each source (SeLoger, BienIci, LeBonCoin, etc.) has its own parser module
 that inherits from BaseParser. Parsers are registered automatically and
@@ -7,7 +7,8 @@ looked up by source slug.
 
 Adding a new source:
     1. Create parsers/my_source.py
-    2. Subclass BaseParser, implement parse(html) -> list[Listing]
+    2. Subclass BaseParser, implement scrape(criteria, use_bff) -> list[Listing]
+       (the only method the pipeline calls — see BaseParser docstring)
     3. Set SOURCE_ID and SOURCE_NAME class attributes
     4. Import the module in this __init__.py
 

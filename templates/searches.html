@@ -11,6 +11,7 @@
 <div class="card">
     <h2>➕ Nouvelle recherche</h2>
     <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="form-grid">
     <div class="form-group">
       <label for="label">Label</label>
@@ -215,6 +216,7 @@
         <!-- Actions -->
         <div class="search-card-actions">
             <form method="POST" action="{{ url_for('web.toggle_search_active_web', search_id=s.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-btn {% if s.is_active %}action-pause{% else %}action-scrape{% endif %}" title="{% if s.is_active %}Désactiver{% else %}Activer{% endif %}">
                     {% if s.is_active %}
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
@@ -231,6 +233,7 @@
             </a>
             <form method="POST" action="{{ url_for('web.scrape_search_web', search_id=s.id) }}"
                 onsubmit="return confirm('Lancer le scraping maintenant ?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-btn action-scrape" title="Scrapper maintenant">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                     <span>Scrapper</span>
@@ -250,6 +253,7 @@
             </a>
             <form method="POST" action="{{ url_for('web.delete_search_web', search_id=s.id) }}"
                 onsubmit="return confirm('Supprimer « {{ s.label }} » ?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-btn action-delete" title="Supprimer">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2 2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     <span>Supprimer</span>

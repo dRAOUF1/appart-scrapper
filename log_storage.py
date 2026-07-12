@@ -126,6 +126,7 @@ def read_entries(search_id: int) -> list[dict]:
                 try:
                     data = json.loads(line)
                 except json.JSONDecodeError:
+                    logger.warning(f"[LogStorage] Ligne corrompue ignorée dans {path}")
                     continue
                 entries.append(_parse_entry(data))
         return entries
@@ -178,7 +179,8 @@ def write_raw_log(search_id: int, log_id: int, raw_logs: str) -> bool:
             with open(path, "w", encoding="utf-8", errors="replace") as f:
                 f.write(raw_logs)
             return True
-        except OSError:
+        except OSError as e:
+            logger.warning(f"[LogStorage] Échec écriture raw log {path}: {e}")
             return False
 
 
@@ -203,17 +205,17 @@ def delete_search_logs(search_id: int) -> None:
             for fname in files:
                 try:
                     os.remove(os.path.join(root, fname))
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"[LogStorage] Échec suppression {os.path.join(root, fname)}: {e}")
             for dname in dirs:
                 try:
                     os.rmdir(os.path.join(root, dname))
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"[LogStorage] Échec suppression dossier {os.path.join(root, dname)}: {e}")
         try:
             os.rmdir(search_dir)
-        except OSError:
-            pass
+        except OSError as e:
+            logger.warning(f"[LogStorage] Échec suppression dossier {search_dir}: {e}")
 
 
 def cleanup_old_logs(retention_days: int = RETENTION_DAYS) -> int:
@@ -246,8 +248,8 @@ def cleanup_old_logs(retention_days: int = RETENTION_DAYS) -> int:
                 try:
                     os.remove(get_raw_path(search_id, log_id))
                     deleted += 1
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.warning(f"[LogStorage] Échec suppression raw log {search_id}/{log_id}: {e}")
             if kept != entries:
                 write_entries(search_id, kept)
     if deleted:

@@ -175,6 +175,7 @@
     🚫 Blacklist agences ({{ search.blacklisted_agencies|length }})
   </summary>
   <form method="POST" action="{{ url_for('web.update_blacklist_mode', search_id=search.id) }}" style="margin-top: 0.75rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-group">
       <label style="font-size: 0.85rem; color: var(--text-secondary);">Mode de blacklist</label>
       <select name="mode" style="width: 100%; padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-primary);">
@@ -185,6 +186,7 @@
     <button type="submit" class="btn btn-ghost btn-sm" style="margin-top: 0.5rem;">Changer le mode</button>
   </form>
   <form method="POST" action="{{ url_for('web.update_blacklist_agencies', search_id=search.id) }}" style="margin-top: 0.75rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="agency-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 0.75rem;">
       {% for agency in available_agencies %}
       <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: var(--radius-sm); transition: var(--transition-fast);">

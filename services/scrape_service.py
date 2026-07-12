@@ -3,41 +3,44 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from flask import Flask
-
 
 class ScrapeService:
-    """Execute scraping for a search: fetch, save, notify, log."""
+    """Execute scraping for a search: fetch, save, notify, log.
 
-    def __init__(self, app: Flask):
-        self.app = app
+    Depends only on storage/notifier (not on Flask) so it can run on a
+    background thread and be tested without spinning up an app.
+    """
+
+    def __init__(self, storage, notifier):
+        self.storage = storage
+        self.notifier = notifier
 
     def execute(self, search_id: int, user_id: int) -> int:
         """Execute a scrape for a given search. Returns new listing count."""
         import datetime
         from log_manager import SearchLogManager
 
+        storage = self.storage
+        notifier = self.notifier
+
         started_at = datetime.datetime.utcnow()
         log_mgr = SearchLogManager(search_id)
         log_mgr.start()
 
         try:
-            with self.app.app_context():
-                storage = self.app.storage
-                notifier = self.app.notifier
+            search = storage.searches.get_search(search_id)
+            if not search or search["user_id"] != user_id:
+                return 0
 
-                search = storage.searches.get_search(search_id)
-                if not search or search["user_id"] != user_id:
-                    return 0
-
-                storage.searches.update_last_scraped(search_id)
-
-                result = self._do_scrape(search, search_id, storage, notifier, started_at, log_mgr)
+            result = self._do_scrape(search, search_id, storage, notifier, started_at, log_mgr)
+            # Marqué seulement si le scrape est allé à son terme (succès ou
+            # échec géré) : si une exception inattendue interrompt le
+            # scrape, on veut le retenter au prochain cycle plutôt que
+            # d'attendre l'intervalle complet.
+            storage.searches.update_last_scraped(search_id)
 
             log_mgr.cleanup_old_logs()
             return result
@@ -45,13 +48,11 @@ class ScrapeService:
         except Exception as e:
             logger.exception(f"[search:{search_id}] Exception dans execute: {e}")
             try:
-                with self.app.app_context():
-                    storage = self.app.storage
-                    storage.scrape_logs.create_scrape_log(
-                        search_id, "error",
-                        error_message=f"Exception: {e}",
-                        started_at=started_at,
-                    )
+                storage.scrape_logs.create_scrape_log(
+                    search_id, "error",
+                    error_message=f"Exception: {e}",
+                    started_at=started_at,
+                )
             except Exception as log_err:
                 logger.error(f"[search:{search_id}] Failed to log exception: {log_err}")
             log_mgr.cleanup_old_logs()
@@ -111,14 +112,31 @@ class ScrapeService:
         needs_filter = blacklist_mode == "exclude" and blacklisted_agencies
         skip_notify_agencies = set(blacklisted_agencies) if blacklist_mode == "no_notify" else set()
 
-        for listing in new_listings:
+        # Notifie les annonces liées mais pas encore notifiées avec succès :
+        # celles de ce scrape ET celles restées en attente d'un scrape
+        # précédent qui a planté ou dont l'envoi ntfy avait échoué. Marquées
+        # notifiées seulement après confirmation d'envoi (pas de perte
+        # silencieuse en cas de crash ou d'échec ntfy).
+        pending = storage.listings.get_unnotified_listings_for_search(search_id)
+        handled_ids = []
+        for listing in pending:
             agency = listing.agency
             if needs_filter and agency in blacklisted_agencies:
+                handled_ids.append(listing.listing_id)
                 continue
             if agency in skip_notify_agencies:
+                handled_ids.append(listing.listing_id)
                 continue
-            notifier.notify_new_listing(topic, listing)
+            if notifier.notify_new_listing(topic, listing):
+                handled_ids.append(listing.listing_id)
+            else:
+                logger.warning(
+                    f"[search:{search_id}] Notification échouée pour {listing.listing_id}, "
+                    "retentera au prochain scrape"
+                )
             time.sleep(0.3)
+
+        storage.listings.mark_listings_notified(search_id, handled_ids)
 
         # Désactivé pour éviter le spam de notifications quand il y a beaucoup de nouvelles annonces
         # if new_listings:

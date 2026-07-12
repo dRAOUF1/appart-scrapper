@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- Application code ----
-COPY main.py config.py notifier.py storage.py log_manager.py log_storage.py log_exporter.py ./
+COPY main.py config.py notifier.py storage.py log_manager.py log_storage.py log_exporter.py scrape_control.py web_utils.py schemas.py ./
 COPY models/ models/
 COPY repositories/ repositories/
 COPY services/ services/
@@ -28,5 +28,12 @@ COPY static/ static/
 # ---- Render uses $PORT (default 10000) ----
 EXPOSE 10000
 
+# ---- Healthcheck ----
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-10000}/health || exit 1
+
 # ---- Run with gunicorn ----
+# --workers doit rester à 1 : le scheduler et la dédup de scrapes en mémoire
+# (_scrape_futures) ne sont pas partagés entre process. Voir scrape_control.py
+# et le verrou consultatif Postgres dans main.py::_try_acquire_scheduler_lock.
 CMD gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 30 --graceful-timeout 10 "main:create_app()"

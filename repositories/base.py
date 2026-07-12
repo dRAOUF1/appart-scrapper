@@ -6,30 +6,48 @@ import json
 import threading
 
 import psycopg2
+import psycopg2.extensions
 import psycopg2.extras
+import psycopg2.pool
 
 
 class BaseRepository:
     """Shared connection management for all repositories.
 
-    Thread-safe: one connection per thread, with Flask request
-    connection sharing via g._db_conn.
+    Connections are borrowed from a process-wide pool (one pool per
+    database_url, shared across all repository instances) instead of opening
+    a new TCP connection per request. Flask requests share one borrowed
+    connection via g._db_conn for the request's lifetime.
     """
+
+    _pools: dict[str, "psycopg2.pool.ThreadedConnectionPool"] = {}
+    _pools_lock = threading.Lock()
 
     def __init__(self, database_url: str):
         self.database_url = database_url
-        self._local = threading.local()
+
+    def _get_pool(self) -> "psycopg2.pool.ThreadedConnectionPool":
+        pool = BaseRepository._pools.get(self.database_url)
+        if pool is None:
+            with BaseRepository._pools_lock:
+                pool = BaseRepository._pools.get(self.database_url)
+                if pool is None:
+                    pool = psycopg2.pool.ThreadedConnectionPool(
+                        1, 20, dsn=self.database_url, connect_timeout=10,
+                    )
+                    BaseRepository._pools[self.database_url] = pool
+        return pool
 
     def _get_conn(self):
-        """Create a new connection (recommended for pgBouncer transaction mode)."""
-        conn = psycopg2.connect(self.database_url, connect_timeout=10)
+        """Borrow a connection from the shared pool."""
+        conn = self._get_pool().getconn()
         cur = conn.cursor()
         cur.execute("SET statement_timeout = '30000'")
         cur.close()
         return conn
 
     def _get_conn_for_request(self):
-        """Return shared Flask request connection or create new one."""
+        """Return shared Flask request connection or borrow a new one."""
         try:
             from flask import g
             if hasattr(g, '_db_conn') and g._db_conn is not None:
@@ -39,7 +57,7 @@ class BaseRepository:
         return self._get_conn()
 
     def _get_ddl_conn(self):
-        """Create a connection WITHOUT statement_timeout for DDL operations."""
+        """Standalone connection outside the pool, for one-off DDL at startup."""
         conn = psycopg2.connect(self.database_url, connect_timeout=30)
         cur = conn.cursor()
         cur.execute("SET lock_timeout = '60000'")
@@ -47,16 +65,38 @@ class BaseRepository:
         return conn
 
     def _release_conn(self, conn):
-        """Only close if NOT the shared Flask request connection."""
+        """Return a borrowed connection to the pool, unless it's still the
+        shared Flask request connection (released at request teardown instead).
+
+        Also clears a failed transaction left behind by a write method that
+        raised before its own commit/rollback (e.g. an uncaught IntegrityError
+        variant). Without this, a connection could be returned to the pool
+        mid-aborted-transaction and poison whichever request borrows it next.
+        """
         try:
             from flask import g
             if hasattr(g, '_db_conn') and g._db_conn is conn:
                 return
         except Exception:
             pass
-        self._close_conn(conn)
+        self.release_to_pool(conn)
+
+    def release_to_pool(self, conn):
+        """Roll back if needed and return conn to the shared pool."""
+        if conn is None:
+            return
+        try:
+            if conn.get_transaction_status() == psycopg2.extensions.TRANSACTION_STATUS_INERROR:
+                conn.rollback()
+        except Exception:
+            pass
+        try:
+            self._get_pool().putconn(conn)
+        except Exception:
+            self._close_conn(conn)
 
     def _close_conn(self, conn):
+        """Hard-close a standalone (non-pooled) connection, e.g. from _get_ddl_conn."""
         if conn is not None:
             try:
                 if not conn.closed:

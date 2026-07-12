@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Blueprint, request, render_template, redirect, url_for, flash, current_app, g, send_file
 
 from routes.auth import require_admin
+from web_utils import to_int
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -127,28 +128,16 @@ def admin_scrape_search(search_id):
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
 
-    if search_id in current_app._scrape_futures:
-        fut = current_app._scrape_futures[search_id]
-        if not fut.done():
-            flash("Scraping déjà en cours", "warning")
-            return redirect(url_for("admin.admin_search_detail", search_id=search_id))
-        else:
-            del current_app._scrape_futures[search_id]
-
-    from services.scrape_service import ScrapeService
-    fut = current_app._scrape_executor.submit(
-        ScrapeService(current_app._get_current_object()).execute,
-        search_id, search["user_id"],
-    )
-    current_app._scrape_futures[search_id] = fut
-    flash("Scraping démarré en arrière-plan !", "success")
+    from scrape_control import submit_scrape
+    ok, msg = submit_scrape(current_app._get_current_object(), search_id, search["user_id"])
+    flash(msg, "success" if ok else "warning")
     return redirect(url_for("admin.admin_search_detail", search_id=search_id))
 
 
 @admin_bp.route("/admin/listings")
 @require_admin
 def admin_listings():
-    page = int(request.args.get("page", 1))
+    page = to_int(request.args.get("page", 1), 1)
     per_page = 30
     offset = (page - 1) * per_page
     search_term = request.args.get("search", "")
@@ -321,7 +310,7 @@ def admin_import_search_logs(search_id: int):
 @admin_bp.route("/admin/logs")
 @require_admin
 def admin_logs():
-    page = int(request.args.get("page", 1))
+    page = to_int(request.args.get("page", 1), 1)
     per_page = 50
     offset = (page - 1) * per_page
     action_filter = request.args.get("action", "")
@@ -340,7 +329,7 @@ def admin_logs():
 @admin_bp.route("/admin/logs/purge", methods=["POST"])
 @require_admin
 def admin_purge_logs():
-    days = int(request.form.get("days", 30))
+    days = to_int(request.form.get("days", 30), 30)
     storage = current_app.storage
     deleted = storage.admin.purge_old_logs(days=days)
     flash(f"{deleted} ancien(s) log(s) supprimé(s)", "success")
@@ -350,7 +339,7 @@ def admin_purge_logs():
 @admin_bp.route("/admin/cleanup", methods=["POST"])
 @require_admin
 def admin_cleanup():
-    days = int(request.form.get("days", 4))
+    days = to_int(request.form.get("days", 4), 4)
     storage = current_app.storage
     deleted = storage.listings.delete_old_listings(days=days)
     storage.admin.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])

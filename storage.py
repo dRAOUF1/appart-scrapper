@@ -13,8 +13,6 @@ Call methods on the relevant repository directly, e.g. storage.searches.get_sear
 
 from __future__ import annotations
 
-import threading
-
 from loguru import logger
 
 from repositories.user_repo import UserRepository
@@ -30,7 +28,6 @@ class Storage:
 
     def __init__(self, database_url: str):
         self.database_url = database_url
-        self._local = threading.local()
         self.users = UserRepository(database_url)
         self.searches = SearchRepository(database_url)
         self.listings = ListingRepository(database_url)
@@ -51,6 +48,9 @@ class Storage:
 
     def _release_conn(self, conn):
         return self.users._release_conn(conn)
+
+    def release_to_pool(self, conn):
+        return self.users.release_to_pool(conn)
 
     def _get_ddl_conn(self):
         return self.users._get_ddl_conn()
@@ -114,6 +114,7 @@ class Storage:
                         criteria        JSONB DEFAULT '{}',
                         scrape_interval INTEGER DEFAULT 5,
                         last_scraped    TIMESTAMP,
+                        is_active       BOOLEAN DEFAULT TRUE,
                         created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -156,22 +157,8 @@ class Storage:
                         search_id   INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
                         listing_id  TEXT NOT NULL REFERENCES listings(listing_id) ON DELETE CASCADE,
                         found_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        notified    BOOLEAN DEFAULT TRUE,
                         PRIMARY KEY (search_id, listing_id)
-                    );
-                """)
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS scrape_logs (
-                        id              SERIAL PRIMARY KEY,
-                        search_id       INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
-                        started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        completed_at    TIMESTAMP,
-                        status          TEXT NOT NULL,
-                        listings_found  INTEGER DEFAULT 0,
-                        new_listings    INTEGER DEFAULT 0,
-                        error_message   TEXT,
-                        details         JSONB DEFAULT '{}',
-                        duration_sec    FLOAT,
-                        raw_logs        TEXT
                     );
                 """)
                 cur.execute("""
@@ -257,18 +244,6 @@ class Storage:
                     CREATE INDEX IF NOT EXISTS idx_admin_logs_action
                         ON admin_logs(action);
                 """)
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
-                        ON scrape_logs(search_id);
-                """)
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
-                        ON scrape_logs(started_at DESC);
-                """)
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_status
-                        ON scrape_logs(status);
-                """)
                 phase_start = _log_phase("indexes")
 
                 cur.execute("""
@@ -304,8 +279,8 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude';
                 """)
                 cur.execute("""
-                    ALTER TABLE scrape_logs
-                        ADD COLUMN IF NOT EXISTS raw_logs TEXT;
+                    ALTER TABLE search_listings
+                        ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE;
                 """)
                 phase_start = _log_phase("alter_other")
 
@@ -314,5 +289,6 @@ class Storage:
             total_elapsed = time.monotonic() - total_start
             logger.info(f"Tables PostgreSQL initialisées en {total_elapsed:.2f}s")
         finally:
-            self._release_conn(conn)
+            # Connexion DDL brute (hors pool) : toujours fermée directement.
+            self._close_conn(conn)
 

@@ -181,8 +181,8 @@ class AdminRepository(BaseRepository):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM admin_logs WHERE created_at < NOW() - INTERVAL '%s days'",
-                    (str(days),),
+                    "DELETE FROM admin_logs WHERE created_at < NOW() - make_interval(days => %s)",
+                    (days,),
                 )
                 conn.commit()
                 deleted = cur.rowcount
@@ -274,18 +274,26 @@ class AdminRepository(BaseRepository):
             self._release_conn(conn)
 
     def execute_query(self, sql: str) -> tuple:
-        """Execute a SQL query. Returns (rows, row_count, error)."""
+        """Execute a read-only SQL query. Returns (rows, row_count, error).
+
+        Runs inside a READ ONLY transaction that is always rolled back, so
+        this endpoint cannot be used to mutate data (INSERT/UPDATE/DELETE/DDL
+        are rejected by Postgres before they can take effect).
+        """
         conn = self._get_conn_for_request()
         try:
+            conn.rollback()
             with self._dict_cursor(conn) as cur:
+                cur.execute("SET TRANSACTION READ ONLY")
                 cur.execute(sql)
-                conn.commit()
                 if cur.description:
                     rows = cur.fetchall()
                     row_count = cur.rowcount
-                    return [dict(r) for r in rows], row_count, None
+                    result = [dict(r) for r in rows], row_count, None
                 else:
-                    return [], cur.rowcount, None
+                    result = [], cur.rowcount, None
+            conn.rollback()
+            return result
         except Exception as e:
             conn.rollback()
             return [], 0, str(e)

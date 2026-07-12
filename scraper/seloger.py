@@ -10,7 +10,7 @@ import json
 import random
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
@@ -77,24 +77,42 @@ _PROXY_SOURCES = [
 ]
 
 
-def _get_free_proxies(count: int = 5000) -> list[str]:
-    """Fetch free HTTP proxies from all public APIs."""
+def _fetch_proxy_source(src: str) -> list[str]:
+    found = []
+    try:
+        r = requests.get(src, timeout=5)
+        if r.status_code == 200:
+            for line in r.text.strip().split("\n"):
+                line = line.strip()
+                if ":" in line and len(line) < 30:
+                    found.append(line)
+    except Exception:
+        pass
+    return found
+
+
+def _get_free_proxies(count: int = 5000, deadline_seconds: float = 20) -> list[str]:
+    """Fetch free HTTP proxies from all public sources in parallel.
+
+    Bounded by deadline_seconds so a handful of slow/dead sources can't
+    stall the whole scrape (previously up to ~200s fetching 42 sources
+    sequentially at a 5s timeout each).
+    """
     global _PROXY_CACHE, _PROXY_CACHE_TIME
     now = time.time()
     if _PROXY_CACHE and now - _PROXY_CACHE_TIME < 180:
         return _PROXY_CACHE
 
     proxies: set[str] = set()
-    for src in _PROXY_SOURCES:
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(_fetch_proxy_source, src): src for src in _PROXY_SOURCES}
         try:
-            r = requests.get(src, timeout=5)
-            if r.status_code == 200:
-                for line in r.text.strip().split("\n"):
-                    line = line.strip()
-                    if ":" in line and len(line) < 30:
-                        proxies.add(line)
-        except Exception:
-            pass
+            for future in as_completed(futures, timeout=deadline_seconds):
+                proxies.update(future.result())
+        except TimeoutError:
+            logger.warning(f"  Délai de {deadline_seconds}s dépassé pour la récupération des proxies, on continue avec {len(proxies)} trouvés")
+            for f in futures:
+                f.cancel()
 
     proxy_list = list(proxies)
     random.shuffle(proxy_list)
@@ -103,11 +121,13 @@ def _get_free_proxies(count: int = 5000) -> list[str]:
     return _PROXY_CACHE
 
 
-def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | None:
+def _try_with_proxies(url: str, max_proxies: int = 50, deadline_seconds: float = 60) -> requests.Response | None:
     """Try fetching URL through free proxies in parallel (10 workers).
 
     Each proxy test runs in its own thread with its own Session.
-    First proxy that succeeds cancels all remaining tests.
+    First proxy that succeeds cancels all remaining tests. Bounded by
+    max_proxies and deadline_seconds so a run of unresponsive/black-holed
+    proxies can't stall the single-worker scrape queue for the whole system.
     """
     proxies = _get_free_proxies()
     logger.info(f"  Testing up to {min(max_proxies, len(proxies))} proxies in parallel (from {len(proxies)} available)...")
@@ -135,14 +155,19 @@ def _try_with_proxies(url: str, max_proxies: int = 100) -> requests.Response | N
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(test_proxy, p): p for p in proxies[:max_proxies]}
-        for future in as_completed(futures):
-            proxy, resp = future.result()
-            if resp is not None:
-                # Cancel remaining tests
-                for f in futures:
-                    f.cancel()
-                logger.info(f"  Proxy {proxy} worked")
-                return resp
+        try:
+            for future in as_completed(futures, timeout=deadline_seconds):
+                proxy, resp = future.result()
+                if resp is not None:
+                    # Cancel remaining tests
+                    for f in futures:
+                        f.cancel()
+                    logger.info(f"  Proxy {proxy} worked")
+                    return resp
+        except TimeoutError:
+            logger.warning(f"  Délai de {deadline_seconds}s dépassé, abandon de la rotation de proxies")
+            for f in futures:
+                f.cancel()
 
     return None
 
@@ -245,6 +270,21 @@ def _split_csv_values(values: list[str]) -> list[str]:
     return result
 
 
+def _post_with_429_retry(session: requests.Session, url: str, payload: dict, max_retries: int = 3, max_wait: float = 30) -> requests.Response:
+    """POST, retrying on 429 and honoring Retry-After (capped at max_wait)."""
+    for attempt in range(max_retries + 1):
+        resp = session.post(url, json=payload, timeout=15)
+        if resp.status_code != 429 or attempt == max_retries:
+            return resp
+        try:
+            wait = min(float(resp.headers.get("Retry-After", 5)), max_wait)
+        except (TypeError, ValueError):
+            wait = 5
+        logger.warning(f"  429 Too Many Requests, attente {wait:.1f}s avant retry ({attempt + 1}/{max_retries})...")
+        time.sleep(wait)
+    return resp
+
+
 def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tuple[list, int]:
     """Récupère TOUS les IDs via l'API BFF."""
     session = requests.Session()
@@ -267,7 +307,7 @@ def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tup
             "paging": {"page": page, "size": page_size},
         }
 
-        resp = session.post(BFF_API, json=payload, timeout=15)
+        resp = _post_with_429_retry(session, BFF_API, payload)
         resp.raise_for_status()
         data = resp.json()
 
@@ -322,7 +362,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             if resp.status_code == 403 or "__UFRN_FETCHER__" not in resp.text:
                 # IP bloquée — essayer avec proxies
                 logger.warning(f"    IP bloquée ou pas de données, tentative avec proxies gratuits...")
-                resp = _try_with_proxies(url, max_proxies=5000)
+                resp = _try_with_proxies(url)
                 if resp is None:
                     logger.warning(f"    Aucun proxy gratuit n'a fonctionné")
                     continue
@@ -438,12 +478,15 @@ def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]
     bff_classifieds = []
     all_ids = []
     total = 0
+    bff_error = None
+    detailed_error = None
 
     if use_bff:
         try:
             all_ids, total, bff_classifieds = get_all_ids(criteria)
             logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces via BFF")
         except Exception as e:
+            bff_error = e
             logger.error(f"[SeLoger] Échec BFF: {e}")
 
     detailed = []
@@ -451,6 +494,7 @@ def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]
         detailed = get_detailed_listings(criteria, order="DateDesc")
         logger.info(f"[SeLoger] {len(detailed)} annonces détaillées via mobile UA")
     except Exception as e:
+        detailed_error = e
         logger.warning(f"[SeLoger] Échec données détaillées: {e}")
 
     if detailed:
@@ -460,6 +504,16 @@ def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]
         logger.info(f"[SeLoger] Fallback: conversion des {len(bff_classifieds)} résultats BFF en listings")
         detailed = _convert_bff_to_listings(bff_classifieds)
         return detailed, all_ids, total
+
+    # Aucun résultat des chemins tentés. Si TOUS les chemins tentés ont
+    # levé une exception, ce n'est pas une recherche légitimement vide —
+    # on le signale à l'appelant au lieu de renvoyer un résultat vide
+    # silencieux (masquerait un blocage anti-bot ou un changement de format).
+    attempted_errors = [detailed_error]
+    if use_bff:
+        attempted_errors.append(bff_error)
+    if all(err is not None for err in attempted_errors):
+        raise detailed_error if detailed_error is not None else bff_error
 
     return [], all_ids, total
 

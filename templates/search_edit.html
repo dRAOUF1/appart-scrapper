@@ -39,6 +39,7 @@
             {% endif %}
         </div>
         <form method="POST" action="{{ url_for('web.toggle_search_active_web', search_id=search.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if search.is_active %}
             <button type="submit" class="btn btn-warning">⏸️ Désactiver</button>
             {% else %}
@@ -52,6 +53,7 @@
 <div class="card">
     <h2>⚙️ Paramètres de la recherche</h2>
     <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-grid">
             <div class="form-group">
                 <label for="label">Label</label>

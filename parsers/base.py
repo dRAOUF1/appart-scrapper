@@ -52,7 +52,8 @@ class BaseParser(ABC):
         1. Hériter de BaseParser
         2. Définir SOURCE_ID (slug unique, ex: 'seloger')
         3. Définir SOURCE_NAME (nom affiché, ex: 'SeLoger')
-        4. Implémenter parse(html) -> list[Listing]
+        4. Implémenter scrape(criteria, use_bff) -> list[Listing] — c'est la
+           seule méthode appelée par le pipeline (ScrapeService).
         5. Décorer la classe avec @ParserRegistry.register
     """
 
@@ -61,23 +62,9 @@ class BaseParser(ABC):
     SOURCE_DESCRIPTION: str = ""
 
     @abstractmethod
-    def parse(self, html: str) -> list[Listing]:
-        """
-        Parse raw HTML content and extract listings.
-
-        Args:
-            html: Raw HTML string from the source website.
-
-        Returns:
-            List of Listing objects extracted from the HTML.
-        """
-        ...
-
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """
         Scrape listings directly from the source using API/HTTP calls.
-
-        Override this method for scrapers that don't need HTML input.
 
         Args:
             criteria: Search criteria dict (placeIds, priceMin, etc.)
@@ -86,7 +73,22 @@ class BaseParser(ABC):
         Returns:
             List of Listing objects.
         """
-        raise NotImplementedError("scrape() not implemented for this source")
+        ...
+
+    def parse(self, html: str) -> list[Listing]:
+        """
+        Parse raw HTML content and extract listings.
+
+        Optional: only override for sources that parse a fetched HTML page
+        directly instead of driving their own scrape() pipeline.
+
+        Args:
+            html: Raw HTML string from the source website.
+
+        Returns:
+            List of Listing objects extracted from the HTML.
+        """
+        raise NotImplementedError("parse() not implemented for this source")
 
     def build_search_url(self, criteria: dict) -> str | None:
         """

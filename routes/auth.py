@@ -49,8 +49,8 @@ def require_admin(f):
         if not user:
             session.clear()
             return redirect(url_for("web.login"))
-        admin_username = os.environ.get("ADMIN_USERNAME", "admin")
-        if user["username"] != admin_username:
+        admin_username = os.environ.get("ADMIN_USERNAME")
+        if not admin_username or user["username"] != admin_username:
             flash("Accès refusé", "error")
             return redirect(url_for("web.dashboard"))
         g.user = user

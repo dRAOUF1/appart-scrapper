@@ -14,6 +14,7 @@ from flask import (
 
 from parsers import list_sources
 from routes.auth import require_login
+from web_utils import to_int
 
 web_bp = Blueprint(
     "web", __name__,
@@ -58,27 +59,15 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
         if bedrooms:
             criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
-        criteria["order"] = "DateDesc"
+        criteria["order"] = order or "DateDesc"
 
     return criteria
 
 
 def _submit_scrape(search_id: int, user_id: int):
     """Submit a scrape job, checking for existing futures."""
-    if search_id in current_app._scrape_futures:
-        fut = current_app._scrape_futures[search_id]
-        if not fut.done():
-            return False, "Scraping déjà en cours pour cette recherche"
-        else:
-            del current_app._scrape_futures[search_id]
-
-    from services.scrape_service import ScrapeService
-    fut = current_app._scrape_executor.submit(
-        ScrapeService(current_app._get_current_object()).execute,
-        search_id, user_id,
-    )
-    current_app._scrape_futures[search_id] = fut
-    return True, "Scraping démarré en arrière-plan"
+    from scrape_control import submit_scrape
+    return submit_scrape(current_app._get_current_object(), search_id, user_id)
 
 
 @web_bp.route("/")
@@ -141,7 +130,7 @@ def searches():
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
         source = request.form.get("source", "seloger").strip()
-        scrape_interval = int(request.form.get("scrape_interval", 5))
+        scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
         criteria = _parse_search_criteria_from_form(request.form)
 
@@ -202,7 +191,7 @@ def update_interval_web(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    interval = int(request.form.get("scrape_interval", 5))
+    interval = to_int(request.form.get("scrape_interval", 5), 5)
     if interval < 1:
         interval = 1
     storage.searches.update_scrape_interval(search_id, interval)
@@ -219,7 +208,11 @@ def toggle_search_active_web(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
     new_value = storage.searches.toggle_search_active(search_id)
+    if new_value is not None:
+        flash("Recherche activée" if new_value else "Recherche désactivée", "success")
     return redirect(url_for("web.searches"))
+
+
 @web_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["POST"])
 @require_login
 def update_blacklist_agencies(search_id: int):
@@ -267,7 +260,7 @@ def edit_search(search_id: int):
     if request.method == "POST":
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
-        scrape_interval = int(request.form.get("scrape_interval", 5))
+        scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
         criteria = _parse_search_criteria_from_form(request.form)
 
@@ -299,7 +292,7 @@ def search_logs(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    page = int(request.args.get("page", 1))
+    page = to_int(request.args.get("page", 1), 1)
     per_page = 30
     offset = (page - 1) * per_page
     status_filter = request.args.get("status", "")
@@ -330,7 +323,7 @@ def search_logs_live(search_id: int):
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Not found"}), 404
 
-    offset = int(request.args.get("offset", 0))
+    offset = to_int(request.args.get("offset", 0), 0)
     log_mgr = SearchLogManager(search_id)
     new_text, new_offset = log_mgr.read_tail(offset)
 
@@ -536,7 +529,7 @@ def listings(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    page = int(request.args.get("page", 1))
+    page = to_int(request.args.get("page", 1), 1)
     per_page = 20
     offset = (page - 1) * per_page
 
@@ -591,7 +584,7 @@ def health():
 @web_bp.route("/cleanup", methods=["POST"])
 @require_login
 def cleanup():
-    days = int(request.form.get("days", 4))
+    days = to_int(request.form.get("days", 4), 4)
     deleted = current_app.storage.listings.delete_old_listings(days=days)
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
     return redirect(url_for("web.dashboard"))

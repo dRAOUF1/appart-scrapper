@@ -9,6 +9,8 @@ from flask import Blueprint, request, jsonify, current_app, g, send_file
 
 from parsers import list_sources
 from routes.auth import require_token
+from schemas import validate_criteria, validate_scrape_interval
+from web_utils import to_int
 
 api_bp = Blueprint("api", __name__)
 
@@ -35,7 +37,7 @@ def login_user():
     user = current_app.storage.users.get_user_by_username(username)
     if not user:
         return jsonify({"error": "Utilisateur introuvable"}), 404
-    return jsonify(user), 200
+    return jsonify({"id": user["id"], "username": user["username"]}), 200
 
 
 @api_bp.route("/sources", methods=["GET"])
@@ -51,12 +53,12 @@ def create_search():
     label = data.get("label", "").strip()
     ntfy_topic = data.get("ntfy_topic", "").strip()
     source = data.get("source", "seloger").strip()
-    criteria = data.get("criteria", {})
-    scrape_interval = data.get("scrape_interval", 5)
     if not label or not ntfy_topic:
         return jsonify({"error": "label et ntfy_topic requis"}), 400
     try:
         get_parser(source)
+        criteria = validate_criteria(data.get("criteria"))
+        scrape_interval = validate_scrape_interval(data.get("scrape_interval", 5))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     search = current_app.storage.searches.create_search(
@@ -119,12 +121,19 @@ def delete_search(search_id: int):
 @api_bp.route("/searches/<int:search_id>/criteria", methods=["PUT"])
 @require_token
 def update_criteria(search_id: int):
+    search = current_app.storage.searches.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
     data = request.get_json(silent=True) or {}
-    criteria = data.get("criteria")
-    if criteria is not None:
-        current_app.storage.searches.update_search_criteria(search_id, criteria)
-    if "scrape_interval" in data:
-        current_app.storage.searches.update_scrape_interval(search_id, data["scrape_interval"])
+    try:
+        if data.get("criteria") is not None:
+            criteria = validate_criteria(data["criteria"])
+            current_app.storage.searches.update_search_criteria(search_id, criteria)
+        if "scrape_interval" in data:
+            interval = validate_scrape_interval(data["scrape_interval"])
+            current_app.storage.searches.update_scrape_interval(search_id, interval)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True}), 200
 
 
@@ -178,20 +187,11 @@ def scrape_search(search_id: int):
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
-    if search_id in current_app._scrape_futures:
-        fut = current_app._scrape_futures[search_id]
-        if not fut.done():
-            return jsonify({"error": "Scraping déjà en cours pour cette recherche"}), 409
-        else:
-            del current_app._scrape_futures[search_id]
-
-    from services.scrape_service import ScrapeService
-    fut = current_app._scrape_executor.submit(
-        ScrapeService(current_app._get_current_object()).execute,
-        search_id, g.user["id"],
-    )
-    current_app._scrape_futures[search_id] = fut
-    return jsonify({"message": "Scraping démarré en arrière-plan"}), 202
+    from scrape_control import submit_scrape
+    ok, msg = submit_scrape(current_app._get_current_object(), search_id, g.user["id"])
+    if not ok:
+        return jsonify({"error": msg}), 409
+    return jsonify({"message": msg}), 202
 
 
 def _parse_listing_filters(args: dict) -> dict:
@@ -224,8 +224,8 @@ def get_listings(search_id: int):
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
-    limit = min(int(request.args.get("limit", 50)), 200)
-    offset = int(request.args.get("offset", 0))
+    limit = min(to_int(request.args.get("limit", 50), 50), 200)
+    offset = to_int(request.args.get("offset", 0), 0)
 
     blacklisted = search.get("blacklisted_agencies") or []
     blacklist_mode = search.get("blacklist_mode", "exclude")
@@ -263,7 +263,7 @@ def get_stats():
 @api_bp.route("/cleanup", methods=["POST"])
 @require_token
 def cleanup_listings():
-    days = int(request.args.get("days", 4))
+    days = to_int(request.args.get("days", 4), 4)
     deleted = current_app.storage.listings.delete_old_listings(days=days)
     return jsonify({"deleted": deleted, "days": days}), 200
 

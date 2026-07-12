@@ -67,12 +67,14 @@ class SeLogerParser(BaseParser):
     SOURCE_DESCRIPTION = "SeLoger.com — Scraping via API BFF"
 
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
-        """Execute le scraping avec les criteres donnes."""
-        try:
-            return self._scrape_legacy(criteria, use_bff=use_bff)
-        except Exception as e:
-            logger.error(f"[SeLoger] Scraping echoue: {e}")
-            return []
+        """Execute le scraping avec les criteres donnes.
+
+        Les erreurs réelles (réseau, anti-bot, format inattendu) remontent
+        à l'appelant au lieu d'être masquées en résultat vide, pour que
+        ScrapeService puisse distinguer un échec d'une recherche légitimement
+        sans résultat.
+        """
+        return self._scrape_legacy(criteria, use_bff=use_bff)
 
     def _scrape_legacy(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """Scrape via the legacy BFF + HTML method."""
