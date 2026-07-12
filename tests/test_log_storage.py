@@ -1,8 +1,8 @@
-"""Tests for log_storage.py (file-based scrape log storage)."""
+"""Tests for scrape_logs/storage.py (file-based scrape log storage)."""
 import os
 from datetime import datetime, timedelta
 
-import log_storage
+import scrape_logs.storage as log_storage
 
 
 def _use_tmp_scrape_logs_dir(monkeypatch, tmp_path):

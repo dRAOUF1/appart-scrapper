@@ -1,12 +1,12 @@
-"""Tests for log_manager.py (per-search loguru capture)."""
+"""Tests for scrape_logs/manager.py (per-search loguru capture)."""
 import os
 import time
 from unittest.mock import patch
 
 from loguru import logger
 
-import log_manager
-from log_manager import SearchLogManager
+import scrape_logs.manager as log_manager
+from scrape_logs.manager import SearchLogManager
 
 
 class TestStartStop:
@@ -90,7 +90,7 @@ class TestCleanupOldLogs:
         old_time = time.time() - (log_manager.RETENTION_DAYS + 1) * 86400
         os.utime(old_file, (old_time, old_time))
 
-        with patch("log_manager.cleanup_scrape_logs") as mock_cleanup:
+        with patch("scrape_logs.manager.cleanup_scrape_logs") as mock_cleanup:
             deleted = SearchLogManager.cleanup_old_logs()
 
         assert deleted == 1
@@ -102,7 +102,7 @@ class TestCleanupOldLogs:
         missing_dir = str(tmp_path / "does_not_exist")
         monkeypatch.setattr(log_manager, "LOGS_DIR", missing_dir)
 
-        with patch("log_manager.cleanup_scrape_logs"):
+        with patch("scrape_logs.manager.cleanup_scrape_logs"):
             deleted = SearchLogManager.cleanup_old_logs()
 
         assert deleted == 0

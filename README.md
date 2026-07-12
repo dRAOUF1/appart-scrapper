@@ -86,18 +86,16 @@ La suite est divisée en deux :
 ```
 ├── main.py          # App Flask (API + Frontend) + scheduler
 ├── storage.py       # Connexions PostgreSQL + accès aux repositories
+├── notifier.py      # Notifications ntfy
 ├── repositories/    # CRUD par domaine (users, searches, listings, ...)
 ├── models/          # Dataclasses (Listing, Search, ...)
 ├── parsers/         # Parsers par source (SeLoger, ...), enregistrés via BaseParser
 ├── scraper/         # Scraping SeLoger (API BFF + classified-search)
 ├── services/        # Orchestration du scraping (ScrapeService)
 ├── routes/          # Blueprints Flask (api, web, admin, auth)
-├── scrape_control.py # Soumission thread-safe des jobs de scrape
-├── schemas.py       # Validation Pydantic des payloads (criteria, scrape_interval)
-├── web_utils.py     # Helpers partagés par les routes (to_int, ...)
-├── notifier.py       # Notifications ntfy
-├── config.py        # Chargement config
-├── config.yaml      # Configuration
+├── core/            # Helpers transverses (scrape_control, web_utils, schemas)
+├── scrape_logs/     # Capture, stockage et export/import des logs de scrape
+├── config/          # Chargement config (loader.py + config.yaml)
 ├── templates/       # Pages HTML (Jinja2)
 ├── static/          # CSS
 ├── tests/           # Tests unitaires (+ tests/integration/ pour les tests DB réels)

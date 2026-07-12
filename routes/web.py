@@ -14,7 +14,7 @@ from flask import (
 
 from parsers import list_sources
 from routes.auth import require_login
-from web_utils import to_int
+from core.web_utils import to_int
 
 web_bp = Blueprint(
     "web", __name__,
@@ -66,7 +66,7 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
 
 def _submit_scrape(search_id: int, user_id: int):
     """Submit a scrape job, checking for existing futures."""
-    from scrape_control import submit_scrape
+    from core.scrape_control import submit_scrape
     return submit_scrape(current_app._get_current_object(), search_id, user_id)
 
 
@@ -317,7 +317,7 @@ def search_logs(search_id: int):
 @web_bp.route("/searches/<int:search_id>/logs/live", methods=["GET"])
 @require_login
 def search_logs_live(search_id: int):
-    from log_manager import SearchLogManager
+    from scrape_logs.manager import SearchLogManager
     storage = current_app.storage
     search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
@@ -358,7 +358,7 @@ def search_log_raw(search_id: int, log_id: int):
 @web_bp.route("/searches/<int:search_id>/logs/<int:log_id>/download", methods=["GET"])
 @require_login
 def search_log_download(search_id: int, log_id: int):
-    from log_manager import SearchLogManager
+    from scrape_logs.manager import SearchLogManager
     storage = current_app.storage
     search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:

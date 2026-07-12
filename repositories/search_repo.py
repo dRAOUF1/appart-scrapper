@@ -149,7 +149,7 @@ class SearchRepository(BaseRepository):
             self._release_conn(conn)
 
     def delete_search(self, search_id: int) -> bool:
-        from log_storage import delete_search_logs
+        from scrape_logs.storage import delete_search_logs
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:

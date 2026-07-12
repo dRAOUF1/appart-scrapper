@@ -8,7 +8,7 @@ from pathlib import Path
 from flask import Blueprint, request, render_template, redirect, url_for, flash, current_app, g, send_file
 
 from routes.auth import require_admin
-from web_utils import to_int
+from core.web_utils import to_int
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -128,7 +128,7 @@ def admin_scrape_search(search_id):
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
 
-    from scrape_control import submit_scrape
+    from core.scrape_control import submit_scrape
     ok, msg = submit_scrape(current_app._get_current_object(), search_id, search["user_id"])
     flash(msg, "success" if ok else "warning")
     return redirect(url_for("admin.admin_search_detail", search_id=search_id))

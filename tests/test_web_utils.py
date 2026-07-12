@@ -1,5 +1,5 @@
-"""Tests for web_utils.to_int."""
-from web_utils import to_int
+"""Tests for core.web_utils.to_int."""
+from core.web_utils import to_int
 
 
 class TestToInt:

@@ -1,7 +1,7 @@
-"""Tests for schemas.py payload validation."""
+"""Tests for core/schemas.py payload validation."""
 import pytest
 
-from schemas import validate_criteria, validate_scrape_interval
+from core.schemas import validate_criteria, validate_scrape_interval
 
 
 class TestValidateCriteria:

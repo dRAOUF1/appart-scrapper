@@ -21,7 +21,7 @@ class ScrapeService:
     def execute(self, search_id: int, user_id: int) -> int:
         """Execute a scrape for a given search. Returns new listing count."""
         import datetime
-        from log_manager import SearchLogManager
+        from scrape_logs.manager import SearchLogManager
 
         storage = self.storage
         notifier = self.notifier

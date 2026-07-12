@@ -36,7 +36,7 @@ def _run_job_with_search(search):
     app.storage.users.get_all_users.return_value = [{"id": 1}]
     app.storage.searches.get_user_searches.return_value = [search]
 
-    with patch("scrape_control.submit_scrape") as mock_submit:
+    with patch("core.scrape_control.submit_scrape") as mock_submit:
         job_fn = _get_scheduled_job(app)
         job_fn()
     return mock_submit

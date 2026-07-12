@@ -6,7 +6,7 @@ from flask import Flask
 from flask_wtf import CSRFProtect
 
 from repositories.admin_repo import AdminRepository
-from scrape_control import submit_scrape
+from core.scrape_control import submit_scrape
 
 
 def _make_app():

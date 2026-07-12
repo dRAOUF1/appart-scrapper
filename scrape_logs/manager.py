@@ -13,9 +13,10 @@ import time
 
 from loguru import logger
 
-from log_storage import cleanup_old_logs as cleanup_scrape_logs
+from scrape_logs.storage import cleanup_old_logs as cleanup_scrape_logs
 
-LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGS_DIR = os.path.join(_REPO_ROOT, "logs")
 RETENTION_DAYS = 5
 
 

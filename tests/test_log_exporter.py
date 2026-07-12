@@ -1,4 +1,4 @@
-"""Tests for log_exporter.py (zip export/import of scrape logs)."""
+"""Tests for scrape_logs/exporter.py (zip export/import of scrape logs)."""
 import json
 import os
 import zipfile
@@ -6,8 +6,8 @@ from datetime import datetime
 
 import pytest
 
-import log_exporter
-import log_storage
+import scrape_logs.exporter as log_exporter
+import scrape_logs.storage as log_storage
 
 
 def _patch_dirs(monkeypatch, tmp_path):

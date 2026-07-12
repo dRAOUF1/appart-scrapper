@@ -9,7 +9,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from log_storage import (
+from scrape_logs.storage import (
     EXPORTS_DIR,
     SCRAPE_LOGS_DIR,
     allocate_log_id,

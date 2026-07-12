@@ -177,7 +177,7 @@ def _start_background_tasks(app: Flask):
     from apscheduler.schedulers.background import BackgroundScheduler
     from datetime import datetime, timedelta, timezone
 
-    from scrape_control import submit_scrape
+    from core.scrape_control import submit_scrape
 
     lock_conn = _try_acquire_scheduler_lock(app.storage.database_url)
     if lock_conn is None:

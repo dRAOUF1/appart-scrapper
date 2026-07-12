@@ -29,7 +29,7 @@ class AppConfig(BaseModel):
     log_level: str = "INFO"
 
 
-def load_config(config_path: str | Path = "config.yaml") -> AppConfig:
+def load_config(config_path: str | Path = "config/config.yaml") -> AppConfig:
     """Load and validate configuration from a YAML file.
 
     Environment variable DATABASE_URL overrides config.yaml.

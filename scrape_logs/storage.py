@@ -10,8 +10,8 @@ from typing import Iterable
 
 from loguru import logger
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGS_DIR = os.path.join(_REPO_ROOT, "logs")
 SCRAPE_LOGS_DIR = os.path.join(LOGS_DIR, "scrape_logs")
 EXPORTS_DIR = os.path.join(SCRAPE_LOGS_DIR, "exports")
 COUNTER_FILE = os.path.join(SCRAPE_LOGS_DIR, "counter.json")

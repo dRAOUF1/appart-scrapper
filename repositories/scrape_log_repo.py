@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from repositories.base import BaseRepository
-from log_exporter import export_search_logs, import_search_logs
-from log_storage import (
+from scrape_logs.exporter import export_search_logs, import_search_logs
+from scrape_logs.storage import (
     allocate_log_id,
     append_entry,
     find_entry_any,

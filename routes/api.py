@@ -9,8 +9,8 @@ from flask import Blueprint, request, jsonify, current_app, g, send_file
 
 from parsers import list_sources
 from routes.auth import require_token
-from schemas import validate_criteria, validate_scrape_interval
-from web_utils import to_int
+from core.schemas import validate_criteria, validate_scrape_interval
+from core.web_utils import to_int
 
 api_bp = Blueprint("api", __name__)
 
@@ -187,7 +187,7 @@ def scrape_search(search_id: int):
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
-    from scrape_control import submit_scrape
+    from core.scrape_control import submit_scrape
     ok, msg = submit_scrape(current_app._get_current_object(), search_id, g.user["id"])
     if not ok:
         return jsonify({"error": msg}), 409
