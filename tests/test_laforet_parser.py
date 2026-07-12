@@ -74,13 +74,19 @@ class TestBuildSearchUrl:
                 "city": "Paris", "postalCode": "75018", "estateTypes": ["Parking"],
             })
 
-    def test_appends_filters_as_query_params(self):
+    def test_never_appends_filter_query_params(self):
+        """Verified live: filter[min]/filter[max]/filter[surface] query
+        params silently break Laforet's city scoping (results become a
+        nationwide feed instead of staying scoped to the requested city) —
+        so they must never be sent. Filtering is enforced client-side by
+        _passes_filters() instead."""
         parser = LaforetParser()
         url = parser.build_search_url({
-            "city": "Paris", "postalCode": "75018", "priceMin": 600, "priceMax": 850,
+            "city": "Paris", "postalCode": "75018",
+            "priceMin": 600, "priceMax": 850, "spaceMin": 20, "rooms": ["2"],
         })
-        assert "filter[min]=600" in url
-        assert "filter[max]=850" in url
+        assert url == "https://www.laforet.com/ville/location-appartement-paris-75018"
+        assert "filter" not in url
 
 
 class TestHasValidCriteria:

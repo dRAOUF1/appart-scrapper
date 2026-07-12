@@ -217,6 +217,15 @@ class LaforetParser(BaseParser):
     # BaseParser's default contract, and Laforet needs nothing else.
 
     def build_search_url(self, criteria: dict) -> str | None:
+        """Build the plain, unfiltered city URL.
+
+        Verified live: adding `filter[min]`/`filter[max]`/`filter[surface]`
+        query params doesn't just fail to filter reliably (already worked
+        around by _passes_filters below) — it silently breaks the city
+        scoping itself, returning listings from all over France instead of
+        the requested city. So we never send those params; price/surface/
+        rooms filtering is enforced entirely client-side in scrape().
+        """
         city = criteria.get("city")
         postal_code = criteria.get("postalCode")
         if not city or not postal_code:
@@ -224,23 +233,7 @@ class LaforetParser(BaseParser):
 
         transaction = _transaction_slug(criteria)
         type_slug = _type_slug(criteria)
-        path = f"/ville/{transaction}-{type_slug}-{_slugify(city)}-{postal_code}"
-
-        params = {}
-        if criteria.get("priceMin"):
-            params["filter[min]"] = criteria["priceMin"]
-        if criteria.get("priceMax"):
-            params["filter[max]"] = criteria["priceMax"]
-        if criteria.get("spaceMin"):
-            params["filter[surface]"] = criteria["spaceMin"]
-        rooms = _first(criteria.get("rooms"))
-        if rooms:
-            params["filter[rooms]"] = rooms
-
-        url = f"{BASE_URL}{path}"
-        if params:
-            url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-        return url
+        return f"{BASE_URL}/ville/{transaction}-{type_slug}-{_slugify(city)}-{postal_code}"
 
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """`use_bff` is a SeLoger-specific concept and is ignored here."""
