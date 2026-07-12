@@ -167,6 +167,24 @@ class TestPassesFilters:
         listing = self._listing(price_value=None, surface="", rooms="")
         assert _passes_filters(listing, {"priceMin": 900, "spaceMin": 40, "rooms": ["2"]})
 
+    def test_postal_code_exact_match_required(self):
+        """Laforet's /ville/{postalCode} page isn't scoped to that exact
+        postal code — it backfills from neighboring areas (verified live:
+        for Paris 75014, only 1 of 41 returned listings was actually in
+        75014). A search for one postal code must exclude every other one."""
+        listing = self._listing(zip_code="75014")
+        assert _passes_filters(listing, {"postalCode": "75014"})
+        assert not _passes_filters(listing, {"postalCode": "75015"})
+        assert not _passes_filters(listing, {"postalCode": "94230"})
+
+    def test_no_postal_code_filter_when_not_requested(self):
+        listing = self._listing(zip_code="94230")
+        assert _passes_filters(listing, {})
+
+    def test_missing_zip_code_does_not_exclude(self):
+        listing = self._listing(zip_code="")
+        assert _passes_filters(listing, {"postalCode": "75014"})
+
 
 class TestScrape:
     def test_raises_on_invalid_location(self):
@@ -189,8 +207,10 @@ class TestScrape:
                     mock_session_cls.return_value = mock_session
                     listings = parser.scrape({"city": "Paris", "postalCode": "75018"})
 
-        assert len(listings) == 2
-        assert {l.listing_id for l in listings} == {"lf_52811904", "lf_52805433"}
+        # SAMPLE_PAGE_HTML has one card in 75018 and one in 75015 — the
+        # strict postal-code filter must keep only the requested one.
+        assert len(listings) == 1
+        assert listings[0].listing_id == "lf_52811904"
 
     def test_scrape_raises_clear_error_on_404(self):
         parser = LaforetParser()

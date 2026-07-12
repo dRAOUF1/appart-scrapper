@@ -143,13 +143,23 @@ def _parse_cards(html: str) -> list[dict]:
 
 
 def _passes_filters(listing: Listing, criteria: dict) -> bool:
-    """Enforce price/surface/rooms filters ourselves.
+    """Enforce location + price/surface/rooms filters ourselves.
 
-    Laforet's `filter[...]` query params are sent as a best-effort hint (they
-    do reduce the result set in some cities), but verified against the live
-    site they don't reliably exclude out-of-range listings in every city —
-    so we can't trust them alone and re-check every listing here.
+    Laforet's /ville/{...}-{postalCode} page is NOT scoped to that exact
+    postal code — verified live it backfills with listings from neighboring
+    arrondissements/communes when there aren't enough in the exact one (for
+    Paris 75014, only 1 of 41 returned listings was actually in 75014). So a
+    search for one postal code must not silently include others — every
+    listing's own postal code is checked against the requested one here.
+
+    filter[...] query params are never sent (see build_search_url) since
+    they additionally break this scoping outright, so price/surface/rooms
+    are also re-checked here rather than trusted from the server.
     """
+    postal_code = criteria.get("postalCode")
+    if postal_code and listing.zip_code and listing.zip_code != postal_code:
+        return False
+
     price_min = criteria.get("priceMin")
     price_max = criteria.get("priceMax")
     if listing.price_value is not None:
