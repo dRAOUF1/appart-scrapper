@@ -103,6 +103,40 @@ class TestNotifyNewListing:
         assert headers["Click"] == "https://example.com/sl_1"
         assert headers["Priority"] == "high"
 
+    def test_title_reflects_the_listing_source_not_hardcoded_seloger(self):
+        """The title used to hardcode "Nouvelle annonce SeLoger" regardless
+        of which source actually produced the listing — verified live this
+        showed "SeLoger" for a Laforet-sourced notification."""
+        notifier = Notifier()
+        listing = Listing(listing_id="lf_1", url="https://example.com/lf_1", source="laforet")
+        resp = MagicMock(status_code=200)
+        with patch("notifier.requests.post", return_value=resp) as mock_post:
+            notifier.notify_new_listing("topic", listing)
+
+        # Title header goes through _sanitize_header (HTTP headers are ASCII)
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Title"] == "Nouvelle annonce Lafor?t"
+
+    def test_title_for_seloger_source(self):
+        notifier = Notifier()
+        listing = Listing(listing_id="sl_1", url="https://example.com/sl_1", source="seloger")
+        resp = MagicMock(status_code=200)
+        with patch("notifier.requests.post", return_value=resp) as mock_post:
+            notifier.notify_new_listing("topic", listing)
+
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Title"] == "Nouvelle annonce SeLoger"
+
+    def test_title_falls_back_to_raw_source_for_unknown_source(self):
+        notifier = Notifier()
+        listing = Listing(listing_id="x_1", url="https://example.com/x_1", source="futuresource")
+        resp = MagicMock(status_code=200)
+        with patch("notifier.requests.post", return_value=resp) as mock_post:
+            notifier.notify_new_listing("topic", listing)
+
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Title"] == "Nouvelle annonce futuresource"
+
 
 class TestNotifySummary:
     def test_no_op_when_no_new_listings(self):
