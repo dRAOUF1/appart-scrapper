@@ -98,6 +98,55 @@ def test_index_on_searches_user_active_exists(storage):
     assert row is not None
 
 
+def test_searches_table_has_sources_column(storage):
+    conn = storage._get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'searches' AND column_name = 'sources'
+            """)
+            row = cur.fetchone()
+    finally:
+        storage._release_conn(conn)
+
+    assert row is not None
+
+
+def test_run_migrations_backfills_sources_from_source_on_existing_rows(storage):
+    """A search created before multi-source support only has `source` set —
+    the migration must backfill `sources` from it so the scrape pipeline
+    (which reads `sources`) still picks it up."""
+    conn = storage._get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (username, api_token) VALUES ('sources_backfill_user', 'tok_sources_backfill') RETURNING id"
+            )
+            user_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO searches (user_id, label, ntfy_topic, source, sources) VALUES (%s, 'test', 'topic', 'seloger', NULL) RETURNING id",
+                (user_id,),
+            )
+            search_id = cur.fetchone()[0]
+        conn.commit()
+    finally:
+        storage._release_conn(conn)
+
+    Storage.run_migrations(storage.database_url)
+
+    conn = storage._get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT sources FROM searches WHERE id = %s", (search_id,))
+            row = cur.fetchone()
+    finally:
+        storage._release_conn(conn)
+
+    assert row is not None
+    assert row[0] == ["seloger"]
+
+
 def test_run_migrations_adds_missing_notified_column_to_existing_table(storage):
     """Recreates the exact bug hit in production: an existing database
     predating the `notified` column. Storage.run_migrations() must add it

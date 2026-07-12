@@ -23,26 +23,33 @@
       <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
     </div>
     <div class="form-group">
-      <label for="source">Source</label>
-      <select id="source" name="source">
-        {% for src in sources %}
-        <option value="{{ src.id }}" {% if src.id == 'seloger' %}selected{% endif %}>{{ src.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="form-group">
       <label for="scrape_interval">Intervalle (min)</label>
       <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
     </div>
   </div>
 
+  <div class="form-group" style="margin-top: 1rem;">
+      <label>Sources</label>
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+          {% for src in sources %}
+          <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal;">
+              <input type="checkbox" name="sources" value="{{ src.id }}" {% if src.id == 'seloger' %}checked{% endif %}>
+              {{ src.name }}
+          </label>
+          {% endfor %}
+      </div>
+      <small class="form-help">
+          Une même recherche peut être scrapée sur plusieurs sources à la fois.
+      </small>
+  </div>
+
         <div class="form-group" style="margin-top: 1rem;">
-            <label for="search_url">URL de recherche SeLoger <span style="color: var(--red)">*</span></label>
+            <label for="search_url">URL de recherche SeLoger (optionnel)</label>
             <input type="url" id="search_url" name="search_url"
-                placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096&priceMin=600&priceMax=850"
-                required>
+                placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096&priceMin=600&priceMax=850">
             <small class="form-help">
-                Allez sur <a href="https://www.seloger.com" target="_blank">SeLoger</a>, faites votre recherche, copiez l'URL.
+                Allez sur <a href="https://www.seloger.com" target="_blank">SeLoger</a>, faites votre recherche, copiez l'URL —
+                ou remplissez les champs manuels ci-dessous (Ville + Code postal pour Laforet).
             </small>
         </div>
 
@@ -50,8 +57,16 @@
     <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem 0;">⚙️ Ou remplir manuellement</summary>
     <div class="form-grid" style="margin-top: 0.75rem;">
       <div class="form-group">
-        <label for="place_ids">Place IDs</label>
+        <label for="place_ids">Place IDs (SeLoger)</label>
         <input type="text" id="place_ids" name="place_ids" placeholder="Ex: AD08FR31096">
+      </div>
+      <div class="form-group">
+        <label for="city">Ville (Laforet)</label>
+        <input type="text" id="city" name="city" placeholder="Ex: Paris">
+      </div>
+      <div class="form-group">
+        <label for="postal_code">Code postal (Laforet)</label>
+        <input type="text" id="postal_code" name="postal_code" placeholder="Ex: 75018">
       </div>
       <div class="form-group">
         <label for="price_min">Prix min (€)</label>
@@ -138,7 +153,9 @@
             <div class="search-card-title">
                 <h3>{{ s.label }}</h3>
                 <div class="search-card-badges">
-                    <span class="badge badge-source">{{ s.source }}</span>
+                    {% for src in (s.sources or [s.source]) %}
+                    <span class="badge badge-source">{{ src }}</span>
+                    {% endfor %}
                     <span class="badge">{{ s.listing_count }} annonce{{ 's' if s.listing_count != 1 else '' }}</span>
                     <span class="badge badge-accent">⏱ {{ s.scrape_interval or 5 }}min</span>
                     {% if s.is_active %}
@@ -176,6 +193,9 @@
           {% for pid in s.criteria.placeIds %}
           <span class="criteria-tag">📍 {{ pid }}</span>
           {% endfor %}
+          {% endif %}
+          {% if s.criteria.city or s.criteria.postalCode %}
+          <span class="criteria-tag">📍 {{ s.criteria.city or '' }} {{ s.criteria.postalCode or '' }}</span>
           {% endif %}
           {% if s.criteria.priceMin or s.criteria.priceMax %}
           <span class="criteria-tag">💰
@@ -299,29 +319,37 @@ throw new Error('Erreur lors de la récupération de l\'URL');
 }
 
 const data = await response.json();
+const sources = data.sources && data.sources.length ? data.sources : [data];
+
+const sections = sources.map(s => `
+<div style="margin-bottom: 1rem;">
+<h4 style="margin-bottom: 0.4rem;">${escapeHtml(s.source_name || s.source)}</h4>
+${s.url ? `
+<div class="url-preview">${escapeHtml(s.url)}</div>
+<div class="url-actions">
+<a href="${escapeHtml(s.url)}" target="_blank" class="btn btn-primary">
+Ouvrir dans un nouvel onglet ↗
+</a>
+<button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(s.url).replace(/'/g, "\\'")}')">
+Copier l'URL
+</button>
+</div>
+` : `
+<p class="text-muted">URL non disponible pour cette source${s.error ? ' (' + escapeHtml(s.error) + ')' : ''}</p>
+`}
+</div>
+`).join('');
 
 const modal = document.createElement('div');
 modal.className = 'modal';
 modal.innerHTML = `
 <div class="modal-content">
 <div class="modal-header">
-<h3>🔗 URL de recherche - ${data.source_name || data.source}</h3>
+<h3>🔗 URLs de recherche</h3>
 <button class="modal-close" onclick="closeModal(this)">×</button>
 </div>
 <div class="modal-body">
-${data.url ? `
-<div class="url-preview">${escapeHtml(data.url)}</div>
-<div class="url-actions">
-<a href="${escapeHtml(data.url)}" target="_blank" class="btn btn-primary">
-Ouvrir dans un nouvel onglet ↗
-</a>
-<button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(data.url).replace(/'/g, "\\'")}')">
-Copier l'URL
-</button>
-</div>
-` : `
-<p class="text-muted">URL non disponible pour cette source</p>
-`}
+${sections}
 </div>
 </div>
 `;

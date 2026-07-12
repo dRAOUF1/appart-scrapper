@@ -11,14 +11,29 @@ from repositories.base import BaseRepository
 class SearchRepository(BaseRepository):
     """Search CRUD operations."""
 
-    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True) -> dict:
+    @staticmethod
+    def _normalize_sources(d: dict) -> dict:
+        """Rows created before multi-source support have `sources IS NULL`
+        (the DDL backfill covers existing rows, but stay defensive here too)."""
+        if isinstance(d.get("sources"), str):
+            try:
+                d["sources"] = json.loads(d["sources"])
+            except (json.JSONDecodeError, ValueError):
+                d["sources"] = None
+        if not d.get("sources"):
+            d["sources"] = [d.get("source", "seloger")]
+        return d
+
+    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True, sources: list[str] | None = None) -> dict:
         criteria_json = json.dumps(criteria or {})
+        sources = sources or [source]
+        sources_json = json.dumps(sources)
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria, scrape_interval, is_active) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                    (user_id, label, ntfy_topic, source, criteria_json, scrape_interval, is_active),
+                    "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria, scrape_interval, is_active, sources) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (user_id, label, ntfy_topic, source, criteria_json, scrape_interval, is_active, sources_json),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -28,6 +43,7 @@ class SearchRepository(BaseRepository):
                     "label": label,
                     "ntfy_topic": ntfy_topic,
                     "source": source,
+                    "sources": sources,
                     "criteria": criteria or {},
                     "scrape_interval": scrape_interval,
                     "is_active": is_active,
@@ -49,7 +65,7 @@ class SearchRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None) -> bool:
+    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None, sources: list[str] | None = None) -> bool:
         fields = []
         params = []
         if label is not None:
@@ -67,6 +83,11 @@ class SearchRepository(BaseRepository):
         if is_active is not None:
             fields.append("is_active = %s")
             params.append(is_active)
+        if sources is not None:
+            fields.append("sources = %s")
+            params.append(json.dumps(sources))
+            fields.append("source = %s")
+            params.append(sources[0] if sources else "seloger")
         if not fields:
             return False
         params.extend([search_id, user_id])
@@ -113,7 +134,7 @@ class SearchRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
+                    """SELECT s.id, s.label, s.ntfy_topic, s.source, s.sources, s.criteria,
                               s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
                               s.blacklisted_agencies, s.blacklist_mode,
                               (SELECT COUNT(*) FROM search_listings WHERE search_id = s.id) AS listing_count
@@ -126,6 +147,7 @@ class SearchRepository(BaseRepository):
                 for r in cur.fetchall():
                     d = dict(r)
                     self._parse_json_column(d, "criteria")
+                    self._normalize_sources(d)
                     result.append(d)
                 return result
         finally:
@@ -136,7 +158,7 @@ class SearchRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT id, user_id, label, ntfy_topic, source, criteria, scrape_interval, last_scraped, created_at, is_active, blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
+                    "SELECT id, user_id, label, ntfy_topic, source, sources, criteria, scrape_interval, last_scraped, created_at, is_active, blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
                     (search_id,),
                 )
                 row = cur.fetchone()
@@ -144,6 +166,7 @@ class SearchRepository(BaseRepository):
                     return None
                 d = dict(row)
                 self._parse_json_column(d, "criteria")
+                self._normalize_sources(d)
                 return d
         finally:
             self._release_conn(conn)
@@ -177,7 +200,7 @@ class SearchRepository(BaseRepository):
             self._release_conn(conn)
 
     def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
-        query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.criteria,
+        query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.sources, s.criteria,
                           s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
                           u.id AS user_id, u.username,
                           COUNT(sl.listing_id) AS listing_count
@@ -207,6 +230,7 @@ class SearchRepository(BaseRepository):
                 for r in cur.fetchall():
                     d = dict(r)
                     self._parse_json_column(d, "criteria")
+                    self._normalize_sources(d)
                     result.append(d)
                 return result
         finally:
@@ -228,6 +252,7 @@ class SearchRepository(BaseRepository):
                     return None
                 result = dict(search)
                 self._parse_json_column(result, "criteria")
+                self._normalize_sources(result)
 
                 cur.execute(
                     """SELECT l.*, sl.found_at

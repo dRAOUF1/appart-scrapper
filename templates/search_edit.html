@@ -70,6 +70,22 @@
         </div>
 
         <div class="form-group" style="margin-top: 1rem;">
+            <label>Sources</label>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                {% for src in sources %}
+                <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: normal;">
+                    <input type="checkbox" name="sources" value="{{ src.id }}"
+                        {% if src.id in (search.sources or [search.source]) %}checked{% endif %}>
+                    {{ src.name }}
+                </label>
+                {% endfor %}
+            </div>
+            <small class="form-help">
+                Une même recherche peut être scrapée sur plusieurs sources à la fois.
+            </small>
+        </div>
+
+        <div class="form-group" style="margin-top: 1rem;">
             <label for="search_url">URL de recherche SeLoger</label>
             <input type="url" id="search_url" name="search_url"
                 placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
@@ -82,10 +98,22 @@
     <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">⚙️ Critères manuels</summary>
     <div class="form-grid" style="margin-top: 0.75rem;">
       <div class="form-group">
-        <label for="place_ids">Place IDs</label>
+        <label for="place_ids">Place IDs (SeLoger)</label>
         <input type="text" id="place_ids" name="place_ids"
           value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
           placeholder="Ex: AD08FR31096">
+      </div>
+      <div class="form-group">
+        <label for="city">Ville (Laforet)</label>
+        <input type="text" id="city" name="city"
+          value="{{ search.criteria.city if search.criteria.city else '' }}"
+          placeholder="Ex: Paris">
+      </div>
+      <div class="form-group">
+        <label for="postal_code">Code postal (Laforet)</label>
+        <input type="text" id="postal_code" name="postal_code"
+          value="{{ search.criteria.postalCode if search.criteria.postalCode else '' }}"
+          placeholder="Ex: 75018">
       </div>
       <div class="form-group">
         <label for="price_min">Prix min (€)</label>

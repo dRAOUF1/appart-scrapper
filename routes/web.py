@@ -61,7 +61,31 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
         criteria["order"] = order or "DateDesc"
 
+    # Générique (utilisé par Laforet, indépendant de l'URL SeLoger ci-dessus) :
+    # ville + code postal, saisis à part car SeLoger ne peut pas s'en servir
+    # directement (il lui faut un placeId opaque).
+    city = form_data.get("city", "").strip()
+    postal_code = form_data.get("postal_code", "").strip()
+    if city:
+        criteria["city"] = city
+    if postal_code:
+        criteria["postalCode"] = postal_code
+
     return criteria
+
+
+def _sources_have_valid_criteria(sources: list[str], criteria: dict) -> bool:
+    """True if at least one of `sources` can run with `criteria` — each
+    source has its own location encoding (placeIds vs. city/postal code)."""
+    from parsers import get_parser
+    for src in sources:
+        try:
+            parser = get_parser(src)
+        except ValueError:
+            continue
+        if parser.has_valid_criteria(criteria):
+            return True
+    return False
 
 
 def _submit_scrape(search_id: int, user_id: int):
@@ -129,22 +153,23 @@ def searches():
     if request.method == "POST":
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
-        source = request.form.get("source", "seloger").strip()
+        selected_sources = request.form.getlist("sources") or [request.form.get("source", "seloger").strip()]
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
         criteria = _parse_search_criteria_from_form(request.form)
 
-        if not criteria.get("placeIds"):
-            flash("L'URL ne contient pas de lieu valide (locations=...)", "error")
+        if not _sources_have_valid_criteria(selected_sources, criteria):
+            flash("Aucune des sources sélectionnées n'a de lieu valide dans les critères", "error")
             return redirect(url_for("web.searches"))
 
-        if label and ntfy_topic and criteria.get("placeIds"):
+        if label and ntfy_topic:
             current_app.storage.searches.create_search(
-                g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
+                g.user["id"], label, ntfy_topic, selected_sources[0], criteria, scrape_interval,
+                sources=selected_sources,
             )
             flash(f"Recherche « {label} » créée !", "success")
         else:
-            flash("Label, topic ntfy et au moins un lieu requis", "error")
+            flash("Label et topic ntfy requis", "error")
         return redirect(url_for("web.searches"))
 
     all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
@@ -261,23 +286,25 @@ def edit_search(search_id: int):
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
+        selected_sources = request.form.getlist("sources") or search.get("sources") or [search.get("source", "seloger")]
 
         criteria = _parse_search_criteria_from_form(request.form)
 
-        if not criteria.get("placeIds"):
-            flash("L'URL ne contient pas de lieu valide", "error")
+        if not _sources_have_valid_criteria(selected_sources, criteria):
+            flash("Aucune des sources sélectionnées n'a de lieu valide dans les critères", "error")
             return render_template("search_edit.html", search=search, sources=list_sources(), now=datetime.utcnow)
 
-        if label and ntfy_topic and criteria.get("placeIds"):
+        if label and ntfy_topic:
             storage.searches.update_search(
                 search_id, g.user["id"],
                 label=label, ntfy_topic=ntfy_topic,
                 criteria=criteria, scrape_interval=scrape_interval,
+                sources=selected_sources,
             )
             flash("Recherche mise à jour !", "success")
             return redirect(url_for("web.searches"))
         else:
-            flash("Label, topic ntfy et au moins un lieu requis", "error")
+            flash("Label et topic ntfy requis", "error")
 
     stats = storage.scrape_logs.get_scrape_stats(search_id)
     return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)

@@ -53,16 +53,20 @@ def create_search():
     label = data.get("label", "").strip()
     ntfy_topic = data.get("ntfy_topic", "").strip()
     source = data.get("source", "seloger").strip()
+    sources = data.get("sources") or [source]
     if not label or not ntfy_topic:
         return jsonify({"error": "label et ntfy_topic requis"}), 400
+    if not sources:
+        return jsonify({"error": "au moins une source requise"}), 400
     try:
-        get_parser(source)
+        for src in sources:
+            get_parser(src)
         criteria = validate_criteria(data.get("criteria"))
         scrape_interval = validate_scrape_interval(data.get("scrape_interval", 5))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     search = current_app.storage.searches.create_search(
-        g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
+        g.user["id"], label, ntfy_topic, sources[0], criteria, scrape_interval, sources=sources
     )
     return jsonify(search), 201
 
@@ -77,35 +81,38 @@ def list_searches():
 @api_bp.route("/searches/<int:search_id>/urls", methods=["GET"])
 @require_token
 def get_search_urls(search_id: int):
-    """Get reconstructed search URLs for the search's source."""
+    """Get reconstructed search URLs for each of the search's sources."""
     search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
-    source = search.get("source", "seloger")
+    sources = search.get("sources") or [search.get("source", "seloger")]
     criteria = search.get("criteria", {})
 
-    try:
-        from parsers import get_parser
-        parser = get_parser(source)
-        
-        if hasattr(parser, 'build_search_url') and callable(parser.build_search_url):
-            url = parser.build_search_url(criteria)
-            if url:
-                return jsonify({
-                    "source": source,
-                    "url": url,
-                    "source_name": parser.SOURCE_NAME
-                }), 200
-        
-        return jsonify({
+    from parsers import get_parser
+    results = []
+    for source in sources:
+        try:
+            parser = get_parser(source)
+        except ValueError as e:
+            results.append({"source": source, "url": None, "error": str(e)})
+            continue
+        url = parser.build_search_url(criteria)
+        results.append({
             "source": source,
-            "url": None,
+            "url": url,
             "source_name": parser.SOURCE_NAME,
-            "error": "URL reconstruction non disponible pour cette source"
-        }), 200
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+            "error": None if url else "URL reconstruction non disponible pour cette source",
+        })
+
+    # Backward-compatible top-level fields mirror the first source.
+    first = results[0] if results else {}
+    return jsonify({
+        "source": first.get("source"),
+        "url": first.get("url"),
+        "source_name": first.get("source_name"),
+        "sources": results,
+    }), 200
 
 
 @api_bp.route("/searches/<int:search_id>", methods=["DELETE"])

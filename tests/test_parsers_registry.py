@@ -83,6 +83,10 @@ class TestListSources:
         sources = ParserRegistry.list_sources()
         assert any(s["id"] == "seloger" for s in sources)
 
+    def test_laforet_is_registered_by_default(self):
+        sources = ParserRegistry.list_sources()
+        assert any(s["id"] == "laforet" for s in sources)
+
 
 class TestBaseParserDefaults:
     def test_parse_raises_not_implemented_by_default(self):
@@ -110,3 +114,34 @@ class TestBaseParserDefaults:
                 SOURCE_ID = "incomplete"
 
             IncompleteParser()
+
+    def test_has_valid_criteria_default_accepts_any_nonempty_dict(self):
+        class FakeParser(BaseParser):
+            SOURCE_ID = "default_validity"
+
+            def scrape(self, criteria, use_bff=True):
+                return []
+
+        parser = FakeParser()
+        assert parser.has_valid_criteria({"anything": 1}) is True
+        assert parser.has_valid_criteria({}) is False
+
+
+class TestPerSourceHasValidCriteria:
+    """Each source encodes location differently, so validity is delegated
+    per-parser instead of a single hardcoded key (e.g. placeIds)."""
+
+    def test_seloger_requires_place_ids(self):
+        from parsers.seloger import SeLogerParser
+        parser = SeLogerParser()
+        assert parser.has_valid_criteria({"placeIds": ["750113"]}) is True
+        assert parser.has_valid_criteria({"priceMax": 1500}) is False
+        assert parser.has_valid_criteria({}) is False
+
+    def test_laforet_requires_city_and_postal_code(self):
+        from parsers.laforet import LaforetParser
+        parser = LaforetParser()
+        assert parser.has_valid_criteria({"city": "Paris", "postalCode": "75018"}) is True
+        assert parser.has_valid_criteria({"city": "Paris"}) is False
+        assert parser.has_valid_criteria({"postalCode": "75018"}) is False
+        assert parser.has_valid_criteria({}) is False

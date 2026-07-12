@@ -116,3 +116,7 @@ class SeLogerParser(BaseParser):
         """Reconstruct SeLoger search URL from criteria."""
         from scraper.seloger import build_search_url
         return build_search_url(criteria, order="DateDesc")
+
+    def has_valid_criteria(self, criteria: dict) -> bool:
+        """SeLoger requires an opaque placeId (no city/postal-code geocoding)."""
+        return bool(criteria.get("placeIds"))

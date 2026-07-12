@@ -172,6 +172,18 @@ def _try_acquire_scheduler_lock(database_url: str):
         return None
 
 
+def _source_has_valid_criteria(source: str, criteria: dict) -> bool:
+    """Delegate "is this search runnable" to the source's own parser —
+    each source encodes location differently (placeIds vs. city/postal
+    code, ...), so there's no single hardcoded key to check here."""
+    from parsers import get_parser
+    try:
+        parser = get_parser(source)
+    except ValueError:
+        return False
+    return parser.has_valid_criteria(criteria)
+
+
 def _start_background_tasks(app: Flask):
     """Démarre le scheduler APScheduler. Rien de bloquant."""
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -206,7 +218,8 @@ def _start_background_tasks(app: Flask):
                         criteria = s.get("criteria", {})
                         if not criteria or not isinstance(criteria, dict):
                             continue
-                        if not criteria.get("placeIds"):
+                        sources = s.get("sources") or [s.get("source", "seloger")]
+                        if not any(_source_has_valid_criteria(src, criteria) for src in sources):
                             continue
 
                         interval = s.get("scrape_interval", 5)

@@ -93,16 +93,27 @@ class BaseParser(ABC):
     def build_search_url(self, criteria: dict) -> str | None:
         """
         Reconstruct a search URL from criteria.
-        
+
         Override in subclasses for each source.
-        
+
         Args:
             criteria: Search criteria dict (placeIds, priceMin, etc.)
-        
+
         Returns:
             Search URL string or None if not implemented for this source.
         """
         return None
+
+    def has_valid_criteria(self, criteria: dict) -> bool:
+        """
+        Whether `criteria` contains what this source needs to run a search
+        (e.g. a location). Each source encodes location differently (opaque
+        place IDs, city + postal code, ...), so this is deliberately
+        delegated per-parser instead of checking a single hardcoded key.
+
+        Override in subclasses. Default: any non-empty dict is accepted.
+        """
+        return bool(criteria)
 
     def __init_subclass__(cls, **kwargs):
         """Auto-register subclasses that have a SOURCE_ID."""

@@ -292,7 +292,15 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
                         ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
                         ADD COLUMN IF NOT EXISTS blacklisted_agencies TEXT[] DEFAULT '{}',
-                        ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude';
+                        ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude',
+                        ADD COLUMN IF NOT EXISTS sources JSONB DEFAULT NULL;
+                """)
+                # Backfill : une recherche créée avant l'ajout du multi-source
+                # n'a que `source` — on la reflète dans `sources` pour que le
+                # pipeline de scraping (qui lit `sources`) la traite pareil.
+                cur.execute("""
+                    UPDATE searches SET sources = to_jsonb(ARRAY[source])
+                    WHERE sources IS NULL;
                 """)
                 cur.execute("""
                     ALTER TABLE search_listings
