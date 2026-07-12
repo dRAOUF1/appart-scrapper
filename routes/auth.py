@@ -16,7 +16,7 @@ def require_token(f):
         token = request.headers.get("X-API-Token", "")
         if not token:
             return jsonify({"error": "Header X-API-Token manquant"}), 401
-        user = current_app.storage.get_user_by_token(token)
+        user = current_app.storage.users.get_user_by_token(token)
         if not user:
             return jsonify({"error": "Token invalide"}), 401
         g.user = user
@@ -30,7 +30,7 @@ def require_login(f):
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("web.login"))
-        user = current_app.storage.get_user_by_token(session.get("api_token", ""))
+        user = current_app.storage.users.get_user_by_token(session.get("api_token", ""))
         if not user:
             session.clear()
             return redirect(url_for("web.login"))
@@ -45,7 +45,7 @@ def require_admin(f):
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("web.login"))
-        user = current_app.storage.get_user_by_token(session.get("api_token", ""))
+        user = current_app.storage.users.get_user_by_token(session.get("api_token", ""))
         if not user:
             session.clear()
             return redirect(url_for("web.login"))

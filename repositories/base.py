@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 import threading
-from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from loguru import logger
 
 
 class BaseRepository:

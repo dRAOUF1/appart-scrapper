@@ -1,21 +1,19 @@
 """PostgreSQL storage for multi-user listing tracking.
 
-This module provides a backward-compatible facade over the new repository layer.
-All DB operations are delegated to dedicated repositories:
-  - UserRepository
-  - SearchRepository
-  - ListingRepository
-  - ScrapeLogRepository
-  - AdminRepository
-  - SettingsRepository
+Owns the DB connections and schema, and exposes the repositories:
+  - users (UserRepository)
+  - searches (SearchRepository)
+  - listings (ListingRepository)
+  - scrape_logs (ScrapeLogRepository)
+  - admin (AdminRepository)
+  - settings (SettingsRepository)
 
-The Listing class is kept here for backward compatibility with parsers/scraper.
+Call methods on the relevant repository directly, e.g. storage.searches.get_search(id).
 """
 
 from __future__ import annotations
 
 import threading
-from typing import Optional
 
 from loguru import logger
 
@@ -26,16 +24,9 @@ from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.admin_repo import AdminRepository
 from repositories.settings_repo import SettingsRepository
 
-# Re-export Listing for backward compatibility with parsers/scraper
-from storage_legacy import Listing  # noqa: F401 — kept for import compatibility
-
 
 class Storage:
-    """PostgreSQL storage facade — delegates to repositories.
-
-    Maintains 100% backward compatibility with the old monolithic API
-    while the actual work is done by specialized repositories.
-    """
+    """Owns DB connections/schema and gives access to the repositories."""
 
     def __init__(self, database_url: str):
         self.database_url = database_url
@@ -325,192 +316,3 @@ class Storage:
         finally:
             self._release_conn(conn)
 
-    # ------------------------------------------------------------------
-    # Facade methods — delegate to repositories
-    # ------------------------------------------------------------------
-
-    # Users
-    def create_user(self, username: str) -> dict:
-        return self.users.create_user(username)
-
-    def get_user_by_token(self, token: str) -> Optional[dict]:
-        return self.users.get_user_by_token(token)
-
-    def get_user_by_username(self, username: str) -> Optional[dict]:
-        return self.users.get_user_by_username(username)
-
-    def get_all_users(self) -> list[dict]:
-        return self.users.get_all_users()
-
-    def get_user_detail(self, user_id: int) -> Optional[dict]:
-        return self.users.get_user_detail(user_id)
-
-    def delete_user(self, user_id: int) -> bool:
-        return self.users.delete_user(user_id)
-
-    def reset_user_token(self, user_id: int) -> str:
-        return self.users.reset_user_token(user_id)
-
-    def get_user_stats(self, user_id: int) -> dict:
-        return self.users.get_user_stats(user_id)
-
-    def get_dashboard_data(self, user_id: int) -> dict:
-        return self.users.get_dashboard_data(user_id)
-
-    # Searches
-    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True) -> dict:
-        return self.searches.create_search(user_id, label, ntfy_topic, source, criteria, scrape_interval, is_active)
-
-    def update_search_criteria(self, search_id: int, criteria: dict) -> bool:
-        return self.searches.update_search_criteria(search_id, criteria)
-
-    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None) -> bool:
-        return self.searches.update_search(search_id, user_id, label, ntfy_topic, criteria, scrape_interval, is_active)
-
-    def update_scrape_interval(self, search_id: int, interval_minutes: int) -> bool:
-        return self.searches.update_scrape_interval(search_id, interval_minutes)
-
-    def update_last_scraped(self, search_id: int) -> bool:
-        return self.searches.update_last_scraped(search_id)
-
-    def get_user_searches(self, user_id: int) -> list[dict]:
-        return self.searches.get_user_searches(user_id)
-
-    def get_search(self, search_id: int) -> Optional[dict]:
-        return self.searches.get_search(search_id)
-
-    def delete_search(self, search_id: int) -> bool:
-        return self.searches.delete_search(search_id)
-
-    def toggle_search_active(self, search_id: int) -> bool | None:
-        return self.searches.toggle_search_active(search_id)
-
-    def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
-        return self.searches.get_all_searches(user_filter, source_filter)
-
-    def get_search_detail(self, search_id: int) -> Optional[dict]:
-        return self.searches.get_search_detail(search_id)
-
-    # Listings
-    def save_listing(self, listing) -> bool:
-        return self.listings.save_listing(listing)
-
-    def link_listing_to_search(self, search_id: int, listing_id: str) -> bool:
-        return self.listings.link_listing_to_search(search_id, listing_id)
-
-    def save_and_link(self, listings: list, search_id: int) -> tuple:
-        return self.listings.save_and_link(listings, search_id)
-
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0,
-                                blacklisted_agencies: list[str] | None = None,
-                                filters: dict | None = None, sort: str = "found_at_desc") -> list[dict]:
-        return self.listings.get_listings_for_search(search_id, limit, offset, blacklisted_agencies, filters, sort)
-
-    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None,
-                                  filters: dict | None = None) -> int:
-        return self.listings.count_listings_for_search(search_id, blacklisted_agencies, filters)
-
-    def get_filter_options(self, search_id: int) -> dict:
-        return self.listings.get_filter_options(search_id)
-
-    def delete_old_listings(self, days: int = 4) -> int:
-        return self.listings.delete_old_listings(days)
-
-    def delete_listing(self, listing_id: str) -> bool:
-        return self.listings.delete_listing(listing_id)
-
-    def get_orphan_listings_count(self) -> int:
-        return self.listings.get_orphan_listings_count()
-
-    def delete_orphan_listings(self) -> int:
-        return self.listings.delete_orphan_listings()
-
-    def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
-        return self.listings.get_all_listings(limit, offset, search_term, source_filter)
-
-    def count_all_listings(self, search_term="", source_filter="") -> int:
-        return self.listings.count_all_listings(search_term, source_filter)
-
-    def get_listing_detail(self, listing_id: str) -> Optional[dict]:
-        return self.listings.get_listing_detail(listing_id)
-
-    def get_unique_agencies_for_user(self, user_id: int) -> list[str]:
-        return self.listings.get_unique_agencies_for_user(user_id)
-
-    def update_blacklisted_agencies(self, search_id: int, agencies: list[str]) -> bool:
-        return self.searches.update_blacklisted_agencies(search_id, agencies)
-
-    def update_blacklist_mode(self, search_id: int, mode: str) -> bool:
-        return self.searches.update_blacklist_mode(search_id, mode)
-
-    # Scrape Logs
-    def create_scrape_log(self, search_id: int, status: str, listings_found: int = 0, new_listings: int = 0, error_message: str = "", details: dict | None = None, started_at=None) -> int:
-        return self.scrape_logs.create_scrape_log(search_id, status, listings_found, new_listings, error_message, details, started_at)
-
-    def get_scrape_logs(self, search_id: int, limit: int = 50, offset: int = 0, status_filter: str = "") -> list[dict]:
-        return self.scrape_logs.get_scrape_logs(search_id, limit, offset, status_filter)
-
-    def count_scrape_logs(self, search_id: int, status_filter: str = "") -> int:
-        return self.scrape_logs.count_scrape_logs(search_id, status_filter)
-
-    def get_scrape_stats(self, search_id: int) -> dict:
-        return self.scrape_logs.get_scrape_stats(search_id)
-
-    def update_scrape_log_raw(self, log_id: int, raw_logs: str) -> bool:
-        return self.scrape_logs.update_scrape_log_raw(log_id, raw_logs)
-
-    def get_scrape_log_raw(self, log_id: int, user_id: int | None = None) -> dict | None:
-        return self.scrape_logs.get_scrape_log_raw(log_id, user_id)
-
-    def get_latest_scrape_log_id(self, search_id: int) -> int | None:
-        return self.scrape_logs.get_latest_scrape_log_id(search_id)
-
-    def export_scrape_logs(self, search_id: int) -> str:
-        return self.scrape_logs.export_scrape_logs(search_id)
-
-    def import_scrape_logs(self, search_id: int, zip_path: str, allow_override: bool = False, performed_by: str = "") -> dict:
-        return self.scrape_logs.import_scrape_logs(search_id, zip_path, allow_override, performed_by)
-
-    # Settings
-    def get_setting(self, key: str, default: str = "") -> str:
-        return self.settings.get_setting(key, default)
-
-    def set_setting(self, key: str, value: str) -> bool:
-        return self.settings.set_setting(key, value)
-
-    # Admin
-    def get_admin_stats(self) -> dict:
-        return self.admin.get_admin_stats()
-
-    def get_enhanced_admin_stats(self) -> dict:
-        return self.admin.get_enhanced_admin_stats()
-
-    def log_admin_action(self, action: str, details: str = "", performed_by: str = "") -> None:
-        self.admin.log_admin_action(action, details, performed_by)
-
-    def get_admin_logs(self, limit=50, offset=0, action_filter="", date_from="", date_to="") -> list[dict]:
-        return self.admin.get_admin_logs(limit, offset, action_filter, date_from, date_to)
-
-    def count_admin_logs(self, action_filter="", date_from="", date_to="") -> int:
-        return self.admin.count_admin_logs(action_filter, date_from, date_to)
-
-    def purge_old_logs(self, days: int = 30) -> int:
-        return self.admin.purge_old_logs(days)
-
-    def get_db_stats(self) -> dict:
-        return self.admin.get_db_stats()
-
-    def get_table_details(self, table_name: str) -> dict:
-        return self.admin.get_table_details(table_name)
-
-    def execute_query(self, sql: str) -> tuple:
-        return self.admin.execute_query(sql)
-
-    def get_active_connections(self) -> list[dict]:
-        return self.admin.get_active_connections()
-
-    def truncate_table(self, table_name: str) -> bool:
-        return self.admin.truncate_table(table_name)
-
-    def close(self) -> None:
-        pass

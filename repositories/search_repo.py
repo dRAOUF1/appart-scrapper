@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-import psycopg2.extras
-
 from repositories.base import BaseRepository
 
 

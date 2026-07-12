@@ -20,7 +20,7 @@ def create_user():
     if not username:
         return jsonify({"error": "username requis"}), 400
     try:
-        user = current_app.storage.create_user(username)
+        user = current_app.storage.users.create_user(username)
         return jsonify(user), 201
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
@@ -32,7 +32,7 @@ def login_user():
     username = data.get("username", "").strip().lower()
     if not username:
         return jsonify({"error": "username requis"}), 400
-    user = current_app.storage.get_user_by_username(username)
+    user = current_app.storage.users.get_user_by_username(username)
     if not user:
         return jsonify({"error": "Utilisateur introuvable"}), 404
     return jsonify(user), 200
@@ -59,7 +59,7 @@ def create_search():
         get_parser(source)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    search = current_app.storage.create_search(
+    search = current_app.storage.searches.create_search(
         g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
     )
     return jsonify(search), 201
@@ -68,7 +68,7 @@ def create_search():
 @api_bp.route("/searches", methods=["GET"])
 @require_token
 def list_searches():
-    searches = current_app.storage.get_user_searches(g.user["id"])
+    searches = current_app.storage.searches.get_user_searches(g.user["id"])
     return jsonify(searches), 200
 
 
@@ -76,7 +76,7 @@ def list_searches():
 @require_token
 def get_search_urls(search_id: int):
     """Get reconstructed search URLs for the search's source."""
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
@@ -109,10 +109,10 @@ def get_search_urls(search_id: int):
 @api_bp.route("/searches/<int:search_id>", methods=["DELETE"])
 @require_token
 def delete_search(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
-    current_app.storage.delete_search(search_id)
+    current_app.storage.searches.delete_search(search_id)
     return jsonify({"ok": True}), 200
 
 
@@ -122,19 +122,19 @@ def update_criteria(search_id: int):
     data = request.get_json(silent=True) or {}
     criteria = data.get("criteria")
     if criteria is not None:
-        current_app.storage.update_search_criteria(search_id, criteria)
+        current_app.storage.searches.update_search_criteria(search_id, criteria)
     if "scrape_interval" in data:
-        current_app.storage.update_scrape_interval(search_id, data["scrape_interval"])
+        current_app.storage.searches.update_scrape_interval(search_id, data["scrape_interval"])
     return jsonify({"ok": True}), 200
 
 
 @api_bp.route("/searches/<int:search_id>/toggle-active", methods=["POST"])
 @require_token
 def toggle_search_active(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
-    new_value = current_app.storage.toggle_search_active(search_id)
+    new_value = current_app.storage.searches.toggle_search_active(search_id)
     if new_value is None:
         return jsonify({"error": "Recherche introuvable"}), 404
     return jsonify({"ok": True, "is_active": new_value}), 200
@@ -143,7 +143,7 @@ def toggle_search_active(search_id: int):
 @api_bp.route("/searches/<int:search_id>/blacklist-mode", methods=["PUT"])
 @require_token
 def update_blacklist_mode(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
     
@@ -153,28 +153,28 @@ def update_blacklist_mode(search_id: int):
     if mode not in ("exclude", "no_notify"):
         return jsonify({"error": "Mode invalide. Options: exclude, no_notify"}), 400
     
-    current_app.storage.update_blacklist_mode(search_id, mode)
+    current_app.storage.searches.update_blacklist_mode(search_id, mode)
     return jsonify({"ok": True, "blacklist_mode": mode}), 200
 
 
 @api_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["PUT"])
 @require_token
 def update_blacklist_agencies(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
     
     data = request.get_json(silent=True) or {}
     agencies = data.get("agencies", [])
     
-    current_app.storage.update_blacklisted_agencies(search_id, agencies)
+    current_app.storage.searches.update_blacklisted_agencies(search_id, agencies)
     return jsonify({"ok": True, "blacklisted_agencies": agencies}), 200
 
 
 @api_bp.route("/scrape/<int:search_id>", methods=["POST"])
 @require_token
 def scrape_search(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
@@ -220,7 +220,7 @@ def _parse_listing_filters(args: dict) -> dict:
 @require_token
 def get_listings(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
@@ -234,12 +234,12 @@ def get_listings(search_id: int):
     filters = _parse_listing_filters(request.args)
     sort = request.args.get("sort", "found_at_desc")
 
-    listings = storage.get_listings_for_search(
+    listings = storage.listings.get_listings_for_search(
         search_id, limit=limit, offset=offset,
         blacklisted_agencies=agencies_to_filter,
         filters=filters, sort=sort,
     )
-    total = storage.count_listings_for_search(
+    total = storage.listings.count_listings_for_search(
         search_id, blacklisted_agencies=agencies_to_filter,
         filters=filters,
     )
@@ -256,7 +256,7 @@ def get_listings(search_id: int):
 @api_bp.route("/stats", methods=["GET"])
 @require_token
 def get_stats():
-    stats = current_app.storage.get_user_stats(g.user["id"])
+    stats = current_app.storage.users.get_user_stats(g.user["id"])
     return jsonify(stats), 200
 
 
@@ -264,17 +264,17 @@ def get_stats():
 @require_token
 def cleanup_listings():
     days = int(request.args.get("days", 4))
-    deleted = current_app.storage.delete_old_listings(days=days)
+    deleted = current_app.storage.listings.delete_old_listings(days=days)
     return jsonify({"deleted": deleted, "days": days}), 200
 
 
 @api_bp.route("/searches/<int:search_id>/logs/export", methods=["GET"])
 @require_token
 def export_search_logs_api(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
-    zip_path = current_app.storage.export_scrape_logs(search_id)
+    zip_path = current_app.storage.scrape_logs.export_scrape_logs(search_id)
     return send_file(
         zip_path,
         mimetype="application/zip",
@@ -286,7 +286,7 @@ def export_search_logs_api(search_id: int):
 @api_bp.route("/searches/<int:search_id>/logs/import", methods=["POST"])
 @require_token
 def import_search_logs_api(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
 
@@ -304,7 +304,7 @@ def import_search_logs_api(search_id: int):
     tmp_path = Path("/tmp") / f"logs_import_{search_id}_{int(datetime.utcnow().timestamp())}.zip"
     upload.save(tmp_path)
     try:
-        result = current_app.storage.import_scrape_logs(
+        result = current_app.storage.scrape_logs.import_scrape_logs(
             search_id,
             str(tmp_path),
             allow_override=allow_override,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from storage import Listing
+from models.listing import Listing
 
 
 class ParserRegistry:

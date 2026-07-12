@@ -31,11 +31,11 @@ class ScrapeService:
                 storage = self.app.storage
                 notifier = self.app.notifier
 
-                search = storage.get_search(search_id)
+                search = storage.searches.get_search(search_id)
                 if not search or search["user_id"] != user_id:
                     return 0
 
-                storage.update_last_scraped(search_id)
+                storage.searches.update_last_scraped(search_id)
 
                 result = self._do_scrape(search, search_id, storage, notifier, started_at, log_mgr)
 
@@ -47,7 +47,7 @@ class ScrapeService:
             try:
                 with self.app.app_context():
                     storage = self.app.storage
-                    storage.create_scrape_log(
+                    storage.scrape_logs.create_scrape_log(
                         search_id, "error",
                         error_message=f"Exception: {e}",
                         started_at=started_at,
@@ -60,21 +60,21 @@ class ScrapeService:
     def _do_scrape(self, search, search_id, storage, notifier, started_at, log_mgr):
         if not search.get("criteria", {}).get("placeIds"):
             logger.warning(f"[search:{search_id}] Critères vides, skip")
-            storage.create_scrape_log(
+            storage.scrape_logs.create_scrape_log(
                 search_id, "error",
                 error_message="Critères vides ou placeIds manquant",
                 started_at=started_at,
             )
             return 0
 
-        use_bff = storage.get_setting("use_bff_api", "true") == "true"
+        use_bff = storage.settings.get_setting("use_bff_api", "true") == "true"
 
         try:
             from parsers import get_parser
             parser = get_parser(search["source"])
         except ValueError as e:
             logger.error(f"[search:{search_id}] Parser inconnu: {e}")
-            storage.create_scrape_log(
+            storage.scrape_logs.create_scrape_log(
                 search_id, "error",
                 error_message=f"Parser inconnu: {e}",
                 started_at=started_at,
@@ -86,7 +86,7 @@ class ScrapeService:
         except Exception as e:
             err_msg = str(e)
             logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
-            storage.create_scrape_log(
+            storage.scrape_logs.create_scrape_log(
                 search_id, "error",
                 error_message=err_msg,
                 started_at=started_at,
@@ -95,7 +95,7 @@ class ScrapeService:
 
         if not listings:
             logger.info(f"[search:{search_id}] Aucune annonce trouvée")
-            storage.create_scrape_log(
+            storage.scrape_logs.create_scrape_log(
                 search_id, "error",
                 error_message="Aucune annonce trouvée",
                 listings_found=0, new_listings=0,
@@ -103,7 +103,7 @@ class ScrapeService:
             )
             return 0
 
-        new_listings, already = storage.save_and_link(listings, search_id)
+        new_listings, already = storage.listings.save_and_link(listings, search_id)
         topic = search["ntfy_topic"]
         blacklist_mode = search.get("blacklist_mode", "exclude")
         blacklisted_agencies = search.get("blacklisted_agencies", [])
@@ -124,7 +124,7 @@ class ScrapeService:
         # if new_listings:
         #     notifier.notify_summary(topic, len(new_listings), len(listings))
 
-        log_id = storage.create_scrape_log(
+        log_id = storage.scrape_logs.create_scrape_log(
             search_id, "success",
             listings_found=len(listings),
             new_listings=len(new_listings),
@@ -133,7 +133,7 @@ class ScrapeService:
         )
 
         raw_logs = log_mgr.stop()
-        storage.update_scrape_log_raw(log_id, raw_logs)
+        storage.scrape_logs.update_scrape_log_raw(log_id, raw_logs)
 
         logger.info(
             f"[search:{search_id}] Scraped {len(listings)}, "

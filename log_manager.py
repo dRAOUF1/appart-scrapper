@@ -67,11 +67,6 @@ class SearchLogManager:
     def file_exists(self) -> bool:
         return os.path.exists(self.log_file)
 
-    def file_size(self) -> int:
-        if not os.path.exists(self.log_file):
-            return 0
-        return os.path.getsize(self.log_file)
-
     @staticmethod
     def cleanup_old_logs() -> int:
         """Delete log files older than RETENTION_DAYS. Returns count."""

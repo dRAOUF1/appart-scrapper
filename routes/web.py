@@ -96,10 +96,10 @@ def login():
             flash("Nom d'utilisateur requis", "error")
             return render_template("login.html")
 
-        user = current_app.storage.get_user_by_username(username)
+        user = current_app.storage.users.get_user_by_username(username)
         if not user:
             try:
-                user = current_app.storage.create_user(username)
+                user = current_app.storage.users.create_user(username)
                 flash(f"Compte créé ! Votre token API : {user['api_token']}", "success")
             except ValueError:
                 flash("Erreur lors de la création du compte", "error")
@@ -122,7 +122,7 @@ def logout():
 @web_bp.route("/dashboard")
 @require_login
 def dashboard():
-    data = current_app.storage.get_dashboard_data(g.user["id"])
+    data = current_app.storage.users.get_dashboard_data(g.user["id"])
     return render_template(
         "dashboard.html",
         stats=data["stats"],
@@ -150,7 +150,7 @@ def searches():
             return redirect(url_for("web.searches"))
 
         if label and ntfy_topic and criteria.get("placeIds"):
-            current_app.storage.create_search(
+            current_app.storage.searches.create_search(
                 g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
             )
             flash(f"Recherche « {label} » créée !", "success")
@@ -158,7 +158,7 @@ def searches():
             flash("Label, topic ntfy et au moins un lieu requis", "error")
         return redirect(url_for("web.searches"))
 
-    all_searches = current_app.storage.get_user_searches(g.user["id"])
+    all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
     base_url = request.url_root.rstrip("/")
     return render_template(
         "searches.html",
@@ -173,9 +173,9 @@ def searches():
 @web_bp.route("/searches/<int:search_id>/delete", methods=["POST"])
 @require_login
 def delete_search_web(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if search and search["user_id"] == g.user["id"]:
-        current_app.storage.delete_search(search_id)
+        current_app.storage.searches.delete_search(search_id)
         flash("Recherche supprimée", "success")
     return redirect(url_for("web.searches"))
 
@@ -183,7 +183,7 @@ def delete_search_web(search_id: int):
 @web_bp.route("/searches/<int:search_id>/scrape", methods=["POST"])
 @require_login
 def scrape_search_web(search_id: int):
-    search = current_app.storage.get_search(search_id)
+    search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -197,7 +197,7 @@ def scrape_search_web(search_id: int):
 @require_login
 def update_interval_web(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -205,7 +205,7 @@ def update_interval_web(search_id: int):
     interval = int(request.form.get("scrape_interval", 5))
     if interval < 1:
         interval = 1
-    storage.update_scrape_interval(search_id, interval)
+    storage.searches.update_scrape_interval(search_id, interval)
     flash(f"Intervalle mis à jour : {interval} minutes", "success")
     return redirect(url_for("web.searches"))
 
@@ -214,23 +214,23 @@ def update_interval_web(search_id: int):
 @require_login
 def toggle_search_active_web(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
-    new_value = storage.toggle_search_active(search_id)
+    new_value = storage.searches.toggle_search_active(search_id)
     return redirect(url_for("web.searches"))
 @web_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["POST"])
 @require_login
 def update_blacklist_agencies(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
     agencies = request.form.getlist("agencies")
-    storage.update_blacklisted_agencies(search_id, agencies)
+    storage.searches.update_blacklisted_agencies(search_id, agencies)
     flash(f"Blacklist mise à jour : {len(agencies)} agences", "success")
     return redirect(url_for("web.listings", search_id=search_id))
 
@@ -239,7 +239,7 @@ def update_blacklist_agencies(search_id: int):
 @require_login
 def update_blacklist_mode(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -249,7 +249,7 @@ def update_blacklist_mode(search_id: int):
         flash("Mode invalide", "error")
         return redirect(url_for("web.listings", search_id=search_id))
 
-    storage.update_blacklist_mode(search_id, mode)
+    storage.searches.update_blacklist_mode(search_id, mode)
     mode_label = "Exclure complètement" if mode == "exclude" else "Ne pas notifier"
     flash(f"Mode blacklist: {mode_label}", "success")
     return redirect(url_for("web.listings", search_id=search_id))
@@ -259,7 +259,7 @@ def update_blacklist_mode(search_id: int):
 @require_login
 def edit_search(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -276,7 +276,7 @@ def edit_search(search_id: int):
             return render_template("search_edit.html", search=search, sources=list_sources(), now=datetime.utcnow)
 
         if label and ntfy_topic and criteria.get("placeIds"):
-            storage.update_search(
+            storage.searches.update_search(
                 search_id, g.user["id"],
                 label=label, ntfy_topic=ntfy_topic,
                 criteria=criteria, scrape_interval=scrape_interval,
@@ -286,7 +286,7 @@ def edit_search(search_id: int):
         else:
             flash("Label, topic ntfy et au moins un lieu requis", "error")
 
-    stats = storage.get_scrape_stats(search_id)
+    stats = storage.scrape_logs.get_scrape_stats(search_id)
     return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)
 
 
@@ -294,7 +294,7 @@ def edit_search(search_id: int):
 @require_login
 def search_logs(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -304,10 +304,10 @@ def search_logs(search_id: int):
     offset = (page - 1) * per_page
     status_filter = request.args.get("status", "")
 
-    logs = storage.get_scrape_logs(search_id, limit=per_page, offset=offset, status_filter=status_filter)
-    total = storage.count_scrape_logs(search_id, status_filter=status_filter)
+    logs = storage.scrape_logs.get_scrape_logs(search_id, limit=per_page, offset=offset, status_filter=status_filter)
+    total = storage.scrape_logs.count_scrape_logs(search_id, status_filter=status_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
-    stats = storage.get_scrape_stats(search_id)
+    stats = storage.scrape_logs.get_scrape_stats(search_id)
     return render_template(
         "search_logs.html",
         search=search,
@@ -326,7 +326,7 @@ def search_logs(search_id: int):
 def search_logs_live(search_id: int):
     from log_manager import SearchLogManager
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Not found"}), 404
 
@@ -345,12 +345,12 @@ def search_logs_live(search_id: int):
 @require_login
 def search_log_raw(search_id: int, log_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    log_entry = storage.get_scrape_log_raw(log_id, g.user["id"])
+    log_entry = storage.scrape_logs.get_scrape_log_raw(log_id, g.user["id"])
     if not log_entry:
         flash("Log introuvable", "error")
         return redirect(url_for("web.search_logs", search_id=search_id))
@@ -367,11 +367,11 @@ def search_log_raw(search_id: int, log_id: int):
 def search_log_download(search_id: int, log_id: int):
     from log_manager import SearchLogManager
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Not found"}), 404
 
-    log_entry = storage.get_scrape_log_raw(log_id, g.user["id"])
+    log_entry = storage.scrape_logs.get_scrape_log_raw(log_id, g.user["id"])
     if not log_entry:
         return jsonify({"error": "Log not found"}), 404
 
@@ -401,12 +401,12 @@ def search_log_download(search_id: int, log_id: int):
 @require_login
 def search_logs_export(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    zip_path = storage.export_scrape_logs(search_id)
+    zip_path = storage.scrape_logs.export_scrape_logs(search_id)
     return send_file(
         zip_path,
         mimetype="application/zip",
@@ -419,7 +419,7 @@ def search_logs_export(search_id: int):
 @require_login
 def search_logs_import(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -442,7 +442,7 @@ def search_logs_import(search_id: int):
     upload.save(tmp_path)
 
     try:
-        result = storage.import_scrape_logs(
+        result = storage.scrape_logs.import_scrape_logs(
             search_id,
             str(tmp_path),
             allow_override=allow_override,
@@ -531,7 +531,7 @@ def _parse_listing_filters(args: dict) -> dict:
 @require_login
 def listings(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
@@ -550,19 +550,19 @@ def listings(search_id: int):
     filters = _parse_listing_filters(request.args)
     sort = request.args.get("sort", "found_at_desc")
 
-    all_listings = storage.get_listings_for_search(
+    all_listings = storage.listings.get_listings_for_search(
         search_id, limit=per_page, offset=offset,
         blacklisted_agencies=agencies_to_filter,
         filters=filters, sort=sort,
     )
-    total = storage.count_listings_for_search(
+    total = storage.listings.count_listings_for_search(
         search_id, blacklisted_agencies=agencies_to_filter,
         filters=filters,
     )
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    available_agencies = storage.get_unique_agencies_for_user(g.user["id"])
-    filter_options = storage.get_filter_options(search_id)
+    available_agencies = storage.listings.get_unique_agencies_for_user(g.user["id"])
+    filter_options = storage.listings.get_filter_options(search_id)
 
     active_filters = {k: str(v) for k, v in request.args.items() if k != "page" and v}
     query_string = urlencode(active_filters)
@@ -592,6 +592,6 @@ def health():
 @require_login
 def cleanup():
     days = int(request.form.get("days", 4))
-    deleted = current_app.storage.delete_old_listings(days=days)
+    deleted = current_app.storage.listings.delete_old_listings(days=days)
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
     return redirect(url_for("web.dashboard"))

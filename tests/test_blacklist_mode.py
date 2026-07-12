@@ -1,5 +1,4 @@
 """Tests for blacklist mode feature."""
-import pytest
 from unittest.mock import MagicMock
 from services.scrape_service import ScrapeService
 
@@ -10,7 +9,7 @@ class TestBlacklistMode:
     def test_exclude_mode_filters_notifications(self):
         """Mode 'exclude' should skip both results and notifications."""
         mock_app = MagicMock()
-        mock_app.storage.get_search.return_value = {
+        mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
             "criteria": {"placeIds": ["123"]},
@@ -19,7 +18,7 @@ class TestBlacklistMode:
             "blacklisted_agencies": ["Bad Agency"],
             "blacklist_mode": "exclude",
         }
-        mock_app.storage.get_setting.return_value = "true"
+        mock_app.storage.settings.get_setting.return_value = "true"
 
         mock_notifier = MagicMock()
         mock_app.notifier = mock_notifier
@@ -30,7 +29,7 @@ class TestBlacklistMode:
         def mock_save_and_link(listings, search_id):
             return listings, []
 
-        mock_app.storage.save_and_link = mock_save_and_link
+        mock_app.storage.listings.save_and_link = mock_save_and_link
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
@@ -47,7 +46,7 @@ class TestBlacklistMode:
     def test_no_notify_mode_allows_results_but_skips_notifications(self):
         """Mode 'no_notify' should save results but skip notifications."""
         mock_app = MagicMock()
-        mock_app.storage.get_search.return_value = {
+        mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
             "criteria": {"placeIds": ["123"]},
@@ -56,7 +55,7 @@ class TestBlacklistMode:
             "blacklisted_agencies": ["Bad Agency"],
             "blacklist_mode": "no_notify",
         }
-        mock_app.storage.get_setting.return_value = "true"
+        mock_app.storage.settings.get_setting.return_value = "true"
 
         mock_notifier = MagicMock()
         mock_app.notifier = mock_notifier
@@ -67,7 +66,7 @@ class TestBlacklistMode:
         def mock_save_and_link(listings, search_id):
             return listings, []
 
-        mock_app.storage.save_and_link = mock_save_and_link
+        mock_app.storage.listings.save_and_link = mock_save_and_link
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
@@ -84,7 +83,7 @@ class TestBlacklistMode:
     def test_no_notify_mode_allows_non_blacklisted_notifications(self):
         """Mode 'no_notify' should send notifications for non-blacklisted agencies."""
         mock_app = MagicMock()
-        mock_app.storage.get_search.return_value = {
+        mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
             "criteria": {"placeIds": ["123"]},
@@ -93,7 +92,7 @@ class TestBlacklistMode:
             "blacklisted_agencies": ["Bad Agency"],
             "blacklist_mode": "no_notify",
         }
-        mock_app.storage.get_setting.return_value = "true"
+        mock_app.storage.settings.get_setting.return_value = "true"
 
         mock_notifier = MagicMock()
         mock_app.notifier = mock_notifier
@@ -106,7 +105,7 @@ class TestBlacklistMode:
         def mock_save_and_link(listings, search_id):
             return listings, []
 
-        mock_app.storage.save_and_link = mock_save_and_link
+        mock_app.storage.listings.save_and_link = mock_save_and_link
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
@@ -125,7 +124,7 @@ class TestBlacklistMode:
     def test_default_mode_is_exclude(self):
         """Default mode should be 'exclude' when not specified."""
         mock_app = MagicMock()
-        mock_app.storage.get_search.return_value = {
+        mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
             "criteria": {"placeIds": ["123"]},
@@ -133,7 +132,7 @@ class TestBlacklistMode:
             "ntfy_topic": "test-topic",
             "blacklisted_agencies": ["Bad Agency"],
         }
-        mock_app.storage.get_setting.return_value = "true"
+        mock_app.storage.settings.get_setting.return_value = "true"
 
         mock_notifier = MagicMock()
         mock_app.notifier = mock_notifier
@@ -144,7 +143,7 @@ class TestBlacklistMode:
         def mock_save_and_link(listings, search_id):
             return listings, []
 
-        mock_app.storage.save_and_link = mock_save_and_link
+        mock_app.storage.listings.save_and_link = mock_save_and_link
         mock_app.app_context.return_value.__enter__ = MagicMock()
         mock_app.app_context.return_value.__exit__ = MagicMock()
 

@@ -1,5 +1,4 @@
 """Tests for data models."""
-import json
 from datetime import datetime, timedelta
 
 from models.listing import Listing

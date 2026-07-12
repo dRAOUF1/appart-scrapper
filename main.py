@@ -139,10 +139,10 @@ def _start_background_tasks(app: Flask):
     def scheduled_scrape_job():
         try:
             with app.app_context():
-                all_users = app.storage.get_all_users()
+                all_users = app.storage.users.get_all_users()
                 now = datetime.utcnow()
                 for user in all_users:
-                    searches = app.storage.get_user_searches(user["id"])
+                    searches = app.storage.searches.get_user_searches(user["id"])
                     for s in searches:
                         if not s.get("is_active", True):
                             continue

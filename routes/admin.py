@@ -17,8 +17,8 @@ admin_bp = Blueprint("admin", __name__)
 def admin():
     tab = request.args.get("tab", "dashboard")
     storage = current_app.storage
-    stats = storage.get_enhanced_admin_stats()
-    stats["bff_enabled"] = storage.get_setting("use_bff_api", "true") == "true"
+    stats = storage.admin.get_enhanced_admin_stats()
+    stats["bff_enabled"] = storage.settings.get_setting("use_bff_api", "true") == "true"
     return render_template("admin.html", stats=stats, active_tab=tab)
 
 
@@ -27,7 +27,7 @@ def admin():
 def admin_users():
     search_term = request.args.get("search", "")
     storage = current_app.storage
-    users = storage.get_all_users()
+    users = storage.users.get_all_users()
     if search_term:
         users = [u for u in users if search_term.lower() in u["username"].lower()]
     return render_template("admin.html", active_tab="users", users=users, search_term=search_term,
@@ -38,7 +38,7 @@ def admin_users():
 @require_admin
 def admin_user_detail(user_id):
     storage = current_app.storage
-    user = storage.get_user_detail(user_id)
+    user = storage.users.get_user_detail(user_id)
     if not user:
         flash("Utilisateur introuvable", "error")
         return redirect(url_for("admin.admin"))
@@ -49,10 +49,10 @@ def admin_user_detail(user_id):
 @require_admin
 def admin_delete_user(user_id):
     storage = current_app.storage
-    user = storage.get_user_detail(user_id)
+    user = storage.users.get_user_detail(user_id)
     if user:
-        storage.delete_user(user_id)
-        storage.log_admin_action("user_deleted", f"User '{user['username']}' (ID:{user_id}) deleted", g.user["username"])
+        storage.users.delete_user(user_id)
+        storage.admin.log_admin_action("user_deleted", f"User '{user['username']}' (ID:{user_id}) deleted", g.user["username"])
         flash(f"Utilisateur '{user['username']}' supprimé", "success")
     return redirect(url_for("admin.admin_users"))
 
@@ -61,10 +61,10 @@ def admin_delete_user(user_id):
 @require_admin
 def admin_reset_token(user_id):
     storage = current_app.storage
-    user = storage.get_user_detail(user_id)
+    user = storage.users.get_user_detail(user_id)
     if user:
-        new_token = storage.reset_user_token(user_id)
-        storage.log_admin_action("user_token_reset", f"Token reset for '{user['username']}' (ID:{user_id})", g.user["username"])
+        new_token = storage.users.reset_user_token(user_id)
+        storage.admin.log_admin_action("user_token_reset", f"Token reset for '{user['username']}' (ID:{user_id})", g.user["username"])
         flash(f"Nouveau token pour '{user['username']}': {new_token}", "success")
     return redirect(url_for("admin.admin_user_detail", user_id=user_id))
 
@@ -77,8 +77,8 @@ def admin_create_user():
         flash("Nom d'utilisateur requis", "error")
         return redirect(url_for("admin.admin_users"))
     try:
-        user = current_app.storage.create_user(username)
-        current_app.storage.log_admin_action("user_created", f"User '{username}' (ID:{user['id']}) created", g.user["username"])
+        user = current_app.storage.users.create_user(username)
+        current_app.storage.admin.log_admin_action("user_created", f"User '{username}' (ID:{user['id']}) created", g.user["username"])
         flash(f"Utilisateur '{username}' créé. Token: {user['api_token']}", "success")
     except ValueError as e:
         flash(str(e), "error")
@@ -90,7 +90,7 @@ def admin_create_user():
 def admin_searches():
     user_filter = request.args.get("user", "")
     source_filter = request.args.get("source", "")
-    searches = current_app.storage.get_all_searches(user_filter=user_filter, source_filter=source_filter)
+    searches = current_app.storage.searches.get_all_searches(user_filter=user_filter, source_filter=source_filter)
     return render_template("admin.html", active_tab="searches", searches=searches,
                            user_filter=user_filter, source_filter=source_filter, search_count=len(searches))
 
@@ -99,7 +99,7 @@ def admin_searches():
 @require_admin
 def admin_search_detail(search_id):
     storage = current_app.storage
-    search = storage.get_search_detail(search_id)
+    search = storage.searches.get_search_detail(search_id)
     if not search:
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
@@ -110,10 +110,10 @@ def admin_search_detail(search_id):
 @require_admin
 def admin_delete_search(search_id):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if search:
-        storage.delete_search(search_id)
-        storage.log_admin_action("search_deleted", f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}", g.user["username"])
+        storage.searches.delete_search(search_id)
+        storage.admin.log_admin_action("search_deleted", f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}", g.user["username"])
         flash(f"Recherche '{search['label']}' supprimée", "success")
     return redirect(url_for("admin.admin_searches"))
 
@@ -122,7 +122,7 @@ def admin_delete_search(search_id):
 @require_admin
 def admin_scrape_search(search_id):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search:
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
@@ -154,10 +154,10 @@ def admin_listings():
     search_term = request.args.get("search", "")
     source_filter = request.args.get("source", "")
     storage = current_app.storage
-    listings = storage.get_all_listings(limit=per_page, offset=offset, search_term=search_term, source_filter=source_filter)
-    total = storage.count_all_listings(search_term=search_term, source_filter=source_filter)
+    listings = storage.listings.get_all_listings(limit=per_page, offset=offset, search_term=search_term, source_filter=source_filter)
+    total = storage.listings.count_all_listings(search_term=search_term, source_filter=source_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
-    orphan_count = storage.get_orphan_listings_count()
+    orphan_count = storage.listings.get_orphan_listings_count()
     return render_template("admin.html", active_tab="listings", listings=listings,
                            total=total, page=page, total_pages=total_pages,
                            search_term=search_term, source_filter=source_filter,
@@ -168,7 +168,7 @@ def admin_listings():
 @require_admin
 def admin_listing_detail(listing_id):
     storage = current_app.storage
-    listing = storage.get_listing_detail(listing_id)
+    listing = storage.listings.get_listing_detail(listing_id)
     if not listing:
         flash("Annonce introuvable", "error")
         return redirect(url_for("admin.admin_listings"))
@@ -179,8 +179,8 @@ def admin_listing_detail(listing_id):
 @require_admin
 def admin_delete_listing(listing_id):
     storage = current_app.storage
-    storage.delete_listing(listing_id)
-    storage.log_admin_action("listing_deleted", f"Listing '{listing_id}' deleted", g.user["username"])
+    storage.listings.delete_listing(listing_id)
+    storage.admin.log_admin_action("listing_deleted", f"Listing '{listing_id}' deleted", g.user["username"])
     flash("Annonce supprimée", "success")
     return redirect(url_for("admin.admin_listings"))
 
@@ -189,8 +189,8 @@ def admin_delete_listing(listing_id):
 @require_admin
 def admin_cleanup_orphan():
     storage = current_app.storage
-    deleted = storage.delete_orphan_listings()
-    storage.log_admin_action("orphan_cleanup", f"{deleted} orphan listings deleted", g.user["username"])
+    deleted = storage.listings.delete_orphan_listings()
+    storage.admin.log_admin_action("orphan_cleanup", f"{deleted} orphan listings deleted", g.user["username"])
     flash(f"{deleted} annonce(s) orpheline(s) supprimée(s)", "success")
     return redirect(url_for("admin.admin_listings"))
 
@@ -199,8 +199,8 @@ def admin_cleanup_orphan():
 @require_admin
 def admin_database():
     storage = current_app.storage
-    db_stats = storage.get_db_stats()
-    connections = storage.get_active_connections()
+    db_stats = storage.admin.get_db_stats()
+    connections = storage.admin.get_active_connections()
     return render_template("admin.html", active_tab="database", db_stats=db_stats, connections=connections)
 
 
@@ -208,8 +208,8 @@ def admin_database():
 @require_admin
 def admin_table_detail(table_name):
     storage = current_app.storage
-    details = storage.get_table_details(table_name)
-    db_stats = storage.get_db_stats()
+    details = storage.admin.get_table_details(table_name)
+    db_stats = storage.admin.get_db_stats()
     return render_template("admin.html", active_tab="database", db_stats=db_stats,
                            table_name=table_name, table_details=details)
 
@@ -222,13 +222,13 @@ def admin_execute_query():
         flash("Requête vide", "error")
         return redirect(url_for("admin.admin_database"))
     storage = current_app.storage
-    rows, row_count, error = storage.execute_query(sql)
-    storage.log_admin_action("db_query", sql[:200], g.user["username"])
+    rows, row_count, error = storage.admin.execute_query(sql)
+    storage.admin.log_admin_action("db_query", sql[:200], g.user["username"])
     if error:
         flash(f"Erreur: {error}", "error")
         return redirect(url_for("admin.admin_database"))
     flash(f"Requête exécutée — {row_count} ligne(s) affectée(s)", "success")
-    return render_template("admin.html", active_tab="database", db_stats=storage.get_db_stats(),
+    return render_template("admin.html", active_tab="database", db_stats=storage.admin.get_db_stats(),
                            query_result=rows, query_row_count=row_count, query_sql=sql)
 
 
@@ -244,8 +244,8 @@ def admin_truncate_table():
     if table_name not in ALLOWED_TABLES:
         flash(f"Table '{table_name}' non autorisée", "error")
         return redirect(url_for("admin.admin_database"))
-    if storage.truncate_table(table_name):
-        storage.log_admin_action("table_truncated", f"Table '{table_name}' truncated", g.user["username"])
+    if storage.admin.truncate_table(table_name):
+        storage.admin.log_admin_action("table_truncated", f"Table '{table_name}' truncated", g.user["username"])
         flash(f"Table '{table_name}' vidée", "success")
     else:
         flash(f"Impossible de vider la table '{table_name}'", "error")
@@ -256,11 +256,11 @@ def admin_truncate_table():
 @require_admin
 def admin_export_search_logs(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search:
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
-    zip_path = storage.export_scrape_logs(search_id)
+    zip_path = storage.scrape_logs.export_scrape_logs(search_id)
     return send_file(
         zip_path,
         mimetype="application/zip",
@@ -273,7 +273,7 @@ def admin_export_search_logs(search_id: int):
 @require_admin
 def admin_import_search_logs(search_id: int):
     storage = current_app.storage
-    search = storage.get_search(search_id)
+    search = storage.searches.get_search(search_id)
     if not search:
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
@@ -294,7 +294,7 @@ def admin_import_search_logs(search_id: int):
     tmp_path = Path("/tmp") / f"admin_logs_import_{search_id}_{int(datetime.utcnow().timestamp())}.zip"
     upload.save(tmp_path)
     try:
-        result = storage.import_scrape_logs(
+        result = storage.scrape_logs.import_scrape_logs(
             search_id,
             str(tmp_path),
             allow_override=allow_override,
@@ -328,9 +328,9 @@ def admin_logs():
     date_from = request.args.get("date_from", "")
     date_to = request.args.get("date_to", "")
     storage = current_app.storage
-    logs = storage.get_admin_logs(limit=per_page, offset=offset, action_filter=action_filter,
+    logs = storage.admin.get_admin_logs(limit=per_page, offset=offset, action_filter=action_filter,
                                   date_from=date_from, date_to=date_to)
-    total = storage.count_admin_logs(action_filter=action_filter, date_from=date_from, date_to=date_to)
+    total = storage.admin.count_admin_logs(action_filter=action_filter, date_from=date_from, date_to=date_to)
     total_pages = max(1, (total + per_page - 1) // per_page)
     return render_template("admin.html", active_tab="logs", logs=logs, total_logs=total,
                            page=page, total_pages=total_pages, action_filter=action_filter,
@@ -342,7 +342,7 @@ def admin_logs():
 def admin_purge_logs():
     days = int(request.form.get("days", 30))
     storage = current_app.storage
-    deleted = storage.purge_old_logs(days=days)
+    deleted = storage.admin.purge_old_logs(days=days)
     flash(f"{deleted} ancien(s) log(s) supprimé(s)", "success")
     return redirect(url_for("admin.admin_logs"))
 
@@ -352,8 +352,8 @@ def admin_purge_logs():
 def admin_cleanup():
     days = int(request.form.get("days", 4))
     storage = current_app.storage
-    deleted = storage.delete_old_listings(days=days)
-    storage.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])
+    deleted = storage.listings.delete_old_listings(days=days)
+    storage.admin.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
     return redirect(url_for("admin.admin"))
 
@@ -362,9 +362,9 @@ def admin_cleanup():
 @require_admin
 def admin_toggle_bff():
     storage = current_app.storage
-    current = storage.get_setting("use_bff_api", "true")
+    current = storage.settings.get_setting("use_bff_api", "true")
     new_val = "false" if current == "true" else "true"
-    storage.set_setting("use_bff_api", new_val)
-    storage.log_admin_action("bff_toggled", f"BFF API {'disabled' if new_val == 'false' else 'enabled'}", g.user["username"])
+    storage.settings.set_setting("use_bff_api", new_val)
+    storage.admin.log_admin_action("bff_toggled", f"BFF API {'disabled' if new_val == 'false' else 'enabled'}", g.user["username"])
     flash(f"API BFF {'désactivée' if new_val == 'false' else 'activée'}", "success")
     return redirect(url_for("admin.admin"))

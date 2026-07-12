@@ -1,5 +1,4 @@
 """Tests for repository base class."""
-import pytest
 from repositories.base import BaseRepository
 
 

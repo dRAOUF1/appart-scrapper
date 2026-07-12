@@ -79,10 +79,6 @@ class Notifier:
 
         message = "\n".join(parts) if parts else "Nouvelle annonce disponible"
 
-        # if listing.description:
-        #     message += f"\n\n{listing.description[:200]}"
-
-        # title = listing.title if listing.title else "Nouvelle annonce SeLoger"
         title = "Nouvelle annonce SeLoger"
 
         return self.send(
@@ -92,16 +88,6 @@ class Notifier:
             url=listing.url,
             priority="high",
             tags="house,new",
-        )
-
-    def notify_bot_detected(self, topic: str, search_url: str = "") -> bool:
-        """Send an alert when bot detection / CAPTCHA is triggered."""
-        return self.send(
-            topic=topic,
-            title="ALERTE - Bot detecte par SeLoger",
-            message=f"SeLoger a detecte le scraper (CAPTCHA/blocage).\nURL: {search_url[:100]}\n\nActions possibles:\n- Augmenter action_delay dans config.yaml\n- Desactiver le mode headless\n- Attendre quelques minutes",
-            priority="urgent",
-            tags="warning,robot",
         )
 
     def notify_summary(self, topic: str, new_count: int, total_scanned: int, search_url: str = "") -> bool:

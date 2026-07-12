@@ -9,7 +9,6 @@ from log_exporter import export_search_logs, import_search_logs
 from log_storage import (
     allocate_log_id,
     append_entry,
-    find_entry,
     find_entry_any,
     read_entries,
     read_raw_log,

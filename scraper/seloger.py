@@ -384,7 +384,6 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 tags = item.get("tags", {})
                 raw_data = item.get("rawData", {})
                 gallery = item.get("gallery", {})
-                media = item.get("media", {})
 
                 surface_data = raw_data.get("surface", {})
                 surface_value = surface_data.get("main") if isinstance(surface_data, dict) else surface_data

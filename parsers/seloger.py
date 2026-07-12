@@ -9,7 +9,7 @@ import json
 from loguru import logger
 
 from parsers.base import BaseParser, ParserRegistry
-from storage import Listing
+from models.listing import Listing
 
 
 def _dict_to_listing(data: dict) -> Listing:

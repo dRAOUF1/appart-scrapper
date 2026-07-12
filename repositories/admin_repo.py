@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from loguru import logger
 
 from repositories.base import BaseRepository
@@ -276,7 +275,6 @@ class AdminRepository(BaseRepository):
 
     def execute_query(self, sql: str) -> tuple:
         """Execute a SQL query. Returns (rows, row_count, error)."""
-        from typing import Optional
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:

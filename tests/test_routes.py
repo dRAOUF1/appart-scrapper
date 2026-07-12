@@ -1,7 +1,6 @@
 """Tests for route blueprints and auth decorators."""
-import pytest
 from unittest.mock import MagicMock, patch
-from flask import Flask, session
+from flask import Flask
 
 
 def _make_app():
@@ -38,7 +37,7 @@ class TestAuthDecorators:
         from routes.auth import require_token
 
         app = _make_app()
-        app.storage.get_user_by_token.return_value = None
+        app.storage.users.get_user_by_token.return_value = None
 
         with app.test_request_context("/api/test", method="GET", headers={"X-API-Token": "bad"}):
             @require_token
@@ -52,7 +51,7 @@ class TestAuthDecorators:
         from routes.auth import require_token
 
         app = _make_app()
-        app.storage.get_user_by_token.return_value = {"id": 1, "username": "test"}
+        app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "test"}
 
         with app.test_request_context("/api/test", method="GET", headers={"X-API-Token": "good"}):
             from flask import g, jsonify
@@ -78,7 +77,7 @@ class TestAPIRoutes:
 
     def test_create_user(self):
         app = _make_app()
-        app.storage.create_user.return_value = {"id": 1, "username": "test", "api_token": "tok123"}
+        app.storage.users.create_user.return_value = {"id": 1, "username": "test", "api_token": "tok123"}
 
         with app.test_client() as client:
             resp = client.post("/api/users", json={"username": "test"})
@@ -94,7 +93,7 @@ class TestAPIRoutes:
 
     def test_login_user_found(self):
         app = _make_app()
-        app.storage.get_user_by_username.return_value = {"id": 1, "username": "test", "api_token": "tok"}
+        app.storage.users.get_user_by_username.return_value = {"id": 1, "username": "test", "api_token": "tok"}
 
         with app.test_client() as client:
             resp = client.post("/api/users/login", json={"username": "test"})
@@ -102,7 +101,7 @@ class TestAPIRoutes:
 
     def test_login_user_not_found(self):
         app = _make_app()
-        app.storage.get_user_by_username.return_value = None
+        app.storage.users.get_user_by_username.return_value = None
 
         with app.test_client() as client:
             resp = client.post("/api/users/login", json={"username": "nope"})
@@ -110,8 +109,8 @@ class TestAPIRoutes:
 
     def test_scrape_search_already_running(self):
         app = _make_app()
-        app.storage.get_search.return_value = {"user_id": 1, "criteria": {"placeIds": ["123"]}}
-        app.storage.get_user_by_token.return_value = {"id": 1, "username": "test"}
+        app.storage.searches.get_search.return_value = {"user_id": 1, "criteria": {"placeIds": ["123"]}}
+        app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "test"}
         mock_future = MagicMock()
         mock_future.done.return_value = False
         app._scrape_futures[1] = mock_future
@@ -125,13 +124,13 @@ class TestAPIRoutes:
 
     def test_get_stats(self):
         app = _make_app()
-        app.storage.get_user_stats.return_value = {"searches": 2, "total_listings": 10, "new_today": 3}
+        app.storage.users.get_user_stats.return_value = {"searches": 2, "total_listings": 10, "new_today": 3}
 
         with app.test_client() as client:
             with client.session_transaction() as sess:
                 sess["user_id"] = 1
                 sess["api_token"] = "tok"
-            app.storage.get_user_by_token.return_value = {"id": 1, "username": "test"}
+            app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "test"}
             resp = client.get("/api/stats", headers={"X-API-Token": "tok"})
             assert resp.status_code == 200
             assert resp.get_json()["searches"] == 2
@@ -159,7 +158,7 @@ class TestAdminRoutes:
             with client.session_transaction() as sess:
                 sess["user_id"] = 1
                 sess["api_token"] = "tok"
-            app.storage.get_user_by_token.return_value = {"id": 1, "username": "notadmin"}
+            app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "notadmin"}
             resp = client.get("/admin", follow_redirects=False)
             assert resp.status_code in (301, 302, 303)
 

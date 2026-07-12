@@ -14,7 +14,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- Application code ----
-COPY main.py config.py notifier.py storage.py storage_legacy.py log_manager.py log_storage.py log_exporter.py ./
+COPY main.py config.py notifier.py storage.py log_manager.py log_storage.py log_exporter.py ./
 COPY models/ models/
 COPY repositories/ repositories/
 COPY services/ services/
