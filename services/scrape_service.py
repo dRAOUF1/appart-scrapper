@@ -92,6 +92,7 @@ class ScrapeService:
                 continue
 
             if not parser.has_valid_criteria(criteria):
+                logger.warning(f"[search:{search_id}] Critères invalides pour la source ({src}), source ignorée")
                 per_source[src] = {"error": "Critères invalides ou lieu manquant pour cette source"}
                 continue
             any_valid = True
