@@ -38,7 +38,16 @@ TRANSACTION_SLUGS = {"Rent": "location", "Sale": "achat"}
 TYPE_SLUGS = {"Apartment": "appartement", "House": "maison"}
 TYPE_LABELS = {v: k for k, v in TYPE_SLUGS.items()}
 
-_DETAIL_LINK_RE = re.compile(r"/agence-immobiliere/[^\"'\s]+-(\d+)$")
+# Must match the full listing-detail path shape, not just "ends in -<digits>".
+# When a city has thin inventory Laforet backfills the results page with
+# "nearby agency office" cards (e.g. an <a href="/agence-immobiliere/lyon-7">
+# linking to the office itself, not a listing) — "lyon-7" alone also ends in
+# "-<digit>", so a looser pattern misidentifies these office cards as real
+# listings (verified live: this returned a fake "listing" whose url was just
+# the agency's own page, with no price/surface/rooms/location at all).
+_DETAIL_LINK_RE = re.compile(
+    r"/agence-immobiliere/[^/]+/(?:louer|acheter)/[^/]+/(?:appartement|maison)-[^/]+-(\d+)$"
+)
 _PRICE_RE = re.compile(r"([\d\s ]+)\s*€")
 _CITY_ZIP_RE = re.compile(r"([A-ZÀ-Ü][A-Za-zÀ-ÿ' \-]*?)\s*\((\d{5})\)")
 _SURFACE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m²")
@@ -157,7 +166,13 @@ def _passes_filters(listing: Listing, criteria: dict) -> bool:
     are also re-checked here rather than trusted from the server.
     """
     postal_code = criteria.get("postalCode")
-    if postal_code and listing.zip_code and listing.zip_code != postal_code:
+    if postal_code and listing.zip_code != postal_code:
+        # Fail closed, not open: unlike price/surface/rooms (best-effort
+        # filters, missing data shouldn't wrongly exclude a real listing),
+        # location correctness is the core guarantee here — a card whose
+        # postal code we couldn't parse must never be assumed to match
+        # (this is exactly how a nearby-agency-office filler card, with no
+        # zip_code at all, previously slipped through as a fake listing).
         return False
 
     price_min = criteria.get("priceMin")

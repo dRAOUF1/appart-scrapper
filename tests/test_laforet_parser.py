@@ -36,6 +36,20 @@ SAMPLE_PAGE_HTML = """
 </body></html>
 """
 
+# Reproduces a real bug found live: when a city has thin inventory, Laforet
+# backfills the page with "nearby agency office" cards. Their link
+# (/agence-immobiliere/lyon-7) has no listing content but still ends in
+# "-<digit>" (the arrondissement number in the agency's own slug), which a
+# looser regex misidentified as a listing detail URL.
+PAGE_WITH_AGENCY_OFFICE_CARD = """
+<html><body>
+<article>
+  <a href="https://www.laforet.com/agence-immobiliere/lyon-7" target="_blank">Agence Laforêt LYON 7</a>
+  <div>Fermé — 55 avenue Jean Jaurès, 69007 LYON</div>
+</article>
+</body></html>
+"""
+
 
 class TestSlugify:
     def test_lowercases_and_strips_accents(self):
@@ -122,6 +136,14 @@ class TestParseCards:
         assert cards[1]["rooms"] == "2"
         assert cards[1]["price_value"] == 1513.0
 
+    def test_ignores_nearby_agency_office_cards(self):
+        """A nearby-agency-office filler card must never be mistaken for a
+        listing, even though its own link ends in "-<digit>" too (verified
+        live against Lyon: this produced a fake "listing" that was just a
+        link to the agency's own page, with no price/surface/location)."""
+        cards = _parse_cards(PAGE_WITH_AGENCY_OFFICE_CARD)
+        assert cards == []
+
 
 class TestDictToListing:
     def test_maps_to_common_listing_schema(self):
@@ -181,9 +203,13 @@ class TestPassesFilters:
         listing = self._listing(zip_code="94230")
         assert _passes_filters(listing, {})
 
-    def test_missing_zip_code_does_not_exclude(self):
+    def test_missing_zip_code_excludes_when_postal_code_requested(self):
+        """Fail closed, not open: unlike price/surface/rooms, location
+        correctness can't be waived just because a card's postal code
+        couldn't be parsed — verified live this is exactly how a fake
+        agency-office "listing" (no zip_code at all) slipped through."""
         listing = self._listing(zip_code="")
-        assert _passes_filters(listing, {"postalCode": "75014"})
+        assert not _passes_filters(listing, {"postalCode": "75014"})
 
 
 class TestScrape:
