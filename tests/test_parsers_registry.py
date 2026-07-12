@@ -78,6 +78,7 @@ class TestListSources:
         assert matching == [{
             "id": "listed_source", "name": "Listed", "description": "Description here",
             "requires_extra_location": False, "extra_location_label": "", "extra_location_help": "",
+            "url_note": "",
         }]
 
     def test_seloger_is_registered_by_default(self):
@@ -193,3 +194,17 @@ class TestExtraLocationMetadata:
         assert seloger["requires_extra_location"] is True
         assert seloger["extra_location_label"]
         assert laforet["requires_extra_location"] is False
+
+    def test_laforet_url_note_explains_missing_filters(self):
+        """Laforet's build_search_url() deliberately omits price/surface/rooms
+        (they break the site's own city scoping — see parsers/laforet.py) —
+        URL_NOTE must explain that in the UI instead of it looking broken."""
+        from parsers.laforet import LaforetParser
+        assert LaforetParser.URL_NOTE
+
+    def test_list_sources_includes_url_note(self):
+        sources = ParserRegistry.list_sources()
+        seloger = next(s for s in sources if s["id"] == "seloger")
+        laforet = next(s for s in sources if s["id"] == "laforet")
+        assert laforet["url_note"]
+        assert seloger["url_note"] == ""

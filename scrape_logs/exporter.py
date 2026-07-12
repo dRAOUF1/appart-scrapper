@@ -57,6 +57,7 @@ def export_search_logs(search_id: int) -> str:
     total = len(entries)
     success_count = sum(1 for log in entries if log.get("status") == "success")
     error_count = sum(1 for log in entries if log.get("status") == "error")
+    empty_count = sum(1 for log in entries if log.get("status") == "empty")
     avg_listings = sum(log.get("listings_found") or 0 for log in entries) / total if total else 0
     avg_new = sum(log.get("new_listings") or 0 for log in entries) / total if total else 0
     avg_duration = sum(log.get("duration_sec") or 0 for log in entries) / total if total else 0
@@ -67,6 +68,7 @@ def export_search_logs(search_id: int) -> str:
         "total": total,
         "success_count": success_count,
         "error_count": error_count,
+        "empty_count": empty_count,
         "avg_listings": avg_listings,
         "avg_new": avg_new,
         "avg_duration": avg_duration,

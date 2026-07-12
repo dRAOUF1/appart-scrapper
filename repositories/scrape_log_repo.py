@@ -58,6 +58,11 @@ class ScrapeLogRepository(BaseRepository):
         total = len(logs)
         success_count = sum(1 for log in logs if log.get("status") == "success")
         error_count = sum(1 for log in logs if log.get("status") == "error")
+        # "empty" = ran fine, legitimately found nothing (e.g. no listing
+        # matches the requested location/filters right now) — distinct from
+        # "error" (something actually broke) so it isn't shown/counted as a
+        # failure in the UI/stats.
+        empty_count = sum(1 for log in logs if log.get("status") == "empty")
         avg_listings = sum(log.get("listings_found") or 0 for log in logs) / total if total else 0
         avg_new = sum(log.get("new_listings") or 0 for log in logs) / total if total else 0
         avg_duration = sum(log.get("duration_sec") or 0 for log in logs) / total if total else 0
@@ -73,6 +78,7 @@ class ScrapeLogRepository(BaseRepository):
             "total": total,
             "success_count": success_count,
             "error_count": error_count,
+            "empty_count": empty_count,
             "avg_listings": avg_listings,
             "avg_new": avg_new,
             "avg_duration": avg_duration,

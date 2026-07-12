@@ -71,6 +71,12 @@ class TestScrapeService:
             result = service.execute(search_id=1, user_id=1)
         assert result == 0
 
+        args, kwargs = mock_app.storage.scrape_logs.create_scrape_log.call_args
+        assert args[1] == "empty", (
+            "A source that ran fine and legitimately found nothing must be "
+            "logged as 'empty', not 'error' — it isn't a failure."
+        )
+
     def test_execute_scrape_failure_is_logged_distinctly_from_empty_result(self):
         """A real scraping error (e.g. anti-bot block) must not be logged as 'no listings found'."""
         mock_app = MagicMock()

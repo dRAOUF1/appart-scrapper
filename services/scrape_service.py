@@ -128,11 +128,17 @@ class ScrapeService:
             return 0
 
         if not listings:
+            # Toutes les sources valides ont tourné sans erreur mais n'ont
+            # rien trouvé — c'est un résultat légitime (ex: aucune annonce
+            # Laforet ne correspond au code postal + filtres demandés), pas
+            # un échec. Statut distinct de "error" pour ne pas l'afficher
+            # comme une panne dans les logs/l'UI.
             logger.info(f"[search:{search_id}] Aucune annonce trouvée")
             storage.scrape_logs.create_scrape_log(
-                search_id, "error",
-                error_message="Aucune annonce trouvée",
+                search_id, "empty",
+                error_message="Aucune annonce ne correspond aux critères",
                 listings_found=0, new_listings=0,
+                details={"per_source": per_source},
                 started_at=started_at,
             )
             return 0

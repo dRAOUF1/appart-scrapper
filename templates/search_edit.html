@@ -22,6 +22,10 @@
         <div class="stat-label">Erreurs</div>
     </div>
     <div class="stat-card">
+        <div class="stat-value" style="color: var(--text-secondary);">{{ stats.empty_count or 0 }}</div>
+        <div class="stat-label">Aucun résultat</div>
+    </div>
+    <div class="stat-card">
         <div class="stat-value">{{ "%.1f"|format(stats.avg_listings or 0) }}</div>
         <div class="stat-label">Moy. annonces/scrape</div>
     </div>

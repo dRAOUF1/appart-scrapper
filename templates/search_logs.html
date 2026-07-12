@@ -52,6 +52,10 @@
         <div class="stat-label">Erreurs</div>
     </div>
     <div class="stat-card">
+        <div class="stat-value" style="color: var(--text-secondary);">{{ stats.empty_count or 0 }}</div>
+        <div class="stat-label">Aucun résultat</div>
+    </div>
+    <div class="stat-card">
         <div class="stat-value">{{ "%.1f"|format(stats.avg_listings or 0) }}</div>
         <div class="stat-label">Moy. annonces</div>
     </div>
@@ -65,13 +69,17 @@
 {% if stats.last_scrape %}
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <span class="badge {% if stats.last_scrape.status == 'success' %}badge-active{% else %}badge-inactive{% endif %}">
-            {% if stats.last_scrape.status == 'success' %}✅{% else %}❌{% endif %}
+        <span class="badge {% if stats.last_scrape.status == 'success' %}badge-active{% elif stats.last_scrape.status == 'empty' %}badge-warning{% else %}badge-inactive{% endif %}">
+            {% if stats.last_scrape.status == 'success' %}✅
+            {% elif stats.last_scrape.status == 'empty' %}ℹ️
+            {% else %}❌{% endif %}
             {{ stats.last_scrape.status }}
         </span>
         <span class="text-muted">Dernier scrape : {{ (stats.last_scrape.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') }}</span>
-        {% if stats.last_scrape.error_message %}
+        {% if stats.last_scrape.error_message and stats.last_scrape.status != 'empty' %}
         <span class="text-muted" style="color: var(--red);">Erreur : {{ stats.last_scrape.error_message[:100] }}</span>
+        {% elif stats.last_scrape.error_message %}
+        <span class="text-muted">{{ stats.last_scrape.error_message[:100] }}</span>
         {% endif %}
     </div>
 </div>
@@ -87,6 +95,8 @@
            class="btn btn-sm {% if status_filter == 'success' %}btn-success{% else %}btn-ghost{% endif %}">✅ Succès</a>
         <a href="{{ url_for('web.search_logs', search_id=search.id, status='error') }}"
            class="btn btn-sm {% if status_filter == 'error' %}btn-danger{% else %}btn-ghost{% endif %}">❌ Erreurs</a>
+        <a href="{{ url_for('web.search_logs', search_id=search.id, status='empty') }}"
+           class="btn btn-sm {% if status_filter == 'empty' %}btn-primary{% else %}btn-ghost{% endif %}">ℹ️ Aucun résultat</a>
     </div>
 </div>
 
@@ -114,8 +124,9 @@
                         <div class="text-muted" style="font-size: 0.8rem;">{{ (log.started_at|fr_time).strftime('%H:%M:%S') }}</div>
                     </td>
                     <td>
-                        <span class="badge {% if log.status == 'success' %}badge-active{% elif log.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
+                        <span class="badge {% if log.status == 'success' %}badge-active{% elif log.status == 'empty' %}badge-warning{% elif log.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
                             {% if log.status == 'success' %}✅ Succès
+                            {% elif log.status == 'empty' %}ℹ️ Aucun résultat
                             {% elif log.status == 'error' %}❌ Erreur
                             {% else %}⚠️ Partiel{% endif %}
                         </span>

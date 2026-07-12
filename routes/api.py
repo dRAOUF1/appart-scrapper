@@ -103,6 +103,7 @@ def get_search_urls(search_id: int):
             "url": url,
             "source_name": parser.SOURCE_NAME,
             "error": None if url else "URL reconstruction non disponible pour cette source",
+            "note": parser.URL_NOTE or None,
         })
 
     # Backward-compatible top-level fields mirror the first source.

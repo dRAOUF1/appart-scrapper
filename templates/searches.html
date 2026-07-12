@@ -359,6 +359,7 @@ Ouvrir dans un nouvel onglet ↗
 Copier l'URL
 </button>
 </div>
+${s.note ? `<p class="text-muted" style="font-size: 0.85rem; margin-top: 0.5rem;">ℹ️ ${escapeHtml(s.note)}</p>` : ''}
 ` : `
 <p class="text-muted">URL non disponible pour cette source${s.error ? ' (' + escapeHtml(s.error) + ')' : ''}</p>
 `}

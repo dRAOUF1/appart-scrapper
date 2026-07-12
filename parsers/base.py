@@ -48,6 +48,7 @@ class ParserRegistry:
                 "requires_extra_location": pcls.REQUIRES_EXTRA_LOCATION,
                 "extra_location_label": pcls.EXTRA_LOCATION_LABEL,
                 "extra_location_help": pcls.EXTRA_LOCATION_HELP,
+                "url_note": pcls.URL_NOTE,
             }
             for pid, pcls in sorted(cls._parsers.items())
         ]
@@ -80,6 +81,13 @@ class BaseParser(ABC):
     REQUIRES_EXTRA_LOCATION: bool = False
     EXTRA_LOCATION_LABEL: str = ""
     EXTRA_LOCATION_HELP: str = ""
+
+    # Set when build_search_url() deliberately omits some criteria (e.g. a
+    # source whose own filter query params break its location matching, so
+    # they're enforced by the scraper instead of being reflected in the
+    # reconstructed URL) — shown next to that URL so it doesn't look like a
+    # bug when opened manually and some filters seem missing.
+    URL_NOTE: str = ""
 
     @abstractmethod
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:

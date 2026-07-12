@@ -223,6 +223,12 @@ class LaforetParser(BaseParser):
     SOURCE_NAME = "Laforêt"
     SOURCE_DESCRIPTION = "Laforet.com — scraping HTML serveur (ville + code postal)"
 
+    URL_NOTE = (
+        "Ce lien ne montre que la localisation : les filtres prix/surface/pièces "
+        "sont appliqués par le scraper mais volontairement absents de l'URL, "
+        "car ils cassent le filtrage par ville sur Laforet."
+    )
+
     # has_valid_criteria: no override needed — city+postalCode is exactly
     # BaseParser's default contract, and Laforet needs nothing else.
 
