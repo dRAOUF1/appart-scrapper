@@ -63,12 +63,28 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
     # Ville + code postal : l'entrée de localisation universelle, utilisée
     # par toutes les sources compatibles (indépendante de l'URL SeLoger
     # ci-dessus, qui alimente le champ d'appoint propre à SeLoger).
-    city = form_data.get("city", "").strip()
-    postal_code = form_data.get("postal_code", "").strip()
-    if city:
-        criteria["city"] = city
-    if postal_code:
-        criteria["postalCode"] = postal_code
+    # Plusieurs lignes ville/CP peuvent être soumises (une recherche peut
+    # couvrir plusieurs villes/codes postaux à la fois) — voir
+    # parsers.base.get_locations() côté lecture.
+    cities = form_data.getlist("location_city") if hasattr(form_data, "getlist") else form_data.get("location_city", [])
+    postal_codes = form_data.getlist("location_postal_code") if hasattr(form_data, "getlist") else form_data.get("location_postal_code", [])
+    if not isinstance(cities, list):
+        cities = [cities]
+    if not isinstance(postal_codes, list):
+        postal_codes = [postal_codes]
+
+    locations = []
+    for city, postal_code in zip(cities, postal_codes):
+        city, postal_code = city.strip(), postal_code.strip()
+        if city and postal_code:
+            locations.append({"city": city, "postalCode": postal_code})
+
+    if locations:
+        criteria["locations"] = locations
+        # Miroir de la première localisation dans les clés à plat, pour tout
+        # code (ou vieille recherche) qui lit encore city/postalCode direct.
+        criteria["city"] = locations[0]["city"]
+        criteria["postalCode"] = locations[0]["postalCode"]
 
     return criteria
 

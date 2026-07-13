@@ -35,18 +35,17 @@
 
         <div class="form-section">
             <div class="form-section-label">📍 Localisation</div>
-            <div class="form-grid">
-                <div class="form-group">
-                    <label for="city">Ville</label>
-                    <input type="text" id="city" name="city" placeholder="Ex: Paris">
-                </div>
-                <div class="form-group">
-                    <label for="postal_code">Code postal</label>
-                    <input type="text" id="postal_code" name="postal_code" placeholder="Ex: 75018">
+            <div class="location-list" data-location-list>
+                <div class="location-row">
+                    <input type="text" name="location_city" placeholder="Ville (ex: Paris)" aria-label="Ville">
+                    <input type="text" name="location_postal_code" placeholder="Code postal (ex: 75018)" aria-label="Code postal">
+                    <button type="button" class="location-remove-btn" aria-label="Retirer cette ville">✕</button>
                 </div>
             </div>
-            <small class="form-help">
+            <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une ville</button>
+            <small class="form-help" style="display: block; margin-top: 0.5rem;">
                 Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
+                Ajoute plusieurs villes pour toutes les surveiller dans la même recherche.
             </small>
         </div>
 
@@ -217,7 +216,11 @@
           <span class="criteria-tag">📍 {{ pid }}</span>
           {% endfor %}
           {% endif %}
-          {% if s.criteria.city or s.criteria.postalCode %}
+          {% if s.criteria.locations %}
+          {% for loc in s.criteria.locations %}
+          <span class="criteria-tag">📍 {{ loc.city }} {{ loc.postalCode }}</span>
+          {% endfor %}
+          {% elif s.criteria.city or s.criteria.postalCode %}
           <span class="criteria-tag">📍 {{ s.criteria.city or '' }} {{ s.criteria.postalCode or '' }}</span>
           {% endif %}
           {% if s.criteria.priceMin or s.criteria.priceMax %}
@@ -330,6 +333,39 @@ document.querySelectorAll('.source-checkbox[data-requires-extra="true"]').forEac
     sync();
 });
 
+// Ville/code postal repetables — une recherche peut couvrir plusieurs
+// villes/codes postaux à la fois. Le bouton "Retirer" reste caché tant
+// qu'il ne reste qu'une seule ligne (au moins une localisation requise).
+document.querySelectorAll('[data-location-list]').forEach(list => {
+    const addBtn = list.parentElement.querySelector('[data-add-location]');
+
+    function refreshRemoveButtons() {
+        const rows = list.querySelectorAll('.location-row');
+        rows.forEach(row => {
+            row.querySelector('.location-remove-btn').style.visibility =
+                rows.length > 1 ? 'visible' : 'hidden';
+        });
+    }
+
+    list.addEventListener('click', e => {
+        if (!e.target.classList.contains('location-remove-btn')) return;
+        if (list.querySelectorAll('.location-row').length <= 1) return;
+        e.target.closest('.location-row').remove();
+        refreshRemoveButtons();
+    });
+
+    if (addBtn) {
+        addBtn.addEventListener('click', () => {
+            const newRow = list.querySelector('.location-row').cloneNode(true);
+            newRow.querySelectorAll('input').forEach(input => { input.value = ''; });
+            list.appendChild(newRow);
+            refreshRemoveButtons();
+        });
+    }
+
+    refreshRemoveButtons();
+});
+
 function copyText(elementId) {
 const text = document.getElementById(elementId).textContent;
 navigator.clipboard.writeText(text).then(() => {
@@ -355,25 +391,32 @@ throw new Error('Erreur lors de la récupération de l\'URL');
 const data = await response.json();
 const sources = data.sources && data.sources.length ? data.sources : [data];
 
-const sections = sources.map(s => `
-<div style="margin-bottom: 1rem;">
-<h4 style="margin-bottom: 0.4rem;">${escapeHtml(s.source_name || s.source)}</h4>
-${s.url ? `
-<div class="url-preview">${escapeHtml(s.url)}</div>
+const sections = sources.map(s => {
+    const urls = s.urls && s.urls.length ? s.urls : (s.url ? [s.url] : []);
+    const urlBlocks = urls.map(url => `
+<div class="url-preview">${escapeHtml(url)}</div>
 <div class="url-actions">
-<a href="${escapeHtml(s.url)}" target="_blank" class="btn btn-primary">
+<a href="${escapeHtml(url)}" target="_blank" class="btn btn-primary">
 Ouvrir dans un nouvel onglet ↗
 </a>
-<button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(s.url).replace(/'/g, "\\'")}')">
+<button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(url).replace(/'/g, "\\'")}')">
 Copier l'URL
 </button>
 </div>
+`).join('<div style="height: 0.5rem;"></div>');
+
+    return `
+<div style="margin-bottom: 1rem;">
+<h4 style="margin-bottom: 0.4rem;">${escapeHtml(s.source_name || s.source)}${urls.length > 1 ? ` (${urls.length} localisations)` : ''}</h4>
+${urls.length ? `
+${urlBlocks}
 ${s.note ? `<p class="text-muted" style="font-size: 0.85rem; margin-top: 0.5rem;">ℹ️ ${escapeHtml(s.note)}</p>` : ''}
 ` : `
 <p class="text-muted">URL non disponible pour cette source${s.error ? ' (' + escapeHtml(s.error) + ')' : ''}</p>
 `}
 </div>
-`).join('');
+`;
+}).join('');
 
 const modal = document.createElement('div');
 modal.className = 'modal';

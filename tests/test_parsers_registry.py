@@ -2,7 +2,7 @@
 import pytest
 
 from models.listing import Listing
-from parsers.base import BaseParser, ParserRegistry
+from parsers.base import BaseParser, ParserRegistry, get_locations
 
 
 @pytest.fixture(autouse=True)
@@ -143,6 +143,86 @@ class TestBaseParserDefaults:
         assert parser.REQUIRES_EXTRA_LOCATION is False
         assert parser.EXTRA_LOCATION_LABEL == ""
         assert parser.EXTRA_LOCATION_HELP == ""
+
+    def test_has_valid_criteria_default_accepts_multiple_locations(self):
+        """A search can cover several cities/postal codes at once — the
+        universal default must accept that too, not just a single pair."""
+        class FakeParser(BaseParser):
+            SOURCE_ID = "multi_location_validity"
+
+            def scrape(self, criteria, use_bff=True):
+                return []
+
+        parser = FakeParser()
+        assert parser.has_valid_criteria({
+            "locations": [
+                {"city": "Paris", "postalCode": "75014"},
+                {"city": "Lyon", "postalCode": "69007"},
+            ]
+        }) is True
+        assert parser.has_valid_criteria({"locations": []}) is False
+        assert parser.has_valid_criteria({"locations": [{"city": "Paris"}]}) is False
+
+    def test_build_search_urls_default_wraps_single_url(self):
+        class FakeParser(BaseParser):
+            SOURCE_ID = "single_url_wrap"
+
+            def scrape(self, criteria, use_bff=True):
+                return []
+
+            def build_search_url(self, criteria):
+                return "https://example.com/search"
+
+        parser = FakeParser()
+        assert parser.build_search_urls({}) == ["https://example.com/search"]
+
+    def test_build_search_urls_default_empty_when_no_url(self):
+        class FakeParser(BaseParser):
+            SOURCE_ID = "no_url_wrap"
+
+            def scrape(self, criteria, use_bff=True):
+                return []
+
+        assert FakeParser().build_search_urls({}) == []
+
+
+class TestGetLocations:
+    """get_locations() is the single place every location-based parser
+    reads city+postalCode through — supports both a single legacy pair and
+    a plural list (a search spanning several cities/postal codes)."""
+
+    def test_legacy_flat_city_and_postal_code(self):
+        assert get_locations({"city": "Paris", "postalCode": "75014"}) == [
+            {"city": "Paris", "postalCode": "75014"}
+        ]
+
+    def test_plural_locations_list(self):
+        criteria = {
+            "locations": [
+                {"city": "Paris", "postalCode": "75014"},
+                {"city": "Lyon", "postalCode": "69007"},
+            ]
+        }
+        assert get_locations(criteria) == criteria["locations"]
+
+    def test_plural_locations_takes_precedence_over_flat_keys(self):
+        criteria = {
+            "city": "Paris", "postalCode": "75014",
+            "locations": [{"city": "Lyon", "postalCode": "69007"}],
+        }
+        assert get_locations(criteria) == [{"city": "Lyon", "postalCode": "69007"}]
+
+    def test_incomplete_entries_in_locations_list_are_dropped(self):
+        criteria = {"locations": [
+            {"city": "Paris", "postalCode": "75014"},
+            {"city": "Lyon"},
+            {"postalCode": "13001"},
+        ]}
+        assert get_locations(criteria) == [{"city": "Paris", "postalCode": "75014"}]
+
+    def test_no_location_at_all(self):
+        assert get_locations({}) == []
+        assert get_locations({"city": "Paris"}) == []
 
 
 class TestPerSourceHasValidCriteria:

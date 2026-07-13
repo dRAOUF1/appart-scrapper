@@ -7,6 +7,30 @@ from abc import ABC, abstractmethod
 from models.listing import Listing
 
 
+def get_locations(criteria: dict) -> list[dict]:
+    """Normalize the location(s) in `criteria` into a list of
+    {"city": ..., "postalCode": ...} dicts.
+
+    Supports both the plural `locations` list (several cities/postal codes
+    in a single search) and the legacy flat `city`/`postalCode` pair (one
+    location). Every location-based parser should read locations through
+    this helper instead of the flat keys directly, so multi-location
+    support — and any future normalization — stays uniform across sources.
+    """
+    locations = criteria.get("locations")
+    if locations:
+        return [
+            {"city": loc["city"], "postalCode": loc["postalCode"]}
+            for loc in locations
+            if loc.get("city") and loc.get("postalCode")
+        ]
+    city = criteria.get("city")
+    postal_code = criteria.get("postalCode")
+    if city and postal_code:
+        return [{"city": city, "postalCode": postal_code}]
+    return []
+
+
 class ParserRegistry:
     """Auto-registry of all parser subclasses."""
 
@@ -132,16 +156,29 @@ class BaseParser(ABC):
         """
         return None
 
+    def build_search_urls(self, criteria: dict) -> list[str]:
+        """
+        All search URLs for this source.
+
+        Most sources only ever produce one URL (default: wraps
+        build_search_url() as a single-item list). A source whose search
+        can span several locations in one go (see get_locations()) should
+        override this to return one URL per location.
+        """
+        url = self.build_search_url(criteria)
+        return [url] if url else []
+
     def has_valid_criteria(self, criteria: dict) -> bool:
         """
         Whether `criteria` contains what this source needs to run a search.
 
-        Default: city + postalCode is the universal location contract —
-        every source (present or future) is expected to work from this pair
-        unless it truly can't (see REQUIRES_EXTRA_LOCATION), in which case
-        it overrides this to also check its own extra field.
+        Default: at least one city + postalCode pair (see get_locations())
+        is the universal location contract — every source (present or
+        future) is expected to work from this unless it truly can't (see
+        REQUIRES_EXTRA_LOCATION), in which case it overrides this to also
+        check its own extra field.
         """
-        return bool(criteria.get("city") and criteria.get("postalCode"))
+        return bool(get_locations(criteria))
 
     def __init_subclass__(cls, **kwargs):
         """Auto-register subclasses that have a SOURCE_ID."""

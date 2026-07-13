@@ -629,6 +629,75 @@ code {
 }
 
 /* ============================================================
+   Location List — repeatable ville/code-postal rows (a search
+   can cover several cities/postal codes at once)
+   ============================================================ */
+
+.location-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.location-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.location-row input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.7rem 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: var(--transition-fast);
+}
+
+.location-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.location-row input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.location-remove-btn {
+    flex-shrink: 0;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: var(--transition-fast);
+}
+
+.location-remove-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(255, 69, 58, 0.1);
+}
+
+.location-remove-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.add-location-btn {
+    margin-top: 0.75rem;
+}
+
+/* ============================================================
    Form Sections — labeled groups within a longer form
    ============================================================ */
 

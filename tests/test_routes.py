@@ -381,6 +381,46 @@ class TestParseSearchCriteriaFromForm:
         criteria = _parse_search_criteria_from_form(form)
         assert criteria["order"] == "DateDesc"
 
+    def test_multiple_location_rows_build_locations_list(self):
+        """A search can cover several cities/postal codes — one
+        location_city/location_postal_code pair per submitted row."""
+        from werkzeug.datastructures import MultiDict
+        from routes.web import _parse_search_criteria_from_form
+
+        form = MultiDict([
+            ("location_city", "Paris"), ("location_postal_code", "75014"),
+            ("location_city", "Lyon"), ("location_postal_code", "69007"),
+        ])
+        criteria = _parse_search_criteria_from_form(form)
+        assert criteria["locations"] == [
+            {"city": "Paris", "postalCode": "75014"},
+            {"city": "Lyon", "postalCode": "69007"},
+        ]
+        # First location mirrored into the flat legacy keys.
+        assert criteria["city"] == "Paris"
+        assert criteria["postalCode"] == "75014"
+
+    def test_incomplete_location_rows_are_skipped(self):
+        """A row with a city but no postal code (or vice versa) — e.g. the
+        user added a row and didn't fill it in — must not produce a bogus
+        half-empty location."""
+        from werkzeug.datastructures import MultiDict
+        from routes.web import _parse_search_criteria_from_form
+
+        form = MultiDict([
+            ("location_city", "Paris"), ("location_postal_code", "75014"),
+            ("location_city", ""), ("location_postal_code", ""),
+            ("location_city", "Lyon"), ("location_postal_code", ""),
+        ])
+        criteria = _parse_search_criteria_from_form(form)
+        assert criteria["locations"] == [{"city": "Paris", "postalCode": "75014"}]
+
+    def test_no_location_rows_means_no_locations_key(self):
+        from routes.web import _parse_search_criteria_from_form
+
+        criteria = _parse_search_criteria_from_form({"place_ids": "AD08FR12345"})
+        assert "locations" not in criteria
+
 
 class TestValidateSourcesCriteria:
     """Per-source validation must give a precise, actionable reason instead

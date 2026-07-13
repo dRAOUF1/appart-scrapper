@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 from models.listing import Listing
-from parsers.base import BaseParser, ParserRegistry
+from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.laforet.com"
 
@@ -244,11 +244,16 @@ class LaforetParser(BaseParser):
         "car ils cassent le filtrage par ville sur Laforet."
     )
 
-    # has_valid_criteria: no override needed — city+postalCode is exactly
-    # BaseParser's default contract, and Laforet needs nothing else.
+    # has_valid_criteria: no override needed — get_locations() (at least one
+    # city+postalCode pair) is exactly BaseParser's default contract.
 
     def build_search_url(self, criteria: dict) -> str | None:
-        """Build the plain, unfiltered city URL.
+        """First location's URL — see build_search_urls() for all of them."""
+        urls = self.build_search_urls(criteria)
+        return urls[0] if urls else None
+
+    def build_search_urls(self, criteria: dict) -> list[str]:
+        """One plain, unfiltered city URL per location in `criteria`.
 
         Verified live: adding `filter[min]`/`filter[max]`/`filter[surface]`
         query params doesn't just fail to filter reliably (already worked
@@ -257,21 +262,19 @@ class LaforetParser(BaseParser):
         the requested city. So we never send those params; price/surface/
         rooms filtering is enforced entirely client-side in scrape().
         """
-        city = criteria.get("city")
-        postal_code = criteria.get("postalCode")
-        if not city or not postal_code:
-            return None
-
         transaction = _transaction_slug(criteria)
         type_slug = _type_slug(criteria)
-        return f"{BASE_URL}/ville/{transaction}-{type_slug}-{_slugify(city)}-{postal_code}"
+        return [
+            f"{BASE_URL}/ville/{transaction}-{type_slug}-{_slugify(loc['city'])}-{loc['postalCode']}"
+            for loc in get_locations(criteria)
+        ]
 
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """`use_bff` is a SeLoger-specific concept and is ignored here."""
-        if not self.has_valid_criteria(criteria):
-            raise ValueError("Laforet nécessite 'city' et 'postalCode' dans les critères")
+        locations = get_locations(criteria)
+        if not locations:
+            raise ValueError("Laforet nécessite au moins une localisation (ville + code postal) dans les critères")
 
-        base_search_url = self.build_search_url(criteria)
         type_slug = _type_slug(criteria)
         property_type = TYPE_LABELS[type_slug]
 
@@ -279,6 +282,39 @@ class LaforetParser(BaseParser):
         session.headers.update({"User-Agent": DESKTOP_UA})
 
         seen: set[str] = set()
+        listings: list[Listing] = []
+        errors: list[str] = []
+
+        # Each location is scraped independently so one bad city/postal
+        # code (typo, invalid combo) doesn't lose results already found for
+        # the others in the same search — mirrors how ScrapeService already
+        # isolates failures per-source, one level down, per-location.
+        for location in locations:
+            try:
+                listings.extend(
+                    self._scrape_location(session, criteria, location, property_type, seen)
+                )
+            except Exception as e:
+                logger.warning(f"[Laforet] {location['city']} {location['postalCode']}: {e}")
+                errors.append(f"{location['city']} {location['postalCode']}: {e}")
+
+        if errors and len(errors) == len(locations):
+            raise ValueError("; ".join(errors))
+
+        logger.info(f"[Laforet] Scraping terminé : {len(listings)} annonces uniques")
+        return listings
+
+    def _scrape_location(self, session, criteria: dict, location: dict, property_type: str, seen: set) -> list[Listing]:
+        transaction = _transaction_slug(criteria)
+        type_slug = _type_slug(criteria)
+        base_search_url = (
+            f"{BASE_URL}/ville/{transaction}-{type_slug}-"
+            f"{_slugify(location['city'])}-{location['postalCode']}"
+        )
+        # _passes_filters checks postalCode against this specific location,
+        # not whatever the overall criteria's flat city/postalCode may be.
+        location_criteria = {**criteria, "city": location["city"], "postalCode": location["postalCode"]}
+
         listings: list[Listing] = []
         page = 1
         total_pages = 1
@@ -289,9 +325,7 @@ class LaforetParser(BaseParser):
 
             resp = session.get(page_url, timeout=15)
             if resp.status_code == 404:
-                raise ValueError(
-                    f"Laforet: ville/code postal invalide ({page_url})"
-                )
+                raise ValueError(f"ville/code postal invalide ({page_url})")
             resp.raise_for_status()
 
             if page == 1:
@@ -300,18 +334,25 @@ class LaforetParser(BaseParser):
             for card in _parse_cards(resp.text):
                 if card["reference"] in seen:
                     continue
-                seen.add(card["reference"])
                 listing = _dict_to_listing(card, property_type)
-                if _passes_filters(listing, criteria):
-                    listings.append(listing)
+                if not _passes_filters(listing, location_criteria):
+                    # Don't mark a *rejected* card as seen: in a multi-location
+                    # search, a listing that's backfill noise on one location's
+                    # page (wrong postal code there) can be the real match on
+                    # its own location's page later in the same scrape — verified
+                    # live this silently dropped real results (Paris 75015/75013
+                    # listings backfilled onto the 75014 page got blacklisted
+                    # before their own page was ever scraped).
+                    continue
+                seen.add(card["reference"])
+                listings.append(listing)
 
             page += 1
 
         if total_pages > MAX_PAGES:
             logger.warning(
-                f"[Laforet] {total_pages} pages disponibles, limité à {MAX_PAGES} "
-                f"({len(listings)} annonces récupérées, résultat partiel)"
+                f"[Laforet] {location['city']} {location['postalCode']}: {total_pages} pages disponibles, "
+                f"limité à {MAX_PAGES} ({len(listings)} annonces récupérées, résultat partiel)"
             )
 
-        logger.info(f"[Laforet] Scraping terminé : {len(listings)} annonces uniques")
         return listings

@@ -97,12 +97,13 @@ def get_search_urls(search_id: int):
         except ValueError as e:
             results.append({"source": source, "url": None, "error": str(e)})
             continue
-        url = parser.build_search_url(criteria)
+        urls = parser.build_search_urls(criteria)
         results.append({
             "source": source,
-            "url": url,
+            "url": urls[0] if urls else None,
+            "urls": urls,
             "source_name": parser.SOURCE_NAME,
-            "error": None if url else "URL reconstruction non disponible pour cette source",
+            "error": None if urls else "URL reconstruction non disponible pour cette source",
             "note": parser.URL_NOTE or None,
         })
 
