@@ -6,10 +6,13 @@ import pytest
 from models.listing import Listing
 from parsers.laforet import (
     LaforetParser,
+    _arrondissement_insee_code,
     _dict_to_listing,
+    _extract_genuine_section,
     _parse_cards,
     _parse_total_pages,
     _passes_filters,
+    _resolve_insee_code,
     _slugify,
 )
 
@@ -36,6 +39,24 @@ SAMPLE_PAGE_HTML = """
 </body></html>
 """
 
+# A merged multi-city response (as produced by filter[cities][]) has both
+# cities' genuine cards in the same section — unlike SAMPLE_PAGE_HTML, which
+# models a single-city page where the 75015 card is backfill noise.
+MERGED_PAGE_HTML = """
+<html><body>
+<article>
+  <a href="https://www.laforet.com/agence-immobiliere/paris18marxdormoy/louer/paris-18/appartement-1-piece-52811904" target="_blank">photo</a>
+  <h3>Appartement <span>1 021 &#8364;/mois</span> <span>PARIS (75018)</span></h3>
+  <div>30 m²&nbsp;&bull;&nbsp;1 pi&egrave;ce</div>
+</article>
+<article>
+  <a href="https://www.laforet.com/agence-immobiliere/lyon7agence/louer/lyon-07/appartement-2-pieces-99999999" target="_blank">photo</a>
+  <h3>Appartement <span>900 &#8364;/mois</span> <span>LYON (69007)</span></h3>
+  <div>40 m²&nbsp;&bull;&nbsp;2 pi&egrave;ces</div>
+</article>
+</body></html>
+"""
+
 # Reproduces a real bug found live: when a city has thin inventory, Laforet
 # backfills the page with "nearby agency office" cards. Their link
 # (/agence-immobiliere/lyon-7) has no listing content but still ends in
@@ -49,6 +70,14 @@ PAGE_WITH_AGENCY_OFFICE_CARD = """
 </article>
 </body></html>
 """
+
+
+@pytest.fixture(autouse=True)
+def _clear_insee_cache():
+    from parsers.laforet import _INSEE_CACHE
+    _INSEE_CACHE.clear()
+    yield
+    _INSEE_CACHE.clear()
 
 
 class TestSlugify:
@@ -89,11 +118,9 @@ class TestBuildSearchUrl:
             })
 
     def test_never_appends_filter_query_params(self):
-        """Verified live: filter[min]/filter[max]/filter[surface] query
-        params silently break Laforet's city scoping (results become a
-        nationwide feed instead of staying scoped to the requested city) —
-        so they must never be sent. Filtering is enforced client-side by
-        _passes_filters() instead."""
+        """Purely illustrative URL (for the "Voir l'URL" UI) — the actual
+        scrape merges locations via filter[cities][] instead (see
+        TestScrapeMerged), so this reconstructed URL stays plain."""
         parser = LaforetParser()
         url = parser.build_search_url({
             "city": "Paris", "postalCode": "75018",
@@ -150,6 +177,89 @@ class TestHasValidCriteria:
         ]})
 
 
+class TestArrondissementInseeCode:
+    """Paris/Lyon/Marseille arrondissements need a special code Laforet's
+    filter[cities][] expects — formulas verified against Laforet's own
+    embedded page state (see parsers/laforet.py module docstring), not
+    guessed: 75014->75114, 69007->69387, 13001->13201, etc."""
+
+    def test_paris(self):
+        assert _arrondissement_insee_code("75014") == "75114"
+        assert _arrondissement_insee_code("75001") == "75101"
+        assert _arrondissement_insee_code("75020") == "75120"
+
+    def test_lyon(self):
+        assert _arrondissement_insee_code("69001") == "69381"
+        assert _arrondissement_insee_code("69007") == "69387"
+        assert _arrondissement_insee_code("69009") == "69389"
+
+    def test_marseille(self):
+        assert _arrondissement_insee_code("13001") == "13201"
+        assert _arrondissement_insee_code("13008") == "13208"
+        assert _arrondissement_insee_code("13016") == "13216"
+
+    def test_non_special_cased_postal_code_returns_none(self):
+        assert _arrondissement_insee_code("86000") is None
+        assert _arrondissement_insee_code("44000") is None
+
+    def test_out_of_range_or_malformed_returns_none(self):
+        assert _arrondissement_insee_code("75000") is None
+        assert _arrondissement_insee_code("7500") is None
+        assert _arrondissement_insee_code("abcde") is None
+
+
+class TestResolveInseeCode:
+    def test_special_case_never_hits_the_network(self):
+        with patch("parsers.laforet.requests.get") as mock_get:
+            code = _resolve_insee_code("75014")
+        assert code == "75114"
+        mock_get.assert_not_called()
+
+    def test_general_case_uses_the_public_geo_api(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = [{"code": "86194"}]
+        resp.raise_for_status.return_value = None
+        with patch("parsers.laforet.requests.get", return_value=resp) as mock_get:
+            code = _resolve_insee_code("86000")
+        assert code == "86194"
+        mock_get.assert_called_once()
+
+    def test_result_is_cached(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = [{"code": "86194"}]
+        resp.raise_for_status.return_value = None
+        with patch("parsers.laforet.requests.get", return_value=resp) as mock_get:
+            _resolve_insee_code("86000")
+            _resolve_insee_code("86000")
+        mock_get.assert_called_once()
+
+    def test_returns_none_on_network_error(self):
+        with patch("parsers.laforet.requests.get", side_effect=Exception("boom")):
+            assert _resolve_insee_code("99999") is None
+
+    def test_returns_none_when_no_commune_matches(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = []
+        resp.raise_for_status.return_value = None
+        with patch("parsers.laforet.requests.get", return_value=resp):
+            assert _resolve_insee_code("99999") is None
+
+
+class TestExtractGenuineSection:
+    """Laforet always appends a second "Appartements à proximité de {ville}"
+    section with backfill noise after the real results — must never be
+    parsed as part of the results (verified live: this is what let listings
+    from unrelated cities contaminate a search)."""
+
+    def test_truncates_before_the_nearby_marker(self):
+        html = "GENUINEproximité de Paris 14</div>NOISE"
+        assert _extract_genuine_section(html) == "GENUINE"
+
+    def test_returns_whole_html_when_marker_absent(self):
+        html = "<html>no marker here, plenty of native inventory</html>"
+        assert _extract_genuine_section(html) == html
+
+
 class TestParseTotalPages:
     def test_reads_last_position_from_itemlist(self):
         assert _parse_total_pages(SAMPLE_PAGE_HTML) == 3
@@ -199,59 +309,66 @@ class TestPassesFilters:
     def _listing(self, **overrides):
         base = dict(
             listing_id="lf_1", url="https://x", price_value=1000.0,
-            surface="50", rooms="2",
+            surface="50", rooms="2", zip_code="75014",
         )
         base.update(overrides)
         return Listing(**base)
 
     def test_price_range(self):
         listing = self._listing(price_value=1000.0)
-        assert _passes_filters(listing, {"priceMin": 900, "priceMax": 1100})
-        assert not _passes_filters(listing, {"priceMax": 900})
-        assert not _passes_filters(listing, {"priceMin": 1100})
+        allowed = {"75014"}
+        assert _passes_filters(listing, {"priceMin": 900, "priceMax": 1100}, allowed)
+        assert not _passes_filters(listing, {"priceMax": 900}, allowed)
+        assert not _passes_filters(listing, {"priceMin": 1100}, allowed)
 
     def test_surface_range(self):
         listing = self._listing(surface="50")
-        assert _passes_filters(listing, {"spaceMin": 40, "spaceMax": 60})
-        assert not _passes_filters(listing, {"spaceMin": 60})
+        allowed = {"75014"}
+        assert _passes_filters(listing, {"spaceMin": 40, "spaceMax": 60}, allowed)
+        assert not _passes_filters(listing, {"spaceMin": 60}, allowed)
 
     def test_rooms_exact_match(self):
         listing = self._listing(rooms="2")
-        assert _passes_filters(listing, {"rooms": ["2", "3"]})
-        assert not _passes_filters(listing, {"rooms": ["3", "4"]})
+        allowed = {"75014"}
+        assert _passes_filters(listing, {"rooms": ["2", "3"]}, allowed)
+        assert not _passes_filters(listing, {"rooms": ["3", "4"]}, allowed)
 
     def test_rooms_five_plus(self):
         listing = self._listing(rooms="6")
-        assert _passes_filters(listing, {"rooms": ["5"]})
+        assert _passes_filters(listing, {"rooms": ["5"]}, {"75014"})
 
     def test_missing_data_does_not_exclude(self):
         listing = self._listing(price_value=None, surface="", rooms="")
-        assert _passes_filters(listing, {"priceMin": 900, "spaceMin": 40, "rooms": ["2"]})
+        assert _passes_filters(listing, {"priceMin": 900, "spaceMin": 40, "rooms": ["2"]}, {"75014"})
 
-    def test_postal_code_exact_match_required(self):
-        """Laforet's /ville/{postalCode} page isn't scoped to that exact
-        postal code — it backfills from neighboring areas (verified live:
-        for Paris 75014, only 1 of 41 returned listings was actually in
-        75014). A search for one postal code must exclude every other one."""
+    def test_postal_code_must_be_in_allowed_set(self):
         listing = self._listing(zip_code="75014")
-        assert _passes_filters(listing, {"postalCode": "75014"})
-        assert not _passes_filters(listing, {"postalCode": "75015"})
-        assert not _passes_filters(listing, {"postalCode": "94230"})
+        assert _passes_filters(listing, {}, {"75014"})
+        assert not _passes_filters(listing, {}, {"75015"})
+        assert not _passes_filters(listing, {}, {"94230"})
 
-    def test_no_postal_code_filter_when_not_requested(self):
-        listing = self._listing(zip_code="94230")
-        assert _passes_filters(listing, {})
+    def test_multiple_allowed_postal_codes(self):
+        """A merged multi-location search allows any of several postal codes."""
+        allowed = {"75014", "92120"}
+        assert _passes_filters(self._listing(zip_code="75014"), {}, allowed)
+        assert _passes_filters(self._listing(zip_code="92120"), {}, allowed)
+        assert not _passes_filters(self._listing(zip_code="75015"), {}, allowed)
 
-    def test_missing_zip_code_excludes_when_postal_code_requested(self):
+    def test_missing_zip_code_excludes(self):
         """Fail closed, not open: unlike price/surface/rooms, location
         correctness can't be waived just because a card's postal code
         couldn't be parsed — verified live this is exactly how a fake
         agency-office "listing" (no zip_code at all) slipped through."""
         listing = self._listing(zip_code="")
-        assert not _passes_filters(listing, {"postalCode": "75014"})
+        assert not _passes_filters(listing, {}, {"75014"})
 
 
 class TestScrape:
+    """_resolve_insee_code is patched to the pure arrondissement formula in
+    most of these (no network, deterministic) — postal codes outside
+    Paris/Lyon/Marseille resolve to None, taking the per-location fallback
+    path, exactly like a real geo-API miss would."""
+
     def test_raises_on_invalid_location(self):
         parser = LaforetParser()
         with pytest.raises(ValueError):
@@ -277,32 +394,26 @@ class TestScrape:
     def test_scrape_raises_clear_error_on_404(self):
         parser = LaforetParser()
         resp = MagicMock(status_code=404)
-        with patch("requests.Session") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session.get.return_value = resp
-            mock_session_cls.return_value = mock_session
-            with pytest.raises(ValueError):
-                parser.scrape({"city": "Nawak", "postalCode": "99999"})
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            with patch("requests.Session") as mock_session_cls:
+                mock_session = MagicMock()
+                mock_session.get.return_value = resp
+                mock_session_cls.return_value = mock_session
+                with pytest.raises(ValueError):
+                    parser.scrape({"city": "Nawak", "postalCode": "99999"})
 
-    def test_scrape_aggregates_across_multiple_locations(self):
-        """A search covering several cities/postal codes must return
-        listings from all of them, each filtered against its own postal
-        code (not whichever location happens to be first)."""
+    def test_scrape_merges_multiple_locations_into_one_request(self):
+        """Verified live: filter[cities][] genuinely merges several
+        cities/postal codes into one correctly-scoped request+pagination —
+        this must result in exactly one HTTP call, not one per location."""
         parser = LaforetParser()
-
-        paris_resp = MagicMock(status_code=200, text=SAMPLE_PAGE_HTML)
-        paris_resp.raise_for_status.return_value = None
-        lyon_html = SAMPLE_PAGE_HTML.replace("75018", "69007").replace("52811904", "99999999")
-        lyon_resp = MagicMock(status_code=200, text=lyon_html)
-        lyon_resp.raise_for_status.return_value = None
-
-        def fake_get(url, timeout=15):
-            return lyon_resp if "lyon" in url else paris_resp
+        resp = MagicMock(status_code=200, text=MERGED_PAGE_HTML)
+        resp.raise_for_status.return_value = None
 
         with patch("parsers.laforet._parse_total_pages", return_value=1):
             with patch("requests.Session") as mock_session_cls:
                 mock_session = MagicMock()
-                mock_session.get.side_effect = fake_get
+                mock_session.get.return_value = resp
                 mock_session_cls.return_value = mock_session
                 listings = parser.scrape({"locations": [
                     {"city": "Paris", "postalCode": "75018"},
@@ -312,26 +423,63 @@ class TestScrape:
         zip_codes = {l.zip_code for l in listings}
         assert zip_codes == {"75018", "69007"}
         assert len(listings) == 2
+        assert mock_session.get.call_count == 1
 
-    def test_rejected_backfill_card_is_not_blacklisted_from_its_own_location(self):
-        """Real bug found live: Laforet backfills a location's page with
-        listings from neighboring postal codes. Those get correctly
-        rejected there (wrong postal code) — but they must not be marked
-        "seen" from that rejection, or the SAME listing silently vanishes
-        when its own location is scraped later in the same multi-location
-        search (verified live: Paris 75015/75013 listings backfilled onto
-        the 75014 page were blacklisted before their own page was scraped,
-        dropping 12 of 13 real results down to 1)."""
+    def test_merged_request_sends_insee_codes_and_type_filter(self):
+        parser = LaforetParser()
+        resp = MagicMock(status_code=200, text=MERGED_PAGE_HTML)
+        resp.raise_for_status.return_value = None
+
+        with patch("parsers.laforet._parse_total_pages", return_value=1):
+            with patch("requests.Session") as mock_session_cls:
+                mock_session = MagicMock()
+                mock_session.get.return_value = resp
+                mock_session_cls.return_value = mock_session
+                parser.scrape({"locations": [
+                    {"city": "Paris", "postalCode": "75018"},
+                    {"city": "Lyon", "postalCode": "69007"},
+                ]})
+
+        args, kwargs = mock_session.get.call_args
+        assert args[0] == "https://www.laforet.com/ville/location-appartement-paris-75018"
+        query_pairs = kwargs["params"]
+        assert ("filter[types][]", "apartment") in query_pairs
+        assert ("filter[cities][]", "75118") in query_pairs
+        assert ("filter[cities][]", "69387") in query_pairs
+
+    def test_falls_back_to_per_location_when_insee_resolution_fails(self):
+        """A location whose postal code can't be resolved to an INSEE code
+        (unknown geo API, foreign postal code) must not be silently
+        dropped — it gets its own separate request instead."""
+        parser = LaforetParser()
+        page1_resp = MagicMock(status_code=200, text=SAMPLE_PAGE_HTML)
+        page1_resp.raise_for_status.return_value = None
+
+        with patch("parsers.laforet._resolve_insee_code", side_effect=_arrondissement_insee_code):
+            with patch("parsers.laforet._parse_total_pages", return_value=1):
+                with patch("requests.Session") as mock_session_cls:
+                    mock_session = MagicMock()
+                    mock_session.get.return_value = page1_resp
+                    mock_session_cls.return_value = mock_session
+                    listings = parser.scrape({"locations": [
+                        {"city": "Poitiers", "postalCode": "86000"},  # not special-cased -> None here
+                    ]})
+
+        assert len(listings) == 0  # SAMPLE_PAGE_HTML has no 86000 card
+        # falls back to _scrape_location (single-URL string, no params=)
+        args, kwargs = mock_session.get.call_args
+        assert "params" not in kwargs
+        assert "poitiers-86000" in args[0]
+
+    def test_rejected_card_in_fallback_path_is_not_blacklisted_from_another_location(self):
+        """Real bug found live: a listing rejected as backfill noise while
+        scraping one (fallback) location's own page must not be
+        permanently blacklisted from being counted on a different
+        location's page later in the same scrape."""
         parser = LaforetParser()
 
-        # 75014's own page: both cards (75018, 75015) are backfill noise —
-        # neither matches 75014, both get rejected, including reference
-        # 52805433 which is the *real* 75015 listing scraped further down.
         loc_a_resp = MagicMock(status_code=200, text=SAMPLE_PAGE_HTML)
         loc_a_resp.raise_for_status.return_value = None
-
-        # 75015's own page: the same reference (52805433) reappears, this
-        # time as its legitimate match.
         loc_b_html = """
         <html><body>
         <article>
@@ -347,15 +495,18 @@ class TestScrape:
         def fake_get(url, timeout=15):
             return loc_a_resp if "75014" in url else loc_b_resp
 
-        with patch("parsers.laforet._parse_total_pages", return_value=1):
-            with patch("requests.Session") as mock_session_cls:
-                mock_session = MagicMock()
-                mock_session.get.side_effect = fake_get
-                mock_session_cls.return_value = mock_session
-                listings = parser.scrape({"locations": [
-                    {"city": "Paris", "postalCode": "75014"},
-                    {"city": "Paris", "postalCode": "75015"},
-                ]})
+        # Force both locations through the per-location fallback path (as if
+        # neither resolved to an INSEE code) so this exercises _scrape_location.
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            with patch("parsers.laforet._parse_total_pages", return_value=1):
+                with patch("requests.Session") as mock_session_cls:
+                    mock_session = MagicMock()
+                    mock_session.get.side_effect = fake_get
+                    mock_session_cls.return_value = mock_session
+                    listings = parser.scrape({"locations": [
+                        {"city": "Paris", "postalCode": "75014"},
+                        {"city": "Paris", "postalCode": "75015"},
+                    ]})
 
         assert len(listings) == 1
         assert listings[0].listing_id == "lf_52805433"
@@ -373,15 +524,16 @@ class TestScrape:
         def fake_get(url, timeout=15):
             return not_found_resp if "nawak" in url else paris_resp
 
-        with patch("parsers.laforet._parse_total_pages", return_value=1):
-            with patch("requests.Session") as mock_session_cls:
-                mock_session = MagicMock()
-                mock_session.get.side_effect = fake_get
-                mock_session_cls.return_value = mock_session
-                listings = parser.scrape({"locations": [
-                    {"city": "Paris", "postalCode": "75018"},
-                    {"city": "Nawak", "postalCode": "99999"},
-                ]})
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            with patch("parsers.laforet._parse_total_pages", return_value=1):
+                with patch("requests.Session") as mock_session_cls:
+                    mock_session = MagicMock()
+                    mock_session.get.side_effect = fake_get
+                    mock_session_cls.return_value = mock_session
+                    listings = parser.scrape({"locations": [
+                        {"city": "Paris", "postalCode": "75018"},
+                        {"city": "Nawak", "postalCode": "99999"},
+                    ]})
 
         assert len(listings) == 1
         assert listings[0].zip_code == "75018"
@@ -389,12 +541,38 @@ class TestScrape:
     def test_scrape_raises_only_when_every_location_fails(self):
         parser = LaforetParser()
         resp = MagicMock(status_code=404)
-        with patch("requests.Session") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session.get.return_value = resp
-            mock_session_cls.return_value = mock_session
-            with pytest.raises(ValueError):
-                parser.scrape({"locations": [
-                    {"city": "Nawak", "postalCode": "99999"},
-                    {"city": "Bidule", "postalCode": "88888"},
-                ]})
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            with patch("requests.Session") as mock_session_cls:
+                mock_session = MagicMock()
+                mock_session.get.return_value = resp
+                mock_session_cls.return_value = mock_session
+                with pytest.raises(ValueError):
+                    parser.scrape({"locations": [
+                        {"city": "Nawak", "postalCode": "99999"},
+                        {"city": "Bidule", "postalCode": "88888"},
+                    ]})
+
+    def test_merged_request_failure_falls_back_to_per_location(self):
+        """If the combined multi-location request itself fails (network
+        error, unexpected response), every location that was part of it
+        must still get its own separate attempt rather than being lost."""
+        parser = LaforetParser()
+
+        def side_effect(*args, **kwargs):
+            if "params" in kwargs:
+                raise ConnectionError("merged request boom")
+            resp = MagicMock(status_code=200, text=SAMPLE_PAGE_HTML)
+            resp.raise_for_status.return_value = None
+            return resp
+
+        with patch("parsers.laforet._parse_total_pages", return_value=1):
+            with patch("requests.Session") as mock_session_cls:
+                mock_session = MagicMock()
+                mock_session.get.side_effect = side_effect
+                mock_session_cls.return_value = mock_session
+                listings = parser.scrape({"city": "Paris", "postalCode": "75018"})
+
+        # Merged attempt (with params=) raised, fell back to per-location
+        # (no params=) which succeeds via SAMPLE_PAGE_HTML.
+        assert len(listings) == 1
+        assert listings[0].zip_code == "75018"

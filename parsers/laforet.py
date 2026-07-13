@@ -1,15 +1,31 @@
 """Laforet.com listing scraper.
 
-Server-rendered (Symfony/Turbo) site, no JSON API. Location is encoded as a
-human-readable city slug + postal code directly in the URL path (as opposed
-to SeLoger's opaque placeIds), e.g.:
+Server-rendered (Symfony/Turbo + UX Live Component) site, no public JSON
+listing API. Location is encoded in the URL path as a human-readable city
+slug + postal code, e.g.:
 
     https://www.laforet.com/ville/location-appartement-paris-75018
 
-Filters (price, surface, rooms) and pagination work as query params on that
-same page (`filter[min]`, `filter[max]`, `?page=N`) — no need to touch the
-`/louer/rechercher` or `/acheter/rechercher` endpoints, which robots.txt
-disallows.
+That page always renders two sections: the real, correctly-scoped results,
+followed unconditionally by a second "Appartements à proximité de {ville}"
+section backfilled with listings from neighboring communes/arrondissements.
+Both use the same card markup, so anything that parses the whole page
+indiscriminately picks up that noise — see _extract_genuine_section().
+
+Multiple locations in one search are merged server-side via
+`filter[cities][]=<INSEE code>` query params (verified live against the
+site's own "add a city" filter UI, network-captured with Playwright) — but
+only within the *first*, genuine section; the noise section is unaffected
+by the filter and must still be excluded the same way. `filter[cities][]`
+takes INSEE-style commune codes, not postal codes, and Paris/Lyon/Marseille
+need their arrondissement-specific code (not the whole-city INSEE code) —
+see _resolve_insee_code().
+
+filter[min]/filter[max]/filter[surface] (price/surface) were also verified
+live: they have a real but imprecise effect on the genuine section (one
+example let a listing above the requested max through), so price/surface/
+rooms filtering is still fully enforced client-side in _passes_filters(),
+same as before — only the *location* merging is trusted to the server now.
 """
 
 from __future__ import annotations
@@ -34,24 +50,40 @@ DESKTOP_UA = (
 
 MAX_PAGES = 30
 
+# Path uses French slugs; the filter[...] query params use English values —
+# verified live these are genuinely two different vocabularies on this site.
 TRANSACTION_SLUGS = {"Rent": "location", "Sale": "achat"}
+TRANSACTION_FILTER_VALUES = {"Rent": "rent", "Sale": "buy"}
 TYPE_SLUGS = {"Apartment": "appartement", "House": "maison"}
+TYPE_FILTER_VALUES = {"Apartment": "apartment", "House": "house"}
 TYPE_LABELS = {v: k for k, v in TYPE_SLUGS.items()}
+
+# Marks where the real results end and the always-appended "nearby" backfill
+# section begins — see module docstring. Verified this text is present even
+# on pages with plenty of native inventory (Poitiers) where it has no effect
+# (the "nearby" section is simply empty there), so truncating here is safe
+# in every case, not just the sparse-inventory one.
+_NEARBY_SECTION_MARKER = "proximité de"
 
 # Must match the full listing-detail path shape, not just "ends in -<digits>".
 # When a city has thin inventory Laforet backfills the results page with
 # "nearby agency office" cards (e.g. an <a href="/agence-immobiliere/lyon-7">
-# linking to the office itself, not a listing) — "lyon-7" alone also ends in
+# linking to the office itself, not a listing). "lyon-7" alone also ends in
 # "-<digit>", so a looser pattern misidentifies these office cards as real
 # listings (verified live: this returned a fake "listing" whose url was just
 # the agency's own page, with no price/surface/rooms/location at all).
 _DETAIL_LINK_RE = re.compile(
     r"/agence-immobiliere/[^/]+/(?:louer|acheter)/[^/]+/(?:appartement|maison)-[^/]+-(\d+)$"
 )
-_PRICE_RE = re.compile(r"([\d\s ]+)\s*€")
+_PRICE_RE = re.compile(r"([\d\s ]+)\s*€")
 _CITY_ZIP_RE = re.compile(r"([A-ZÀ-Ü][A-Za-zÀ-ÿ' \-]*?)\s*\((\d{5})\)")
 _SURFACE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m²")
 _ROOMS_RE = re.compile(r"(\d+)\s*pi[eè]ce")
+
+# INSEE code lookups never change during a process's life — cache them so a
+# search scraped every few minutes forever doesn't hit the public geo API
+# on every single run.
+_INSEE_CACHE: dict[str, str | None] = {}
 
 
 def _slugify(text: str) -> str:
@@ -73,6 +105,11 @@ def _transaction_slug(criteria: dict) -> str:
     return TRANSACTION_SLUGS.get(distribution, "location")
 
 
+def _transaction_filter_value(criteria: dict) -> str:
+    distribution = _first(criteria.get("distributionTypes"), "Rent")
+    return TRANSACTION_FILTER_VALUES.get(distribution, "rent")
+
+
 def _type_slug(criteria: dict) -> str:
     estate_type = _first(criteria.get("estateTypes"), "Apartment")
     if estate_type not in TYPE_SLUGS:
@@ -81,6 +118,74 @@ def _type_slug(criteria: dict) -> str:
             f"(uniquement {sorted(TYPE_SLUGS)})"
         )
     return TYPE_SLUGS[estate_type]
+
+
+def _type_filter_value(criteria: dict) -> str:
+    estate_type = _first(criteria.get("estateTypes"), "Apartment")
+    return TYPE_FILTER_VALUES[estate_type]
+
+
+def _arrondissement_insee_code(postal_code: str) -> str | None:
+    """Paris/Lyon/Marseille arrondissements: INSEE's `/communes` API only
+    tracks these at the whole-city level (75056/69123/13055), but Laforet's
+    filter[cities][] needs the arrondissement-specific "commune associée"
+    code. Formulas verified against Laforet's own embedded page state for
+    several arrondissements of each city (75014->75114, 69007->69387,
+    13001->13201, etc.) — not guessed, checked against real values Laforet
+    itself computes for its own default single-arrondissement pages.
+    """
+    if len(postal_code) != 5 or not postal_code.isdigit():
+        return None
+    if postal_code.startswith("75"):
+        arr = int(postal_code[-2:])
+        if 1 <= arr <= 20:
+            return f"751{arr:02d}"
+    elif postal_code.startswith("690"):
+        arr = int(postal_code[-1])
+        if 1 <= arr <= 9:
+            return f"693{80 + arr}"
+    elif postal_code.startswith("130"):
+        arr = int(postal_code[-2:])
+        if 1 <= arr <= 16:
+            return f"132{arr:02d}"
+    return None
+
+
+def _lookup_insee_code(postal_code: str) -> str | None:
+    """Resolve any other French postal code via the official, free, public
+    geo.api.gouv.fr API (no key, no auth) — the same API Laforet's own city
+    autocomplete calls (verified live via network capture)."""
+    try:
+        resp = requests.get(
+            "https://geo.api.gouv.fr/communes",
+            params={"codePostal": postal_code, "fields": "code"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data[0]["code"] if data else None
+    except Exception as e:
+        logger.warning(f"[Laforet] Résolution INSEE échouée pour {postal_code}: {e}")
+        return None
+
+
+def _resolve_insee_code(postal_code: str) -> str | None:
+    """Postal code -> the commune code Laforet's filter[cities][] expects.
+    None if it can't be resolved (unknown/foreign postal code, or the geo
+    API is unreachable) — callers fall back to a per-location request."""
+    if postal_code not in _INSEE_CACHE:
+        code = _arrondissement_insee_code(postal_code)
+        if code is None:
+            code = _lookup_insee_code(postal_code)
+        _INSEE_CACHE[postal_code] = code
+    return _INSEE_CACHE[postal_code]
+
+
+def _extract_genuine_section(html: str) -> str:
+    """Strip the always-appended "nearby" backfill section (see module
+    docstring) before anything parses cards or pagination out of the page."""
+    idx = html.find(_NEARBY_SECTION_MARKER)
+    return html[:idx] if idx != -1 else html
 
 
 def _parse_price(text: str) -> float | None:
@@ -151,28 +256,18 @@ def _parse_cards(html: str) -> list[dict]:
     return results
 
 
-def _passes_filters(listing: Listing, criteria: dict) -> bool:
+def _passes_filters(listing: Listing, criteria: dict, allowed_postal_codes: set) -> bool:
     """Enforce location + price/surface/rooms filters ourselves.
 
-    Laforet's /ville/{...}-{postalCode} page is NOT scoped to that exact
-    postal code — verified live it backfills with listings from neighboring
-    arrondissements/communes when there aren't enough in the exact one (for
-    Paris 75014, only 1 of 41 returned listings was actually in 75014). So a
-    search for one postal code must not silently include others — every
-    listing's own postal code is checked against the requested one here.
-
-    filter[...] query params are never sent (see build_search_url) since
-    they additionally break this scoping outright, so price/surface/rooms
-    are also re-checked here rather than trusted from the server.
+    `allowed_postal_codes` is the exact set of postal codes this search
+    asked for — a listing whose own postal code we couldn't parse, or that
+    isn't in that set, is never assumed to match (fail closed, not open:
+    unlike price/surface/rooms below, location correctness can't be waived
+    just because a card was hard to parse — this is exactly how a
+    nearby-agency-office filler card, with no zip_code at all, previously
+    slipped through as a fake listing).
     """
-    postal_code = criteria.get("postalCode")
-    if postal_code and listing.zip_code != postal_code:
-        # Fail closed, not open: unlike price/surface/rooms (best-effort
-        # filters, missing data shouldn't wrongly exclude a real listing),
-        # location correctness is the core guarantee here — a card whose
-        # postal code we couldn't parse must never be assumed to match
-        # (this is exactly how a nearby-agency-office filler card, with no
-        # zip_code at all, previously slipped through as a fake listing).
+    if listing.zip_code not in allowed_postal_codes:
         return False
 
     price_min = criteria.get("priceMin")
@@ -241,7 +336,7 @@ class LaforetParser(BaseParser):
     URL_NOTE = (
         "Ce lien ne montre que la localisation : les filtres prix/surface/pièces "
         "sont appliqués par le scraper mais volontairement absents de l'URL, "
-        "car ils cassent le filtrage par ville sur Laforet."
+        "car leur effet côté site n'est pas assez fiable pour s'y fier seul."
     )
 
     # has_valid_criteria: no override needed — get_locations() (at least one
@@ -255,12 +350,10 @@ class LaforetParser(BaseParser):
     def build_search_urls(self, criteria: dict) -> list[str]:
         """One plain, unfiltered city URL per location in `criteria`.
 
-        Verified live: adding `filter[min]`/`filter[max]`/`filter[surface]`
-        query params doesn't just fail to filter reliably (already worked
-        around by _passes_filters below) — it silently breaks the city
-        scoping itself, returning listings from all over France instead of
-        the requested city. So we never send those params; price/surface/
-        rooms filtering is enforced entirely client-side in scrape().
+        Purely illustrative (shown in the "Voir l'URL" UI) — the actual
+        scrape always merges every resolvable location into one request via
+        filter[cities][], these are not fetched separately unless a
+        location's postal code can't be resolved to an INSEE code.
         """
         transaction = _transaction_slug(criteria)
         type_slug = _type_slug(criteria)
@@ -279,41 +372,128 @@ class LaforetParser(BaseParser):
         property_type = TYPE_LABELS[type_slug]
 
         session = requests.Session()
-        session.headers.update({"User-Agent": DESKTOP_UA})
+        session.headers.update({
+            "User-Agent": DESKTOP_UA,
+            "Accept": "text/html, application/xhtml+xml",
+        })
+
+        # Resolve every location to the INSEE-style code filter[cities][]
+        # needs, so they can all be merged into one request+pagination
+        # (verified live: this correctly combines multiple cities' results
+        # in a single, properly-scoped page). A location that can't be
+        # resolved (unknown postal code, geo API unreachable) falls back to
+        # its own separate request instead of being silently dropped.
+        resolved: list[tuple[dict, str]] = []
+        unresolved: list[dict] = []
+        for loc in locations:
+            code = _resolve_insee_code(loc["postalCode"])
+            if code:
+                resolved.append((loc, code))
+            else:
+                logger.warning(
+                    f"[Laforet] Code INSEE introuvable pour {loc['city']} {loc['postalCode']}, "
+                    "requête séparée pour cette localisation"
+                )
+                unresolved.append(loc)
 
         seen: set[str] = set()
         listings: list[Listing] = []
         errors: list[str] = []
+        attempts = 0
+        failures = 0
 
-        # Each location is scraped independently so one bad city/postal
-        # code (typo, invalid combo) doesn't lose results already found for
-        # the others in the same search — mirrors how ScrapeService already
-        # isolates failures per-source, one level down, per-location.
-        for location in locations:
+        if resolved:
+            attempts += 1
+            try:
+                listings.extend(
+                    self._scrape_merged(session, criteria, resolved, property_type, seen)
+                )
+            except Exception as e:
+                failures += 1
+                logger.warning(f"[Laforet] Requête fusionnée ({len(resolved)} localisations) échouée: {e}")
+                errors.append(f"requête fusionnée: {e}")
+                unresolved = unresolved + [loc for loc, _ in resolved]
+
+        for location in unresolved:
+            attempts += 1
             try:
                 listings.extend(
                     self._scrape_location(session, criteria, location, property_type, seen)
                 )
             except Exception as e:
+                failures += 1
                 logger.warning(f"[Laforet] {location['city']} {location['postalCode']}: {e}")
                 errors.append(f"{location['city']} {location['postalCode']}: {e}")
 
-        if errors and len(errors) == len(locations):
+        if attempts and failures == attempts:
             raise ValueError("; ".join(errors))
 
         logger.info(f"[Laforet] Scraping terminé : {len(listings)} annonces uniques")
         return listings
 
+    def _scrape_merged(self, session, criteria: dict, resolved: list, property_type: str, seen: set) -> list[Listing]:
+        """One request (+ pagination) covering every resolved location at
+        once, via filter[cities][]=<INSEE code> repeated per location."""
+        primary_loc, _ = resolved[0]
+        transaction = _transaction_slug(criteria)
+        type_slug = _type_slug(criteria)
+        base_path = (
+            f"{BASE_URL}/ville/{transaction}-{type_slug}-"
+            f"{_slugify(primary_loc['city'])}-{primary_loc['postalCode']}"
+        )
+        city_codes = [code for _, code in resolved]
+        allowed_postal_codes = {loc["postalCode"] for loc, _ in resolved}
+
+        base_query = [("filter[types][]", _type_filter_value(criteria))]
+        base_query += [("filter[cities][]", code) for code in city_codes]
+
+        listings: list[Listing] = []
+        page = 1
+        total_pages = 1
+
+        while page <= total_pages and page <= MAX_PAGES:
+            query = list(base_query)
+            if page > 1:
+                query.append(("page", page))
+
+            resp = session.get(base_path, params=query, timeout=15)
+            if resp.status_code == 404:
+                raise ValueError(f"URL de base invalide ({base_path})")
+            resp.raise_for_status()
+
+            genuine_html = _extract_genuine_section(resp.text)
+            if page == 1:
+                total_pages = _parse_total_pages(genuine_html)
+
+            for card in _parse_cards(genuine_html):
+                if card["reference"] in seen:
+                    continue
+                listing = _dict_to_listing(card, property_type)
+                if not _passes_filters(listing, criteria, allowed_postal_codes):
+                    continue
+                seen.add(card["reference"])
+                listings.append(listing)
+
+            page += 1
+
+        if total_pages > MAX_PAGES:
+            logger.warning(
+                f"[Laforet] requête fusionnée : {total_pages} pages disponibles, limité à {MAX_PAGES} "
+                f"({len(listings)} annonces récupérées, résultat partiel)"
+            )
+
+        return listings
+
     def _scrape_location(self, session, criteria: dict, location: dict, property_type: str, seen: set) -> list[Listing]:
+        """Fallback path for a single location whose postal code couldn't
+        be resolved to an INSEE code (or when the merged request failed)."""
         transaction = _transaction_slug(criteria)
         type_slug = _type_slug(criteria)
         base_search_url = (
             f"{BASE_URL}/ville/{transaction}-{type_slug}-"
             f"{_slugify(location['city'])}-{location['postalCode']}"
         )
-        # _passes_filters checks postalCode against this specific location,
-        # not whatever the overall criteria's flat city/postalCode may be.
-        location_criteria = {**criteria, "city": location["city"], "postalCode": location["postalCode"]}
+        allowed_postal_codes = {location["postalCode"]}
 
         listings: list[Listing] = []
         page = 1
@@ -328,21 +508,15 @@ class LaforetParser(BaseParser):
                 raise ValueError(f"ville/code postal invalide ({page_url})")
             resp.raise_for_status()
 
+            genuine_html = _extract_genuine_section(resp.text)
             if page == 1:
-                total_pages = _parse_total_pages(resp.text)
+                total_pages = _parse_total_pages(genuine_html)
 
-            for card in _parse_cards(resp.text):
+            for card in _parse_cards(genuine_html):
                 if card["reference"] in seen:
                     continue
                 listing = _dict_to_listing(card, property_type)
-                if not _passes_filters(listing, location_criteria):
-                    # Don't mark a *rejected* card as seen: in a multi-location
-                    # search, a listing that's backfill noise on one location's
-                    # page (wrong postal code there) can be the real match on
-                    # its own location's page later in the same scrape — verified
-                    # live this silently dropped real results (Paris 75015/75013
-                    # listings backfilled onto the 75014 page got blacklisted
-                    # before their own page was ever scraped).
+                if not _passes_filters(listing, criteria, allowed_postal_codes):
                     continue
                 seen.add(card["reference"])
                 listings.append(listing)
