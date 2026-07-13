@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from urllib.parse import urlencode
 
 import requests
 from bs4 import BeautifulSoup
@@ -348,19 +349,39 @@ class LaforetParser(BaseParser):
         return urls[0] if urls else None
 
     def build_search_urls(self, criteria: dict) -> list[str]:
-        """One plain, unfiltered city URL per location in `criteria`.
-
-        Purely illustrative (shown in the "Voir l'URL" UI) — the actual
-        scrape always merges every resolvable location into one request via
-        filter[cities][], these are not fetched separately unless a
-        location's postal code can't be resolved to an INSEE code.
+        """The URL(s) actually used to scrape — mirrors scrape()'s own
+        strategy exactly, so "Voir l'URL" shows the truth: every location
+        that resolves to an INSEE code is combined into one merged URL
+        (filter[cities][]), not shown as separate links per city/postal
+        code. Only a location that can't be resolved gets its own plain
+        URL, matching the real per-location fallback.
         """
+        locations = get_locations(criteria)
+        if not locations:
+            return []
+
         transaction = _transaction_slug(criteria)
         type_slug = _type_slug(criteria)
-        return [
-            f"{BASE_URL}/ville/{transaction}-{type_slug}-{_slugify(loc['city'])}-{loc['postalCode']}"
-            for loc in get_locations(criteria)
-        ]
+
+        resolved = []
+        unresolved = []
+        for loc in locations:
+            code = _resolve_insee_code(loc["postalCode"])
+            (resolved if code else unresolved).append((loc, code) if code else loc)
+
+        urls = []
+        if resolved:
+            primary_loc, _ = resolved[0]
+            base_path = (
+                f"{BASE_URL}/ville/{transaction}-{type_slug}-"
+                f"{_slugify(primary_loc['city'])}-{primary_loc['postalCode']}"
+            )
+            query_pairs = [("filter[types][]", _type_filter_value(criteria))]
+            query_pairs += [("filter[cities][]", code) for _, code in resolved]
+            urls.append(f"{base_path}?{urlencode(query_pairs)}")
+        for loc in unresolved:
+            urls.append(f"{BASE_URL}/ville/{transaction}-{type_slug}-{_slugify(loc['city'])}-{loc['postalCode']}")
+        return urls
 
     def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
         """`use_bff` is a SeLoger-specific concept and is ignored here."""

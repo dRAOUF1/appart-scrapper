@@ -92,23 +92,35 @@ class TestSlugify:
 
 
 class TestBuildSearchUrl:
+    """build_search_url()/build_search_urls() mirror scrape()'s own merge
+    strategy (see TestBuildSearchUrls) — every location resolvable to an
+    INSEE code produces one combined URL, exactly what's actually fetched,
+    not a plain per-location link. Paris/Lyon/Marseille resolve via the
+    pure arrondissement formula (no network call needed in these tests)."""
+
     def test_returns_none_without_city_or_postal_code(self):
         parser = LaforetParser()
         assert parser.build_search_url({}) is None
         assert parser.build_search_url({"city": "Paris"}) is None
 
-    def test_rent_apartment_url(self):
+    def test_rent_apartment_url_includes_merge_filters(self):
         parser = LaforetParser()
         url = parser.build_search_url({"city": "Paris", "postalCode": "75018"})
-        assert url == "https://www.laforet.com/ville/location-appartement-paris-75018"
+        assert url == (
+            "https://www.laforet.com/ville/location-appartement-paris-75018"
+            "?filter%5Btypes%5D%5B%5D=apartment&filter%5Bcities%5D%5B%5D=75118"
+        )
 
     def test_sale_house_url(self):
         parser = LaforetParser()
         url = parser.build_search_url({
-            "city": "Lyon", "postalCode": "69000",
+            "city": "Lyon", "postalCode": "69007",
             "distributionTypes": ["Sale"], "estateTypes": ["House"],
         })
-        assert url == "https://www.laforet.com/ville/achat-maison-lyon-69000"
+        assert url == (
+            "https://www.laforet.com/ville/achat-maison-lyon-69007"
+            "?filter%5Btypes%5D%5B%5D=house&filter%5Bcities%5D%5B%5D=69387"
+        )
 
     def test_unsupported_estate_type_raises(self):
         parser = LaforetParser()
@@ -117,46 +129,67 @@ class TestBuildSearchUrl:
                 "city": "Paris", "postalCode": "75018", "estateTypes": ["Parking"],
             })
 
-    def test_never_appends_filter_query_params(self):
-        """Purely illustrative URL (for the "Voir l'URL" UI) — the actual
-        scrape merges locations via filter[cities][] instead (see
-        TestScrapeMerged), so this reconstructed URL stays plain."""
+    def test_unresolvable_location_falls_back_to_a_plain_url(self):
+        """A postal code that can't be resolved to an INSEE code (unknown
+        geo API, foreign postal code) gets a plain link instead — matching
+        scrape()'s own per-location fallback, not a broken merged link."""
         parser = LaforetParser()
-        url = parser.build_search_url({
-            "city": "Paris", "postalCode": "75018",
-            "priceMin": 600, "priceMax": 850, "spaceMin": 20, "rooms": ["2"],
-        })
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            url = parser.build_search_url({"city": "Paris", "postalCode": "75018"})
         assert url == "https://www.laforet.com/ville/location-appartement-paris-75018"
         assert "filter" not in url
 
-    def test_build_search_url_returns_first_of_several_locations(self):
+    def test_build_search_url_returns_the_merged_url_for_several_locations(self):
         parser = LaforetParser()
         url = parser.build_search_url({"locations": [
             {"city": "Paris", "postalCode": "75014"},
             {"city": "Lyon", "postalCode": "69007"},
         ]})
-        assert url == "https://www.laforet.com/ville/location-appartement-paris-75014"
+        assert url == (
+            "https://www.laforet.com/ville/location-appartement-paris-75014"
+            "?filter%5Btypes%5D%5B%5D=apartment&filter%5Bcities%5D%5B%5D=75114&filter%5Bcities%5D%5B%5D=69387"
+        )
 
 
 class TestBuildSearchUrls:
-    """A search can span several cities/postal codes — one URL per location."""
+    """A search can span several cities/postal codes — reflects the real
+    scraping strategy: resolvable locations become one merged URL (what
+    "Voir l'URL" should show, since that's what's actually fetched), only
+    an unresolvable one gets its own separate plain URL."""
 
-    def test_one_url_per_location(self):
+    def test_resolvable_locations_produce_one_merged_url(self):
         parser = LaforetParser()
         urls = parser.build_search_urls({"locations": [
             {"city": "Paris", "postalCode": "75014"},
             {"city": "Lyon", "postalCode": "69007"},
         ]})
-        assert urls == [
-            "https://www.laforet.com/ville/location-appartement-paris-75014",
-            "https://www.laforet.com/ville/location-appartement-lyon-69007",
-        ]
+        assert len(urls) == 1
+        assert urls[0].startswith("https://www.laforet.com/ville/location-appartement-paris-75014?")
+        assert "filter%5Bcities%5D%5B%5D=75114" in urls[0]
+        assert "filter%5Bcities%5D%5B%5D=69387" in urls[0]
 
     def test_single_legacy_location_still_works(self):
         parser = LaforetParser()
-        assert parser.build_search_urls({"city": "Paris", "postalCode": "75018"}) == [
-            "https://www.laforet.com/ville/location-appartement-paris-75018"
-        ]
+        urls = parser.build_search_urls({"city": "Paris", "postalCode": "75018"})
+        assert len(urls) == 1
+        assert urls[0].startswith("https://www.laforet.com/ville/location-appartement-paris-75018?")
+
+    def test_unresolvable_location_gets_its_own_plain_url(self):
+        parser = LaforetParser()
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            urls = parser.build_search_urls({"city": "Paris", "postalCode": "75018"})
+        assert urls == ["https://www.laforet.com/ville/location-appartement-paris-75018"]
+
+    def test_mix_of_resolvable_and_unresolvable_locations(self):
+        parser = LaforetParser()
+        with patch("parsers.laforet._resolve_insee_code", side_effect=_arrondissement_insee_code):
+            urls = parser.build_search_urls({"locations": [
+                {"city": "Paris", "postalCode": "75014"},   # resolves
+                {"city": "Nawak", "postalCode": "99999"},   # doesn't
+            ]})
+        assert len(urls) == 2
+        assert "filter%5Bcities%5D%5B%5D=75114" in urls[0]
+        assert urls[1] == "https://www.laforet.com/ville/location-appartement-nawak-99999"
 
     def test_empty_without_any_location(self):
         assert LaforetParser().build_search_urls({}) == []
