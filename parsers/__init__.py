@@ -17,6 +17,7 @@ That's it — the new source is immediately available via get_parser("my_source"
 
 from parsers.base import BaseParser, ParserRegistry
 from parsers.seloger import SeLogerParser
+from parsers.laforet import LaforetParser
 
 # Register all parsers by importing them (class decorator handles registration)
 # To add a new source, import it here:
@@ -34,4 +35,4 @@ def list_sources() -> list[dict]:
     return ParserRegistry.list_sources()
 
 
-__all__ = ["BaseParser", "get_parser", "list_sources", "SeLogerParser"]
+__all__ = ["BaseParser", "get_parser", "list_sources", "SeLogerParser", "LaforetParser"]

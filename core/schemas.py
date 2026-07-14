@@ -15,6 +15,8 @@ class SearchCriteria(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     placeIds: list[str] | None = None
+    city: str | None = None
+    postalCode: str | None = None
     priceMin: int | None = None
     priceMax: int | None = None
     spaceMin: int | None = None

@@ -59,47 +59,86 @@ class ScrapeService:
             raise
 
     def _do_scrape(self, search, search_id, storage, notifier, started_at, log_mgr):
-        if not search.get("criteria", {}).get("placeIds"):
+        from parsers import get_parser
+
+        criteria = search.get("criteria", {})
+        if not criteria or not isinstance(criteria, dict):
             logger.warning(f"[search:{search_id}] Critères vides, skip")
             storage.scrape_logs.create_scrape_log(
                 search_id, "error",
-                error_message="Critères vides ou placeIds manquant",
+                error_message="Critères vides",
                 started_at=started_at,
             )
             return 0
 
         use_bff = storage.settings.get_setting("use_bff_api", "true") == "true"
+        sources = search.get("sources") or [search.get("source", "seloger")]
 
-        try:
-            from parsers import get_parser
-            parser = get_parser(search["source"])
-        except ValueError as e:
-            logger.error(f"[search:{search_id}] Parser inconnu: {e}")
+        # Chaque source encode la localisation différemment (placeIds opaques,
+        # ville+CP, ...) et peut être down indépendamment des autres : on
+        # scrape chacune séparément pour qu'une source en échec ne fasse pas
+        # échouer les autres.
+        per_source: dict[str, dict] = {}
+        any_valid = False
+        any_success = False
+        listings: list = []
+
+        for src in sources:
+            try:
+                parser = get_parser(src)
+            except ValueError as e:
+                logger.error(f"[search:{search_id}] Parser inconnu ({src}): {e}")
+                per_source[src] = {"error": f"Parser inconnu: {e}"}
+                continue
+
+            if not parser.has_valid_criteria(criteria):
+                logger.warning(f"[search:{search_id}] Critères invalides pour la source ({src}), source ignorée")
+                per_source[src] = {"error": "Critères invalides ou lieu manquant pour cette source"}
+                continue
+            any_valid = True
+
+            try:
+                source_listings = parser.scrape(criteria, use_bff=use_bff)
+            except Exception as e:
+                err_msg = str(e)
+                logger.error(f"[search:{search_id}] Erreur scraping ({src}): {err_msg}")
+                per_source[src] = {"error": err_msg}
+                continue
+
+            any_success = True
+            per_source[src] = {"found": len(source_listings)}
+            listings.extend(source_listings)
+
+        if not any_valid:
+            logger.warning(f"[search:{search_id}] Aucune source avec des critères valides")
             storage.scrape_logs.create_scrape_log(
                 search_id, "error",
-                error_message=f"Parser inconnu: {e}",
+                error_message="Critères vides ou lieu manquant pour toutes les sources",
                 started_at=started_at,
             )
             return 0
 
-        try:
-            listings = parser.scrape(search["criteria"], use_bff=use_bff)
-        except Exception as e:
-            err_msg = str(e)
-            logger.error(f"[search:{search_id}] Erreur scraping: {err_msg}")
+        if not any_success:
+            errors = "; ".join(f"{s}: {d['error']}" for s, d in per_source.items() if "error" in d)
             storage.scrape_logs.create_scrape_log(
                 search_id, "error",
-                error_message=err_msg,
+                error_message=errors or "Erreur de scraping",
                 started_at=started_at,
             )
             return 0
 
         if not listings:
+            # Toutes les sources valides ont tourné sans erreur mais n'ont
+            # rien trouvé — c'est un résultat légitime (ex: aucune annonce
+            # Laforet ne correspond au code postal + filtres demandés), pas
+            # un échec. Statut distinct de "error" pour ne pas l'afficher
+            # comme une panne dans les logs/l'UI.
             logger.info(f"[search:{search_id}] Aucune annonce trouvée")
             storage.scrape_logs.create_scrape_log(
-                search_id, "error",
-                error_message="Aucune annonce trouvée",
+                search_id, "empty",
+                error_message="Aucune annonce ne correspond aux critères",
                 listings_found=0, new_listings=0,
+                details={"per_source": per_source},
                 started_at=started_at,
             )
             return 0
@@ -146,7 +185,7 @@ class ScrapeService:
             search_id, "success",
             listings_found=len(listings),
             new_listings=len(new_listings),
-            details={"already_known": len(already)},
+            details={"already_known": len(already), "per_source": per_source},
             started_at=started_at,
         )
 

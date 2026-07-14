@@ -62,6 +62,21 @@ class Notifier:
             logger.error(f"Erreur reseau ntfy : {e}")
             return False
 
+    def _source_label(self, source: str) -> str:
+        """Display name for a listing's source (e.g. 'laforet' -> 'Laforêt').
+
+        Falls back to the raw source string for an unregistered source, or
+        empty if there's none at all — never hardcodes a single source name,
+        since notifications now come from more than just SeLoger.
+        """
+        if not source:
+            return ""
+        try:
+            from parsers import get_parser
+            return get_parser(source).SOURCE_NAME
+        except ValueError:
+            return source
+
     def notify_new_listing(self, topic: str, listing) -> bool:
         """Send a formatted notification for a new listing."""
         # Build a clean message with price, location, agency
@@ -79,7 +94,7 @@ class Notifier:
 
         message = "\n".join(parts) if parts else "Nouvelle annonce disponible"
 
-        title = "Nouvelle annonce SeLoger"
+        title = f"Nouvelle annonce {self._source_label(listing.source)}".rstrip()
 
         return self.send(
             topic=topic,
@@ -110,7 +125,7 @@ class Notifier:
         """Send a test notification to verify configuration."""
         return self.send(
             topic=topic,
-            title="SeLoger Scraper - Test",
+            title="Appart Scraper - Test",
             message="Les notifications fonctionnent ! Le scraper est pret.",
             tags="white_check_mark",
             priority="low",

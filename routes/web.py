@@ -44,7 +44,6 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
         order = form_data.get("order", "").strip()
         if place_ids:
             criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
-            criteria["location"] = {"placeIds": criteria["placeIds"]}
         if price_min:
             criteria["priceMin"] = int(price_min)
         if price_max:
@@ -61,7 +60,71 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
             criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
         criteria["order"] = order or "DateDesc"
 
+    # Ville + code postal : l'entrée de localisation universelle, utilisée
+    # par toutes les sources compatibles (indépendante de l'URL SeLoger
+    # ci-dessus, qui alimente le champ d'appoint propre à SeLoger).
+    # Plusieurs lignes ville/CP peuvent être soumises (une recherche peut
+    # couvrir plusieurs villes/codes postaux à la fois) — voir
+    # parsers.base.get_locations() côté lecture.
+    cities = form_data.getlist("location_city") if hasattr(form_data, "getlist") else form_data.get("location_city", [])
+    postal_codes = form_data.getlist("location_postal_code") if hasattr(form_data, "getlist") else form_data.get("location_postal_code", [])
+    if not isinstance(cities, list):
+        cities = [cities]
+    if not isinstance(postal_codes, list):
+        postal_codes = [postal_codes]
+
+    locations = []
+    for city, postal_code in zip(cities, postal_codes):
+        city, postal_code = city.strip(), postal_code.strip()
+        if city and postal_code:
+            locations.append({"city": city, "postalCode": postal_code})
+
+    if locations:
+        criteria["locations"] = locations
+        # Miroir de la première localisation dans les clés à plat, pour tout
+        # code (ou vieille recherche) qui lit encore city/postalCode direct.
+        criteria["city"] = locations[0]["city"]
+        criteria["postalCode"] = locations[0]["postalCode"]
+
     return criteria
+
+
+def _validate_sources_criteria(sources: list[str], criteria: dict) -> list[dict]:
+    """Per-source validity of `criteria`, with a precise, actionable reason
+    when a selected source can't run — instead of one generic "invalid
+    criteria" message covering every source indiscriminately."""
+    from parsers import get_parser
+
+    results = []
+    for src in sources:
+        try:
+            parser = get_parser(src)
+        except ValueError:
+            results.append({"id": src, "name": src, "ok": False, "reason": "Source inconnue"})
+            continue
+
+        ok = parser.has_valid_criteria(criteria)
+        reason = ""
+        if not ok:
+            reason = parser.EXTRA_LOCATION_HELP if parser.REQUIRES_EXTRA_LOCATION else "Ville et code postal requis"
+        results.append({"id": src, "name": parser.SOURCE_NAME, "ok": ok, "reason": reason})
+    return results
+
+
+def _validation_error_message(results: list[dict]) -> str:
+    """Format a precise, per-source error message from _validate_sources_criteria().
+
+    A source's own reason (e.g. SeLoger's EXTRA_LOCATION_HELP) may already
+    name that source — avoid an awkward "SeLoger : SeLoger ne peut pas...".
+    """
+    failing = [r for r in results if not r["ok"]]
+    parts = []
+    for r in failing:
+        if r["reason"] and r["name"] in r["reason"]:
+            parts.append(r["reason"])
+        else:
+            parts.append(f"{r['name']} : {r['reason']}")
+    return " / ".join(parts)
 
 
 def _submit_scrape(search_id: int, user_id: int):
@@ -129,22 +192,24 @@ def searches():
     if request.method == "POST":
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
-        source = request.form.get("source", "seloger").strip()
+        selected_sources = request.form.getlist("sources") or [request.form.get("source", "seloger").strip()]
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
         criteria = _parse_search_criteria_from_form(request.form)
 
-        if not criteria.get("placeIds"):
-            flash("L'URL ne contient pas de lieu valide (locations=...)", "error")
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not all(r["ok"] for r in validation):
+            flash(_validation_error_message(validation), "error")
             return redirect(url_for("web.searches"))
 
-        if label and ntfy_topic and criteria.get("placeIds"):
+        if label and ntfy_topic:
             current_app.storage.searches.create_search(
-                g.user["id"], label, ntfy_topic, source, criteria, scrape_interval
+                g.user["id"], label, ntfy_topic, selected_sources[0], criteria, scrape_interval,
+                sources=selected_sources,
             )
             flash(f"Recherche « {label} » créée !", "success")
         else:
-            flash("Label, topic ntfy et au moins un lieu requis", "error")
+            flash("Label et topic ntfy requis", "error")
         return redirect(url_for("web.searches"))
 
     all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
@@ -261,23 +326,26 @@ def edit_search(search_id: int):
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
+        selected_sources = request.form.getlist("sources") or search.get("sources") or [search.get("source", "seloger")]
 
         criteria = _parse_search_criteria_from_form(request.form)
 
-        if not criteria.get("placeIds"):
-            flash("L'URL ne contient pas de lieu valide", "error")
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not all(r["ok"] for r in validation):
+            flash(_validation_error_message(validation), "error")
             return render_template("search_edit.html", search=search, sources=list_sources(), now=datetime.utcnow)
 
-        if label and ntfy_topic and criteria.get("placeIds"):
+        if label and ntfy_topic:
             storage.searches.update_search(
                 search_id, g.user["id"],
                 label=label, ntfy_topic=ntfy_topic,
                 criteria=criteria, scrape_interval=scrape_interval,
+                sources=selected_sources,
             )
             flash("Recherche mise à jour !", "success")
             return redirect(url_for("web.searches"))
         else:
-            flash("Label, topic ntfy et au moins un lieu requis", "error")
+            flash("Label et topic ntfy requis", "error")
 
     stats = storage.scrape_logs.get_scrape_stats(search_id)
     return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)

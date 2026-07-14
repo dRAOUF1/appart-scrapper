@@ -208,6 +208,24 @@ class TestWebRoutes:
             resp = client.post("/login", data={"username": "conflict"})
             assert resp.status_code == 200
 
+    def test_searches_create_form_reopens_after_validation_error(self):
+        """The create-search form is collapsed by default once searches
+        exist, but a failed validation must reopen it — otherwise the error
+        toast appears with no visible form to act on it."""
+        app = _make_app()
+        app.storage.users.get_user_by_token.return_value = {"id": 1, "username": "u", "api_token": "tok"}
+        app.storage.searches.get_user_searches.return_value = [
+            {"id": 1, "label": "Existing", "sources": ["laforet"], "source": "laforet", "criteria": {}}
+        ]
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["user_id"] = 1
+                sess["username"] = "u"
+                sess["api_token"] = "tok"
+            client.post("/searches", data={"label": "Bad", "ntfy_topic": "test"}, follow_redirects=False)
+            resp = client.get("/searches")
+        assert b'<details class="card create-search-card" open>' in resp.data
+
     def test_logout_clears_session_and_redirects(self):
         app = _make_app()
         with app.test_client() as client:
@@ -362,6 +380,111 @@ class TestParseSearchCriteriaFromForm:
         form = {"place_ids": "AD08FR12345"}
         criteria = _parse_search_criteria_from_form(form)
         assert criteria["order"] == "DateDesc"
+
+    def test_multiple_location_rows_build_locations_list(self):
+        """A search can cover several cities/postal codes — one
+        location_city/location_postal_code pair per submitted row."""
+        from werkzeug.datastructures import MultiDict
+        from routes.web import _parse_search_criteria_from_form
+
+        form = MultiDict([
+            ("location_city", "Paris"), ("location_postal_code", "75014"),
+            ("location_city", "Lyon"), ("location_postal_code", "69007"),
+        ])
+        criteria = _parse_search_criteria_from_form(form)
+        assert criteria["locations"] == [
+            {"city": "Paris", "postalCode": "75014"},
+            {"city": "Lyon", "postalCode": "69007"},
+        ]
+        # First location mirrored into the flat legacy keys.
+        assert criteria["city"] == "Paris"
+        assert criteria["postalCode"] == "75014"
+
+    def test_incomplete_location_rows_are_skipped(self):
+        """A row with a city but no postal code (or vice versa) — e.g. the
+        user added a row and didn't fill it in — must not produce a bogus
+        half-empty location."""
+        from werkzeug.datastructures import MultiDict
+        from routes.web import _parse_search_criteria_from_form
+
+        form = MultiDict([
+            ("location_city", "Paris"), ("location_postal_code", "75014"),
+            ("location_city", ""), ("location_postal_code", ""),
+            ("location_city", "Lyon"), ("location_postal_code", ""),
+        ])
+        criteria = _parse_search_criteria_from_form(form)
+        assert criteria["locations"] == [{"city": "Paris", "postalCode": "75014"}]
+
+    def test_no_location_rows_means_no_locations_key(self):
+        from routes.web import _parse_search_criteria_from_form
+
+        criteria = _parse_search_criteria_from_form({"place_ids": "AD08FR12345"})
+        assert "locations" not in criteria
+
+
+class TestValidateSourcesCriteria:
+    """Per-source validation must give a precise, actionable reason instead
+    of one generic message covering every selected source indiscriminately."""
+
+    def test_laforet_valid_with_city_and_postal_code(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["laforet"], {"city": "Paris", "postalCode": "75018"})
+        assert results == [{"id": "laforet", "name": "Laforêt", "ok": True, "reason": ""}]
+
+    def test_laforet_invalid_without_location_gives_generic_reason(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["laforet"], {})
+        assert len(results) == 1
+        assert results[0]["ok"] is False
+        assert "Ville" in results[0]["reason"]
+
+    def test_seloger_invalid_gives_source_specific_help_text(self):
+        """SeLoger's failure reason must be its own EXTRA_LOCATION_HELP, not
+        the generic "Ville et code postal requis" — it needs a Place ID."""
+        from routes.web import _validate_sources_criteria
+        from parsers.seloger import SeLogerParser
+
+        results = _validate_sources_criteria(["seloger"], {"city": "Paris", "postalCode": "75018"})
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == SeLogerParser.EXTRA_LOCATION_HELP
+
+    def test_unknown_source_reported_as_invalid(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["totally_unknown"], {"city": "Paris", "postalCode": "75018"})
+        assert results == [{"id": "totally_unknown", "name": "totally_unknown", "ok": False, "reason": "Source inconnue"}]
+
+    def test_multiple_sources_validated_independently(self):
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(
+            ["seloger", "laforet"], {"city": "Paris", "postalCode": "75018"}
+        )
+        by_id = {r["id"]: r for r in results}
+        assert by_id["seloger"]["ok"] is False
+        assert by_id["laforet"]["ok"] is True
+
+
+class TestValidationErrorMessage:
+    def test_lists_only_failing_sources_with_their_reason(self):
+        from routes.web import _validation_error_message
+
+        results = [
+            {"id": "seloger", "name": "SeLoger", "ok": False, "reason": "besoin d'un Place ID"},
+            {"id": "laforet", "name": "Laforêt", "ok": True, "reason": ""},
+        ]
+        message = _validation_error_message(results)
+        assert "SeLoger" in message
+        assert "besoin d'un Place ID" in message
+        assert "Laforêt" not in message
+
+    def test_empty_when_all_valid(self):
+        from routes.web import _validation_error_message
+
+        results = [{"id": "laforet", "name": "Laforêt", "ok": True, "reason": ""}]
+        assert _validation_error_message(results) == ""
 
 
 class TestRouteIntegrity:
