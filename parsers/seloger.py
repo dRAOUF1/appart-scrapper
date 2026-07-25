@@ -176,18 +176,10 @@ class SeLogerParser(BaseParser):
 
         place_ids = []
         for location in locations:
-            insee_code = location.get("inseeCode")
-            if not insee_code:
-                # Localisation saisie à la main, jamais passée par
-                # l'autocomplete : rien pour interroger le cache.
-                logger.warning(
-                    f"[SeLoger] {location['city']} ({location['postalCode']}) sans code INSEE, "
-                    "impossible de résoudre le placeId"
-                )
-                continue
-            place_id = seloger_geocode.resolve_place_id(
-                insee_code, location["city"], location["postalCode"], repo=repo
-            )
+            # Un identifiant par périmètre, quel que soit son niveau : SeLoger
+            # en a un pour une région comme pour un code postal, et il couvre
+            # tout le périmètre à lui seul.
+            place_id = seloger_geocode.resolve_place_id(location, repo=repo)
             if place_id and place_id not in place_ids:
                 place_ids.append(place_id)
         return place_ids
@@ -296,8 +288,8 @@ class SeLogerParser(BaseParser):
         return build_search_url(native, order="DateDesc")
 
     def has_valid_criteria(self, criteria: dict) -> bool:
-        """Utilisable dès qu'il y a un placeId manuel, ou une localisation
-        dont le code INSEE permettra de résoudre un placeId.
+        """Utilisable dès qu'il y a un placeId manuel, ou au moins un périmètre
+        identifiable dont on saura résoudre le placeId.
 
         La résolution elle-même est tentée au moment du scrape, pas ici : la
         création d'une recherche ne doit pas dépendre d'un appel réseau à
@@ -305,15 +297,18 @@ class SeLogerParser(BaseParser):
         """
         if source_overrides(criteria, self.SOURCE_ID).get("placeIds"):
             return True
-        return any(loc.get("inseeCode") for loc in get_locations(criteria))
+
+        from services.seloger_geocode import area_cache_key
+
+        return any(area_cache_key(loc) for loc in get_locations(criteria))
 
     def cannot_search_reason(self, criteria: dict) -> str | None:
         """Même contrat que BaseParser, avec un message qui explique le repli
-        possible quand la localisation n'a pas de code INSEE."""
+        possible quand le périmètre n'est pas identifiable."""
         if not self.has_valid_criteria(criteria):
             if get_locations(criteria):
                 return (
-                    "la localisation n'a pas de code INSEE (choisissez la ville dans "
+                    "la localisation n'a pas de code INSEE (choisissez-la dans "
                     "la liste de suggestions, ou renseignez un Place ID SeLoger)"
                 )
             return "aucune localisation exploitable (ville + code postal requis)"

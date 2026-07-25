@@ -120,9 +120,14 @@ def create_app() -> Flask:
     @app.context_processor
     def inject_admin():
         import datetime
+        from core.criteria import location_label
+
         return {
             "admin_username": os.environ.get("ADMIN_USERNAME", "admin"),
             "now": lambda: datetime.datetime.now(FR_TZ),
+            # Un périmètre s'affiche de la même façon partout (formulaire,
+            # étiquettes des recherches, suggestions de l'autocomplete).
+            "location_label": location_label,
         }
 
     _start_background_tasks(app)

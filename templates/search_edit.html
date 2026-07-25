@@ -79,27 +79,31 @@
 
         <div class="form-section">
             <div class="form-section-label">📍 Localisation</div>
-            {% set _locations = search.criteria.locations or [{'city': '', 'postalCode': '', 'inseeCode': ''}] %}
+            {% set _locations = search.criteria.locations or [None] %}
             <div class="location-list" data-location-list>
                 {% for loc in _locations %}
                 <div class="location-row" data-location-row>
                     <div class="location-autocomplete">
-                        <input type="text" name="location_city" value="{{ loc.city }}"
-                            placeholder="Ville (ex: Paris)" aria-label="Ville"
+                        <input type="text" name="location_city"
+                            value="{{ location_label(loc) if loc else '' }}"
+                            placeholder="Ville, département ou région" aria-label="Localisation"
                             autocomplete="off" data-location-input>
                         <ul class="location-suggestions" data-location-suggestions hidden></ul>
                     </div>
-                    <input type="text" name="location_postal_code" value="{{ loc.postalCode }}"
-                        placeholder="Code postal (ex: 75018)" aria-label="Code postal" data-location-postal>
-                    <input type="hidden" name="location_insee_code" value="{{ loc.inseeCode or '' }}" data-location-insee>
-                    <button type="button" class="location-remove-btn" aria-label="Retirer cette ville">✕</button>
+                    <input type="text" name="location_postal_code"
+                        value="{{ loc.postalCode if loc and loc.kind == 'city' else '' }}"
+                        placeholder="Code postal" aria-label="Code postal" data-location-postal>
+                    <input type="hidden" name="location_payload"
+                        value="{{ loc | tojson if loc else '' }}" data-location-payload>
+                    <button type="button" class="location-remove-btn" aria-label="Retirer cette localisation">✕</button>
                 </div>
                 {% endfor %}
             </div>
-            <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une ville</button>
+            <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une localisation</button>
             <small class="form-help" style="display: block; margin-top: 0.5rem;">
-                Choisis la ville dans les suggestions : toutes les sources s'appuient dessus pour
-                retrouver le lieu chez elles. Tu peux en ajouter plusieurs dans la même recherche.
+                Tape une ville, un département (« Gironde ») ou une région (« Île-de-France ») et
+                choisis dans les suggestions. « Paris » propose aussi la ville entière, tous
+                arrondissements d'un coup. Tu peux en ajouter plusieurs dans la même recherche.
             </small>
         </div>
 

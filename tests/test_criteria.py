@@ -2,6 +2,7 @@
 
 from core.criteria import (
     APARTMENT,
+    matches_locations,
     BUY,
     HOUSE,
     LAND,
@@ -21,7 +22,7 @@ class TestCanonicalPassthrough:
 
     def test_already_canonical_is_unchanged(self):
         criteria = {
-            "locations": [{"city": "Paris", "postalCode": "75015", "inseeCode": "75115"}],
+            "locations": [{"kind": "city", "city": "Paris", "postalCode": "75015", "inseeCode": "75115"}],
             "transaction": RENT,
             "propertyTypes": [APARTMENT],
             "priceMin": 500,
@@ -60,7 +61,7 @@ class TestLegacyVocabulary:
 
     def test_flat_city_postal_code_becomes_a_location(self):
         result = normalize_criteria({"city": "Poitiers", "postalCode": "86000"})
-        assert result["locations"] == [{"city": "Poitiers", "postalCode": "86000"}]
+        assert result["locations"] == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
 
     def test_locations_win_over_the_flat_pair(self):
         """Le couple à plat n'était qu'un miroir de la première localisation
@@ -120,7 +121,7 @@ class TestRobustness:
             {"city": "  ", "postalCode": "75015"},
             {"city": "Lyon", "postalCode": "69007"},
         ]})
-        assert result["locations"] == [{"city": "Lyon", "postalCode": "69007"}]
+        assert result["locations"] == [{"kind": "city", "city": "Lyon", "postalCode": "69007"}]
 
     def test_optional_location_fields_are_kept_when_present(self):
         result = normalize_criteria({"locations": [
@@ -137,7 +138,7 @@ class TestRobustness:
         })
         assert result["transaction"] == RENT
         assert result["propertyTypes"] == [APARTMENT]
-        assert result["locations"] == [{"city": "Paris", "postalCode": "75015"}]
+        assert result["locations"] == [{"kind": "city", "city": "Paris", "postalCode": "75015"}]
 
     def test_numeric_postal_code_is_stringified(self):
         result = normalize_criteria({"locations": [{"city": "Paris", "postalCode": 75015}]})
@@ -146,6 +147,104 @@ class TestRobustness:
     def test_duplicate_property_types_are_collapsed(self):
         result = normalize_criteria({"propertyTypes": ["apartment", "Apartment"]})
         assert result["propertyTypes"] == [APARTMENT]
+
+
+class TestWideAreaLocations:
+    """Les périmètres plus larges qu'une commune : région, département, ville
+    entière. Chaque source les traduit vers son propre identifiant."""
+
+    def test_region_keeps_its_code_and_departments(self):
+        result = normalize_criteria({"locations": [{
+            "kind": "region", "name": "Île-de-France", "code": "11",
+            "departments": ["75", "77", "78", "91", "92", "93", "94", "95"],
+        }]})
+        assert result["locations"] == [{
+            "kind": "region", "code": "11", "name": "Île-de-France",
+            "departments": ["75", "77", "78", "91", "92", "93", "94", "95"],
+        }]
+
+    def test_department_keeps_its_code(self):
+        result = normalize_criteria({"locations": [
+            {"kind": "department", "name": "Gironde", "code": "33"},
+        ]})
+        assert result["locations"] == [{"kind": "department", "code": "33", "name": "Gironde"}]
+
+    def test_whole_city_keeps_all_its_postal_codes(self):
+        result = normalize_criteria({"locations": [{
+            "kind": "whole_city", "city": "Bordeaux", "inseeCode": "33063",
+            "postalCodes": ["33800", "33000", "33000"],
+        }]})
+        assert result["locations"] == [{
+            "kind": "whole_city", "city": "Bordeaux",
+            "postalCodes": ["33000", "33800"], "inseeCode": "33063",
+        }]
+
+    def test_a_wide_area_without_a_code_is_dropped(self):
+        """Sans code, le périmètre est inexploitable — mieux vaut l'écarter que
+        de lancer une recherche sur un lieu indéterminé."""
+        assert normalize_criteria({"locations": [{"kind": "region", "name": "Nulle part"}]}) == {}
+        assert normalize_criteria({"locations": [{"kind": "department", "name": "X"}]}) == {}
+
+    def test_a_whole_city_without_postal_codes_is_dropped(self):
+        assert normalize_criteria({"locations": [
+            {"kind": "whole_city", "city": "Bordeaux", "inseeCode": "33063"},
+        ]}) == {}
+
+    def test_unknown_kind_is_dropped_not_guessed(self):
+        assert normalize_criteria({"locations": [
+            {"kind": "planet", "city": "Mars", "postalCode": "00000"},
+        ]}) == {}
+
+    def test_mixed_levels_coexist(self):
+        result = normalize_criteria({"locations": [
+            {"kind": "region", "name": "Île-de-France", "code": "11", "departments": ["75"]},
+            {"kind": "department", "name": "Gironde", "code": "33"},
+            {"city": "Poitiers", "postalCode": "86000"},
+        ]})
+        assert [loc["kind"] for loc in result["locations"]] == ["region", "department", "city"]
+
+
+class TestPostalCodeMatching:
+    """Le contrôle local qui garantit qu'une annonce est bien dans le périmètre
+    demandé — les sources élargissent parfois d'elles-mêmes (Laforet inclut la
+    métropole autour d'une commune)."""
+
+    def test_city_requires_an_exact_postal_code(self):
+        locations = [{"kind": "city", "city": "Bordeaux", "postalCode": "33000"}]
+        assert matches_locations("33000", locations) is True
+        assert matches_locations("33800", locations) is False
+
+    def test_whole_city_accepts_all_its_postal_codes(self):
+        locations = [{"kind": "whole_city", "city": "Bordeaux",
+                      "postalCodes": ["33000", "33800"]}]
+        assert matches_locations("33800", locations) is True
+        assert matches_locations("33300", locations) is False
+
+    def test_department_accepts_the_whole_range(self):
+        locations = [{"kind": "department", "name": "Gironde", "code": "33"}]
+        assert matches_locations("33000", locations) is True
+        assert matches_locations("33640", locations) is True
+        assert matches_locations("75015", locations) is False
+
+    def test_region_accepts_every_department(self):
+        locations = [{"kind": "region", "name": "Île-de-France", "code": "11",
+                      "departments": ["75", "92", "93"]}]
+        assert matches_locations("75015", locations) is True
+        assert matches_locations("93200", locations) is True
+        assert matches_locations("33000", locations) is False
+
+    def test_corsica_departments_use_the_20_prefix(self):
+        """2A/2B n'apparaissent jamais dans un code postal : la Corse est en
+        20xxx. Sans ce traitement, une recherche corse ne ramènerait rien."""
+        locations = [{"kind": "department", "name": "Corse-du-Sud", "code": "2A"}]
+        assert matches_locations("20000", locations) is True
+
+    def test_a_listing_without_a_postal_code_never_matches(self):
+        """On n'accorde jamais le bénéfice du doute sur la localisation."""
+        assert matches_locations("", [{"kind": "department", "code": "33"}]) is False
+
+    def test_no_location_matches_nothing(self):
+        assert matches_locations("33000", []) is False
 
 
 class TestSourceOverrides:

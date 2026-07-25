@@ -200,12 +200,30 @@ class Storage:
                 # d'objet. Supprimé ici pour que les bases déjà déployées ne
                 # gardent pas un réglage mort.
                 cur.execute("DELETE FROM app_settings WHERE key = 'use_bff_api';")
+                # `area_key` identifie un périmètre à n'importe quel niveau —
+                # un code INSEE de commune, "city:<insee>", "dept:<code>" ou
+                # "region:<code>" (voir services.seloger_geocode.area_cache_key).
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS seloger_place_ids (
-                        insee_code  TEXT PRIMARY KEY,
+                        area_key    TEXT PRIMARY KEY,
                         place_id    TEXT,
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
+                """)
+                # La colonne s'appelait insee_code quand seules les communes
+                # étaient gérées : renommage idempotent pour les bases déjà
+                # créées avec l'ancien nom (les codes INSEE nus restent des
+                # clés valides, rien à réécrire).
+                cur.execute("""
+                    DO $$ BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'seloger_place_ids'
+                              AND column_name = 'insee_code'
+                        ) THEN
+                            ALTER TABLE seloger_place_ids RENAME COLUMN insee_code TO area_key;
+                        END IF;
+                    END $$;
                 """)
                 phase_start = _log_phase("create_tables")
 

@@ -32,7 +32,7 @@ class TestValidateCriteria:
         assert result["transaction"] == "buy"
         assert result["propertyTypes"] == ["house"]
         assert result["surfaceMin"] == 40
-        assert result["locations"] == [{"city": "Poitiers", "postalCode": "86000"}]
+        assert result["locations"] == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
 
     def test_source_specific_keys_land_in_source_overrides(self):
         """placeIds et locationsInBuildingExcluded sont propres à SeLoger :

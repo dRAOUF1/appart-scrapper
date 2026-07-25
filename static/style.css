@@ -728,6 +728,10 @@ code {
 }
 
 .location-suggestion {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     padding: 0.55rem 0.75rem;
     border-radius: var(--radius-sm);
     color: var(--text-primary);
@@ -739,6 +743,20 @@ code {
 .location-suggestion:hover {
     background: var(--accent-glow);
     color: var(--accent);
+}
+
+/* Le niveau du périmètre (région, département, ville entière, code postal) :
+   « Gironde » peut être un département comme une commune, il faut pouvoir
+   distinguer les deux d'un coup d'œil. */
+.location-suggestion-kind {
+    flex-shrink: 0;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--glass-border);
+    color: var(--text-tertiary);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
 }
 
 /* ============================================================

@@ -18,6 +18,30 @@ def _clear_insee_cache():
     _INSEE_CACHE.clear()
 
 
+def _geo_mock(communes=None, departements=None, regions=None):
+    """Mock de requests.get qui répond selon l'endpoint interrogé.
+
+    search_locations() interroge régions, départements et communes : un mock
+    unique renverrait des communes en guise de régions.
+    """
+    def fake_get(url, **kwargs):
+        if "/regions" in url and "/departements" in url:
+            return _resp([{"code": d} for d in (regions or {}).get("departements", [])])
+        if url.endswith("/regions"):
+            return _resp(regions.get("results", []) if regions else [])
+        if url.endswith("/departements"):
+            return _resp(departements or [])
+        return _resp(communes or [])
+    return fake_get
+
+
+def _resp(payload):
+    r = MagicMock(status_code=200)
+    r.json.return_value = payload
+    r.raise_for_status.return_value = None
+    return r
+
+
 class TestArrondissementInseeCode:
     """Paris/Lyon/Marseille arrondissements need a special code (e.g.
     Laforet's filter[cities][]) — formulas verified against Laforet's own
@@ -103,9 +127,10 @@ class TestSearchLocations:
             "centre": {"type": "Point", "coordinates": [-1.5603, 47.2382]},
         }]
         resp.raise_for_status.return_value = None
-        with patch("core.geocode.requests.get", return_value=resp):
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=resp.json.return_value)):
             suggestions = search_locations("nantes")
         assert suggestions == [{
+            "kind": "city",
             "label": "Nantes (44000)",
             "city": "Nantes",
             "postalCode": "44000",
@@ -129,9 +154,9 @@ class TestSearchLocations:
             "centre": {"type": "Point", "coordinates": [2.347, 48.8589]},
         }]
         resp.raise_for_status.return_value = None
-        with patch("core.geocode.requests.get", return_value=resp):
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=resp.json.return_value)):
             suggestions = search_locations("paris")
-        by_postal = {s["postalCode"]: s["inseeCode"] for s in suggestions}
+        by_postal = {s["postalCode"]: s["inseeCode"] for s in suggestions if s["kind"] == "city"}
         assert by_postal == {"75001": "75101", "75002": "75102", "75015": "75115"}
 
     def test_deduplicates_by_insee_code(self):
@@ -143,7 +168,7 @@ class TestSearchLocations:
              "centre": {"coordinates": [-1.5603, 47.2382]}},
         ]
         resp.raise_for_status.return_value = None
-        with patch("core.geocode.requests.get", return_value=resp):
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=resp.json.return_value)):
             suggestions = search_locations("nantes")
         assert len(suggestions) == 1
 
@@ -151,12 +176,132 @@ class TestSearchLocations:
         resp = MagicMock(status_code=200)
         resp.json.return_value = [{"nom": "Nowhere", "code": "00000", "codesPostaux": []}]
         resp.raise_for_status.return_value = None
-        with patch("core.geocode.requests.get", return_value=resp):
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=resp.json.return_value)):
             assert search_locations("nowhere") == []
 
     def test_network_error_returns_empty_list(self):
         with patch("core.geocode.requests.get", side_effect=Exception("boom")):
             assert search_locations("paris") == []
+
+
+class TestWideAreaSuggestions:
+    """L'autocomplete doit proposer des périmètres plus larges qu'une commune :
+    « Île-de-France » ou « Gironde » plutôt qu'une saisie ville par ville. Les
+    deux sources savent chercher à ces niveaux en une seule requête."""
+
+    def test_region_is_suggested_with_its_departments(self):
+        regions = {"results": [{"nom": "Île-de-France", "code": "11"}],
+                   "departements": ["75", "77", "78", "91", "92", "93", "94", "95"]}
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(regions=regions)):
+            suggestions = search_locations("ile de france")
+        assert len(suggestions) == 1
+        region = suggestions[0]
+        assert region["kind"] == "region"
+        assert region["code"] == "11"
+        assert region["name"] == "Île-de-France"
+        # Les départements sont mémorisés à la saisie : les sources qui ne
+        # connaissent que les départements en ont besoin au scrape.
+        assert region["departments"] == ["75", "77", "78", "91", "92", "93", "94", "95"]
+
+    def test_department_is_suggested(self):
+        with patch("core.geocode.requests.get",
+                   side_effect=_geo_mock(departements=[{"nom": "Gironde", "code": "33"}])):
+            suggestions = search_locations("gironde")
+        assert [s["kind"] for s in suggestions] == ["department"]
+        assert suggestions[0]["code"] == "33"
+
+    def test_wide_areas_come_before_communes(self):
+        """« gironde » doit proposer le département avant les communes
+        homonymes (Gironde-sur-Dropt, Castres-Gironde...), sinon il est noyé."""
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(
+            departements=[{"nom": "Gironde", "code": "33"}],
+            communes=[{"nom": "Gironde-sur-Dropt", "code": "33190",
+                       "codesPostaux": ["33190"], "centre": {"coordinates": [0, 0]}}],
+        )):
+            suggestions = search_locations("gironde")
+        assert [s["kind"] for s in suggestions] == ["department", "city"]
+
+    def test_multi_postal_code_city_gets_a_whole_city_entry(self):
+        """Bordeaux couvre 5 codes postaux : il faut pouvoir prendre la ville
+        entière d'un coup, au lieu d'ajouter 5 lignes à la main."""
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=[{
+            "nom": "Bordeaux", "code": "33063",
+            "codesPostaux": ["33000", "33100", "33200", "33300", "33800"],
+            "centre": {"coordinates": [-0.57, 44.84]},
+        }])):
+            suggestions = search_locations("bordeaux")
+        whole = suggestions[0]
+        assert whole["kind"] == "whole_city"
+        assert whole["inseeCode"] == "33063"
+        assert whole["postalCodes"] == ["33000", "33100", "33200", "33300", "33800"]
+        # Les codes postaux restent proposés individuellement derrière.
+        assert [s["kind"] for s in suggestions[1:]] == ["city"] * 5
+
+    def test_single_postal_code_city_has_no_whole_city_entry(self):
+        """Poitiers n'a qu'un code postal : une entrée « toute la ville »
+        ferait doublon avec l'entrée du code postal."""
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=[{
+            "nom": "Poitiers", "code": "86194", "codesPostaux": ["86000"],
+            "centre": {"coordinates": [0.37, 46.58]},
+        }])):
+            suggestions = search_locations("poitiers")
+        assert [s["kind"] for s in suggestions] == ["city"]
+
+    def test_department_covering_the_same_city_is_dropped(self):
+        """Paris est à la fois une commune (75056) et un département (75) sur
+        le même territoire : les deux entrées seraient indiscernables pour
+        l'utilisateur, on ne garde que la ville."""
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(
+            departements=[{"nom": "Paris", "code": "75"}],
+            communes=[{"nom": "Paris", "code": "75056",
+                       "codesPostaux": ["75001", "75002"],
+                       "centre": {"coordinates": [2.35, 48.86]}}],
+        )):
+            suggestions = search_locations("paris")
+        assert "department" not in [s["kind"] for s in suggestions]
+        assert suggestions[0]["kind"] == "whole_city"
+
+
+class TestRegionDepartments:
+    def test_returns_department_codes(self):
+        from core.geocode import region_departments
+        with patch("core.geocode.requests.get",
+                   side_effect=_geo_mock(regions={"departements": ["2A", "2B"]})):
+            assert region_departments("94") == ["2A", "2B"]
+
+    def test_result_is_cached(self):
+        from core.geocode import _REGION_DEPARTMENTS_CACHE, region_departments
+        _REGION_DEPARTMENTS_CACHE.clear()
+        mock = MagicMock(side_effect=_geo_mock(regions={"departements": ["33"]}))
+        with patch("core.geocode.requests.get", mock):
+            region_departments("75")
+            region_departments("75")
+        assert mock.call_count == 1
+        _REGION_DEPARTMENTS_CACHE.clear()
+
+    def test_network_error_returns_empty(self):
+        from core.geocode import _REGION_DEPARTMENTS_CACHE, region_departments
+        _REGION_DEPARTMENTS_CACHE.clear()
+        with patch("core.geocode.requests.get", side_effect=Exception("boom")):
+            assert region_departments("11") == []
+
+
+class TestPostalPrefix:
+    """Le code postal se déduit du code département, sauf en Corse."""
+
+    def test_mainland_and_overseas(self):
+        from core.geocode import postal_prefix
+        assert postal_prefix("33") == "33"
+        assert postal_prefix("75") == "75"
+        assert postal_prefix("971") == "971"
+
+    def test_corsica_uses_20(self):
+        """2A et 2B ont tous deux des codes postaux en 20xxx — vérifié via
+        l'API : aucun code postal corse ne commence par « 2A » ou « 2B »."""
+        from core.geocode import postal_prefix
+        assert postal_prefix("2A") == "20"
+        assert postal_prefix("2B") == "20"
+        assert postal_prefix("2a") == "20"
 
     def test_respects_limit(self):
         resp = MagicMock(status_code=200)
@@ -166,6 +311,6 @@ class TestSearchLocations:
             "centre": {"coordinates": [2.347, 48.8589]},
         }]
         resp.raise_for_status.return_value = None
-        with patch("core.geocode.requests.get", return_value=resp):
+        with patch("core.geocode.requests.get", side_effect=_geo_mock(communes=resp.json.return_value)):
             suggestions = search_locations("paris", limit=3)
         assert len(suggestions) == 3

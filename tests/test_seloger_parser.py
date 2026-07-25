@@ -85,12 +85,15 @@ class TestToNative:
         assert mock_resolve.call_count == 2
 
     def test_locations_without_insee_code_are_skipped(self):
-        parser = resolving_parser()
+        """Une ville tapée à la main n'a pas de code INSEE : rien ne permet
+        d'identifier le périmètre, donc aucun placeId — et surtout aucun appel
+        réseau à SeLoger pour rien."""
+        parser = SeLogerParser(storage=MagicMock(**{"seloger_geo.get_cached.return_value": None}))
         criteria = {"locations": [{"city": "Paris", "postalCode": "75015"}]}
-        with patch("services.seloger_geocode.resolve_place_id") as mock_resolve:
+        with patch("services.seloger_geocode._resolve_uncached") as mock_lookup:
             native = parser.to_native(criteria)
         assert "placeIds" not in native
-        mock_resolve.assert_not_called()
+        mock_lookup.assert_not_called()
 
     def test_unresolvable_location_yields_no_place_id(self):
         parser = resolving_parser()
@@ -164,6 +167,59 @@ class TestToNative:
         with patch("services.seloger_geocode.resolve_place_id", return_value="AD08FR31096"):
             parser.to_native(criteria)
         assert criteria == snapshot
+
+
+class TestWideAreaSearches:
+    """SeLoger a un identifiant par niveau de périmètre, et un seul suffit à le
+    couvrir entièrement — vérifié en live : AD04FR5 (Île-de-France) rend des
+    annonces réparties sur les 8 départements de la région."""
+
+    GIRONDE = {"kind": "department", "name": "Gironde", "code": "33"}
+    IDF = {"kind": "region", "name": "Île-de-France", "code": "11",
+           "departments": ["75", "77", "78", "91", "92", "93", "94", "95"]}
+    PARIS_WHOLE = {"kind": "whole_city", "city": "Paris", "inseeCode": "75056",
+                   "postalCodes": ["75001", "75015"]}
+
+    def test_one_place_id_covers_a_whole_department(self):
+        parser = resolving_parser()
+        with patch("services.seloger_geocode.resolve_place_id", return_value="AD06FR34") as mock:
+            native = parser.to_native({"locations": [self.GIRONDE]})
+        assert native["placeIds"] == ["AD06FR34"]
+        assert mock.call_count == 1
+
+    def test_one_place_id_covers_a_whole_region(self):
+        """Pas de développement en 1266 communes : un seul identifiant."""
+        parser = resolving_parser()
+        with patch("services.seloger_geocode.resolve_place_id", return_value="AD04FR5") as mock:
+            native = parser.to_native({"locations": [self.IDF]})
+        assert native["placeIds"] == ["AD04FR5"]
+        assert mock.call_count == 1
+
+    def test_whole_city_is_one_place_id_too(self):
+        parser = resolving_parser()
+        with patch("services.seloger_geocode.resolve_place_id", return_value="AD08FR31096"):
+            native = parser.to_native({"locations": [self.PARIS_WHOLE]})
+        assert native["placeIds"] == ["AD08FR31096"]
+
+    def test_levels_can_be_mixed_in_one_search(self):
+        parser = resolving_parser()
+        with patch("services.seloger_geocode.resolve_place_id",
+                   side_effect=["AD06FR34", "POCOFR4809"]):
+            native = parser.to_native({"locations": [self.GIRONDE, PARIS_15]})
+        assert native["placeIds"] == ["AD06FR34", "POCOFR4809"]
+
+    def test_a_department_is_valid_without_any_city(self):
+        """Une recherche départementale n'a ni ville ni code postal, elle doit
+        rester valide."""
+        parser = SeLogerParser()
+        criteria = {"locations": [self.GIRONDE]}
+        assert parser.has_valid_criteria(criteria) is True
+        assert parser.cannot_search_reason(criteria) is None
+
+    def test_a_wide_area_without_a_code_is_not_valid(self):
+        parser = SeLogerParser()
+        criteria = {"locations": [{"kind": "department", "name": "Gironde"}]}
+        assert parser.has_valid_criteria(criteria) is False
 
 
 class TestBuildSearchUrl:

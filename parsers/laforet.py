@@ -51,8 +51,16 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from core.criteria import APARTMENT, BUY, HOUSE, RENT
-from core.geocode import resolve_insee_code as _resolve_insee_code
+from core.criteria import APARTMENT, BUY, HOUSE, RENT, matches_locations
+from core.geocode import (
+    CITY,
+    department_main_city,
+    DEPARTMENT,
+    REGION,
+    WHOLE_CITY,
+    region_departments,
+    resolve_insee_code as _resolve_insee_code,
+)
 from models.listing import Listing
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
@@ -148,14 +156,65 @@ def _property_types(criteria: dict) -> list[str]:
     return [t for t in requested if t in TYPE_SLUGS]
 
 
-def _location_insee_code(location: dict) -> str | None:
-    """Le code INSEE d'une localisation canonique.
+def _describe(location: dict) -> str:
+    """Un périmètre en clair, pour les logs et les messages d'erreur."""
+    kind = location.get("kind", CITY)
+    if kind == REGION:
+        return f"région {location.get('name') or location.get('code')}"
+    if kind == DEPARTMENT:
+        return f"département {location.get('name') or location.get('code')}"
+    if kind == WHOLE_CITY:
+        return f"{location.get('city')} (toute la ville)"
+    return f"{location.get('city')} {location.get('postalCode')}"
 
-    Celui fourni par l'autocomplete est utilisé tel quel (aucun appel
-    réseau) ; sinon il est résolu depuis le code postal via core.geocode —
-    le point de vérité partagé entre toutes les sources.
+
+def _city_insee_codes(location: dict) -> list[str]:
+    """Les codes INSEE de commune couverts par une localisation, pour
+    filter[cities][].
+
+    - city : son propre code INSEE, fourni par l'autocomplete ou résolu depuis
+      le code postal via core.geocode (le point de vérité partagé).
+    - whole_city : un code par arrondissement/code postal, ce qui permet de
+      couvrir Paris ou Bordeaux entiers en une seule requête.
+    - region/department : rien ici, ils passent par filter[departments][].
     """
-    return location.get("inseeCode") or _resolve_insee_code(location["postalCode"])
+    kind = location.get("kind", CITY)
+    if kind == CITY:
+        code = location.get("inseeCode") or _resolve_insee_code(location["postalCode"])
+        return [code] if code else []
+    if kind == WHOLE_CITY:
+        codes = []
+        for postal_code in location.get("postalCodes") or []:
+            code = _resolve_insee_code(postal_code)
+            if code and code not in codes:
+                codes.append(code)
+        # Aucun arrondissement résolu : se rabattre sur le code de la commune
+        # elle-même, qui reste mieux que pas de filtre du tout.
+        if not codes and location.get("inseeCode"):
+            codes = [location["inseeCode"]]
+        return codes
+    return []
+
+
+def _department_codes(location: dict) -> list[str]:
+    """Les codes de département couverts par une localisation, pour
+    filter[departments][] — vérifié en live : ce paramètre est répétable et
+    couvre les 8 départements d'Île-de-France en une seule requête.
+
+    Attention, c'est bien `filter[departments][]` au pluriel : au singulier,
+    `filter[department]` ne filtre rien et renvoie le flux national.
+    """
+    kind = location.get("kind")
+    if kind == DEPARTMENT:
+        return [location["code"]] if location.get("code") else []
+    if kind == REGION:
+        codes = list(location.get("departments") or [])
+        if not codes and location.get("code"):
+            # Région enregistrée sans ses départements (saisie manuelle, ou
+            # format antérieur) : les retrouver plutôt que de tout abandonner.
+            codes = region_departments(location["code"])
+        return codes
+    return []
 
 
 def _extract_genuine_section(html: str) -> str:
@@ -249,18 +308,22 @@ def _parse_cards(html: str) -> list[dict]:
     return results
 
 
-def _passes_filters(listing: Listing, criteria: dict, allowed_postal_codes: set) -> bool:
-    """Enforce location + price/surface/rooms filters ourselves.
+def _passes_filters(listing: Listing, criteria: dict, locations: list[dict]) -> bool:
+    """Applique nous-mêmes les filtres localisation + prix/surface/pièces.
 
-    `allowed_postal_codes` is the exact set of postal codes this search
-    asked for — a listing whose own postal code we couldn't parse, or that
-    isn't in that set, is never assumed to match (fail closed, not open:
-    unlike price/surface/rooms below, location correctness can't be waived
-    just because a card was hard to parse — this is exactly how a
-    nearby-agency-office filler card, with no zip_code at all, previously
-    slipped through as a fake listing).
+    `locations` sont les périmètres canoniques que cette requête couvre, à
+    quelque niveau que ce soit (un code postal, une ville entière, un
+    département, une région) — c'est core.criteria.matches_locations qui
+    tranche, pour que la règle soit la même partout.
+
+    Une annonce dont on n'a pas pu lire le code postal, ou qui tombe hors des
+    périmètres, n'est jamais supposée correspondre (on échoue fermé, pas
+    ouvert : contrairement au prix ou à la surface plus bas, la localisation ne
+    se laisse pas passer sous prétexte qu'une carte était difficile à lire —
+    c'est exactement comme ça qu'une carte de remplissage sans code postal
+    était autrefois remontée comme une fausse annonce).
     """
-    if listing.zip_code not in allowed_postal_codes:
+    if not matches_locations(listing.zip_code, locations):
         return False
 
     price_min = criteria.get("priceMin")
@@ -366,18 +429,41 @@ class LaforetParser(BaseParser):
         canonique."""
         return criteria
 
-    def _base_path(self, criteria: dict, location: dict) -> str:
-        """Le chemin de la page de résultats pour cette localisation.
+    def _path_anchor(self, location: dict) -> dict | None:
+        """La ville + code postal servant à construire le chemin de l'URL.
+
+        Les pages de Laforet sont organisées par ville. Le chemin n'a aucun
+        effet quand des filtres de périmètre sont présents (vérifié : la même
+        requête depuis /paris-75015 ou /bordeaux-33000 rend le même résultat)
+        mais il doit exister — un chemin inventé renvoie 404. Pour un
+        département ou une région, on prend donc la ville principale du
+        département concerné, ce qui garde l'URL lisible.
+        """
+        kind = location.get("kind", CITY)
+        if kind == CITY:
+            return {"city": location["city"], "postalCode": location["postalCode"]}
+        if kind == WHOLE_CITY:
+            postal_codes = location.get("postalCodes") or []
+            return {"city": location["city"], "postalCode": sorted(postal_codes)[0]} if postal_codes else None
+
+        codes = _department_codes(location)
+        return department_main_city(codes[0]) if codes else None
+
+    def _base_path(self, criteria: dict, location: dict) -> str | None:
+        """Le chemin de la page de résultats pour cette localisation, ou None
+        si on n'a pas de ville pour l'ancrer.
 
         Le type dans le slug est celui du premier type demandé, mais il n'a
         pas d'effet réel : filter[types][] prime sur lui (vérifié en live).
         """
+        anchor = self._path_anchor(location)
+        if not anchor:
+            return None
         transaction = TRANSACTION_SLUGS[_transaction(criteria)]
         type_slug = TYPE_SLUGS[_property_types(criteria)[0]]
-
         return (
             f"{BASE_URL}/ville/{transaction}-{type_slug}-"
-            f"{_slugify(location['city'])}-{location['postalCode']}"
+            f"{_slugify(anchor['city'])}-{anchor['postalCode']}"
         )
 
     def _type_filters(self, criteria: dict) -> list[tuple[str, str]]:
@@ -388,24 +474,46 @@ class LaforetParser(BaseParser):
             for t in _property_types(criteria)
         ]
 
-    def _split_locations(self, criteria: dict) -> tuple[list[tuple[dict, str]], list[dict]]:
-        """Sépare les localisations selon qu'on a pu ou non leur trouver un
-        code INSEE : les résolues partent dans une requête fusionnée unique
-        (filter[cities][]), les autres dans une requête chacune plutôt que
-        d'être silencieusement abandonnées."""
-        resolved: list[tuple[dict, str]] = []
-        unresolved: list[dict] = []
+    def _location_filters(self, location: dict) -> list[tuple[str, str]]:
+        """Les paramètres de filtre couvrant le périmètre d'une localisation.
+
+        Une commune (ou une ville entière) passe par filter[cities][], un
+        département ou une région par filter[departments][]. Les deux
+        s'additionnent : vérifié en live que le site les combine en UNION
+        (cities=33063 rend 149 annonces, departments=75 en rend 824, les deux
+        ensemble 973), ce qui permet de couvrir tous les périmètres d'une
+        recherche dans une seule requête.
+        """
+        city_codes = _city_insee_codes(location)
+        if city_codes:
+            return [("filter[cities][]", code) for code in city_codes]
+        return [("filter[departments][]", code) for code in _department_codes(location)]
+
+    def _split_locations(self, criteria: dict) -> tuple[list[dict], list[tuple[str, str]], list[dict]]:
+        """Répartit les localisations entre celles qu'on sait filtrer et les
+        autres.
+
+        Renvoie (localisations filtrables, leurs filtres cumulés, localisations
+        sans filtre). Ces dernières — une commune dont le code INSEE n'a pas pu
+        être résolu — prennent leur propre requête sur la page ville nue plutôt
+        que d'être silencieusement abandonnées.
+        """
+        filterable: list[dict] = []
+        filters: list[tuple[str, str]] = []
+        plain: list[dict] = []
+
         for location in get_locations(criteria):
-            code = _location_insee_code(location)
-            if code:
-                resolved.append((location, code))
+            location_filters = self._location_filters(location)
+            if location_filters:
+                filterable.append(location)
+                filters.extend(location_filters)
             else:
                 logger.warning(
-                    f"[Laforet] Code INSEE introuvable pour {location['city']} "
-                    f"{location['postalCode']}, requête séparée pour cette localisation"
+                    f"[Laforet] Périmètre non filtrable ({_describe(location)}), "
+                    "requête séparée sur la page ville"
                 )
-                unresolved.append(location)
-        return resolved, unresolved
+                plain.append(location)
+        return filterable, filters, plain
 
     def build_search_url(self, criteria: dict) -> str | None:
         """First location's URL — see build_search_urls() for all of them."""
@@ -428,16 +536,17 @@ class LaforetParser(BaseParser):
             # a été demandé.
             return []
 
-        resolved, unresolved = self._split_locations(criteria)
+        filterable, filters, plain = self._split_locations(criteria)
 
         urls = []
-        if resolved:
-            primary_loc, _ = resolved[0]
-            query_pairs = self._type_filters(criteria)
-            query_pairs += [("filter[cities][]", code) for _, code in resolved]
-            urls.append(f"{self._base_path(criteria, primary_loc)}?{urlencode(query_pairs)}")
-        for location in unresolved:
-            urls.append(self._base_path(criteria, location))
+        if filterable:
+            base_path = self._base_path(criteria, filterable[0])
+            if base_path:
+                urls.append(f"{base_path}?{urlencode(self._type_filters(criteria) + filters)}")
+        for location in plain:
+            base_path = self._base_path(criteria, location)
+            if base_path:
+                urls.append(base_path)
         return urls
 
     def scrape(self, criteria: dict) -> list[Listing]:
@@ -456,13 +565,13 @@ class LaforetParser(BaseParser):
             "Accept": "text/html, application/xhtml+xml",
         })
 
-        # Toutes les localisations résolues en code INSEE partent dans une
-        # seule requête + pagination via filter[cities][] (vérifié en live :
-        # ça combine correctement les résultats de plusieurs villes dans une
-        # page bien cadrée). Celle qui ne se résout pas (code postal inconnu,
-        # API geo injoignable) prend sa propre requête au lieu d'être
-        # silencieusement abandonnée.
-        resolved, unresolved = self._split_locations(criteria)
+        # Tous les périmètres filtrables partent dans une seule requête +
+        # pagination : filter[cities][] et filter[departments][] se combinent
+        # en union (vérifié en live), donc une même recherche peut couvrir des
+        # communes, des départements et des régions d'un coup. Un périmètre non
+        # filtrable (commune dont le code INSEE n'a pas pu être résolu) prend sa
+        # propre requête au lieu d'être silencieusement abandonné.
+        filterable, filters, plain = self._split_locations(criteria)
 
         seen: set[str] = set()
         listings: list[Listing] = []
@@ -470,19 +579,19 @@ class LaforetParser(BaseParser):
         attempts = 0
         failures = 0
 
-        if resolved:
+        if filterable:
             attempts += 1
             try:
                 listings.extend(
-                    self._scrape_merged(session, criteria, resolved, seen)
+                    self._scrape_merged(session, criteria, filterable, filters, seen)
                 )
             except Exception as e:
                 failures += 1
-                logger.warning(f"[Laforet] Requête fusionnée ({len(resolved)} localisations) échouée: {e}")
+                logger.warning(f"[Laforet] Requête fusionnée ({len(filterable)} périmètres) échouée: {e}")
                 errors.append(f"requête fusionnée: {e}")
-                unresolved = unresolved + [loc for loc, _ in resolved]
+                plain = plain + filterable
 
-        for location in unresolved:
+        for location in plain:
             attempts += 1
             try:
                 listings.extend(
@@ -490,8 +599,8 @@ class LaforetParser(BaseParser):
                 )
             except Exception as e:
                 failures += 1
-                logger.warning(f"[Laforet] {location['city']} {location['postalCode']}: {e}")
-                errors.append(f"{location['city']} {location['postalCode']}: {e}")
+                logger.warning(f"[Laforet] {_describe(location)}: {e}")
+                errors.append(f"{_describe(location)}: {e}")
 
         if attempts and failures == attempts:
             raise ValueError("; ".join(errors))
@@ -499,15 +608,16 @@ class LaforetParser(BaseParser):
         logger.info(f"[Laforet] Scraping terminé : {len(listings)} annonces uniques")
         return listings
 
-    def _scrape_merged(self, session, criteria: dict, resolved: list, seen: set) -> list[Listing]:
-        """One request (+ pagination) covering every resolved location at
-        once, via filter[cities][]=<INSEE code> repeated per location."""
-        primary_loc, _ = resolved[0]
-        base_path = self._base_path(criteria, primary_loc)
-        allowed_postal_codes = {loc["postalCode"] for loc, _ in resolved}
+    def _scrape_merged(self, session, criteria: dict, locations: list[dict],
+                       filters: list[tuple[str, str]], seen: set) -> list[Listing]:
+        """Une requête (+ sa pagination) couvrant tous les périmètres
+        filtrables d'un coup, via filter[cities][] et filter[departments][]
+        cumulés — le site les combine en union."""
+        base_path = self._base_path(criteria, locations[0])
+        if not base_path:
+            raise ValueError("aucune ville pour ancrer l'URL de recherche")
 
-        base_query = self._type_filters(criteria)
-        base_query += [("filter[cities][]", code) for _, code in resolved]
+        base_query = self._type_filters(criteria) + filters
 
         listings: list[Listing] = []
         page = 1
@@ -531,7 +641,7 @@ class LaforetParser(BaseParser):
                 if card["reference"] in seen:
                     continue
                 listing = _dict_to_listing(card)
-                if not _passes_filters(listing, criteria, allowed_postal_codes):
+                if not _passes_filters(listing, criteria, locations):
                     continue
                 seen.add(card["reference"])
                 listings.append(listing)
@@ -550,7 +660,9 @@ class LaforetParser(BaseParser):
         """Fallback path for a single location whose postal code couldn't
         be resolved to an INSEE code (or when the merged request failed)."""
         base_search_url = self._base_path(criteria, location)
-        allowed_postal_codes = {location["postalCode"]}
+        if not base_search_url:
+            raise ValueError(f"aucune ville pour ancrer l'URL ({_describe(location)})")
+        locations = [location]
 
         listings: list[Listing] = []
         page = 1
@@ -573,7 +685,7 @@ class LaforetParser(BaseParser):
                 if card["reference"] in seen:
                     continue
                 listing = _dict_to_listing(card)
-                if not _passes_filters(listing, criteria, allowed_postal_codes):
+                if not _passes_filters(listing, criteria, locations):
                     continue
                 seen.add(card["reference"])
                 listings.append(listing)

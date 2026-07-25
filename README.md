@@ -147,7 +147,7 @@ que ce vocabulaire — voir `core/criteria.py`.
 
 | Critère | Valeurs |
 |---------|---------|
-| `locations` | `[{city, postalCode, inseeCode, lat, lon}]` — le code INSEE vient de l'autocomplete (`GET /api/locations`) et permet à chaque source de retrouver son propre identifiant de lieu |
+| `locations` | une liste de périmètres, chacun portant son niveau — voir ci-dessous |
 | `transaction` | `rent` \| `buy` |
 | `propertyTypes` | `apartment`, `house`, `parking`, `land` |
 | `priceMin` / `priceMax` | entiers, en euros |
@@ -159,6 +159,33 @@ Les recherches créées avant l'unification **ne sont pas migrées** : elles son
 normalisées à la lecture (`SearchRepository._load_criteria`), donc l'ancien
 vocabulaire SeLoger (`distributionTypes`, `estateTypes`, `placeIds`, `spaceMin`)
 reste compris partout, y compris via l'API.
+
+### Périmètres de recherche
+
+Une recherche ne se limite pas à un code postal. L'autocomplete
+(`GET /api/locations?q=`) propose quatre niveaux, et chaque entrée de
+`locations` porte le sien dans `kind` :
+
+| `kind` | Ce que ça couvre | Champs | Exemple |
+|--------|------------------|--------|---------|
+| `region` | une région entière | `name`, `code`, `departments[]` | « Île-de-France » → 8 départements |
+| `department` | un département | `name`, `code` | « Gironde » → 534 communes |
+| `whole_city` | toute une commune | `city`, `postalCodes[]`, `inseeCode` | « Paris » → ses 20 arrondissements |
+| `city` | un seul code postal | `city`, `postalCode`, `inseeCode` | « Paris 15e » |
+
+Une entrée sans `kind` vaut `city` — le format d'avant, donc les recherches
+existantes continuent de fonctionner.
+
+Chaque source couvre n'importe lequel de ces niveaux **en une seule requête**,
+avec son propre identifiant : `filter[departments][]` pour Laforêt, un placeId
+`AD04`/`AD06`/`AD08` pour SeLoger. Un périmètre n'est donc jamais développé en
+liste de communes — ce qui serait de toute façon impossible, Laforêt plafonnant
+vers 100 communes par requête (HTTP 414) et SeLoger vers 50 (HTTP 403), quand
+une région en compte plus de mille.
+
+Le contrôle que les annonces sont bien dans le périmètre est fait côté serveur
+par `core.criteria.matches_locations` (les sources élargissent parfois d'elles-mêmes :
+Laforêt inclut la métropole autour d'une commune).
 
 ### Ajouter une source
 

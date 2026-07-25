@@ -1,8 +1,25 @@
-"""Résolution géographique partagée (code INSEE, autocomplete ville).
+"""Résolution géographique partagée (autocomplete, codes INSEE, périmètres).
 
-Toutes les sources sont censées passer par ici plutôt que d'appeler
-geo.api.gouv.fr chacune de leur côté — un seul point de vérité pour la
-manière dont "ville + code postal" se traduit en code INSEE.
+Toutes les sources passent par ici plutôt que d'appeler geo.api.gouv.fr
+chacune de leur côté — un seul point de vérité sur la manière dont un lieu
+saisi par l'utilisateur se traduit en périmètre exploitable.
+
+L'autocomplete propose quatre niveaux, du plus large au plus précis :
+
+    region      une région entière — « Île-de-France » couvre 8 départements
+    department  un département — « Gironde », 534 communes
+    whole_city  toute une commune, tous ses codes postaux — « Paris » couvre
+                ses 20 arrondissements, « Bordeaux » ses 5 codes postaux
+    city        un seul code postal — « Paris 15e », « Bordeaux 33000 »
+
+Le niveau est porté par la localisation elle-même (clé `kind`) et chaque
+source le traduit vers son propre identifiant à ce niveau : les deux sources
+savent chercher sur un périmètre large en UNE requête (voir
+parsers/laforet.py pour filter[departments][] et services/seloger_geocode.py
+pour les placeIds AD04/AD06/AD08). Il n'est donc jamais nécessaire de
+développer un périmètre en liste de communes — ce qui serait de toute façon
+impossible : Laforet plafonne vers 100 communes par requête (HTTP 414) et
+SeLoger vers 50 (HTTP 403), quand une région en compte plus de mille.
 """
 
 from __future__ import annotations
@@ -10,12 +27,41 @@ from __future__ import annotations
 import requests
 from loguru import logger
 
-COMMUNES_API = "https://geo.api.gouv.fr/communes"
+GEO_API = "https://geo.api.gouv.fr"
+COMMUNES_API = f"{GEO_API}/communes"
+DEPARTEMENTS_API = f"{GEO_API}/departements"
+REGIONS_API = f"{GEO_API}/regions"
+
+# Les quatre niveaux de périmètre, du plus large au plus précis.
+REGION = "region"
+DEPARTMENT = "department"
+WHOLE_CITY = "whole_city"
+CITY = "city"
+LOCATION_KINDS = (REGION, DEPARTMENT, WHOLE_CITY, CITY)
 
 # INSEE code lookups never change during a process's life — cache them so a
 # search scraped every few minutes forever doesn't hit the public geo API
 # on every single run.
 _INSEE_CACHE: dict[str, str | None] = {}
+
+# Les départements d'une région ne changent pas non plus.
+_REGION_DEPARTMENTS_CACHE: dict[str, list[str]] = {}
+
+# Ni la ville principale d'un département (voir department_main_city).
+_DEPARTMENT_MAIN_CITY_CACHE: dict[str, dict | None] = {}
+
+# Le code postal se déduit du code département (Gironde 33 -> 33xxx, Guadeloupe
+# 971 -> 971xx), SAUF en Corse : les départements 2A et 2B ont tous deux des
+# codes postaux en 20xxx (vérifié via l'API : 59 codes postaux en 2A, 51 en 2B,
+# tous préfixés "20"). Les deux départements corses partagent donc le même
+# préfixe, et un filtrage local par préfixe ne les distingue pas — les sources,
+# elles, filtrent correctement sur le code du département.
+_POSTAL_PREFIX_OVERRIDES = {"2A": "20", "2B": "20"}
+
+
+def postal_prefix(department_code: str) -> str:
+    """Le préfixe de code postal d'un département."""
+    return _POSTAL_PREFIX_OVERRIDES.get(department_code.upper(), department_code)
 
 
 def _arrondissement_insee_code(postal_code: str) -> str | None:
@@ -75,93 +121,228 @@ def resolve_insee_code(postal_code: str) -> str | None:
     return _INSEE_CACHE[postal_code]
 
 
-def _query_communes(query: str, limit: int, commune_type: str | None = None) -> list[dict]:
-    params = {
-        "nom": query,
-        "boost": "population",
-        "fields": "nom,code,codesPostaux,centre",
-        "limit": limit,
-    }
-    if commune_type:
-        params["type"] = commune_type
-    resp = requests.get(COMMUNES_API, params=params, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+def department_main_city(department_code: str) -> dict | None:
+    """La commune la plus peuplée d'un département : {"city", "postalCode"}.
 
+    Sert à construire un chemin d'URL valide pour une source dont les pages
+    sont organisées par ville alors que la recherche porte sur un département
+    entier (Laforet : le chemin /ville/... est ignoré dès que
+    filter[departments][] est présent, mais il doit exister — un chemin
+    inventé renvoie 404). Prendre la ville principale garde l'URL lisible.
 
-def _commune_to_suggestions(commune: dict) -> list[dict]:
-    """One commune record -> one suggestion per postal code it covers.
-
-    A regular commune has exactly one postal code, so this is a single
-    suggestion. A whole-city aggregate for Paris/Lyon/Marseille (returned
-    by the default commune-actuelle search) lists every postal code of
-    every arrondissement under ONE INSEE code (75056/69123/13055) — pairing
-    that single code with any one of those postal codes would silently
-    mismatch (e.g. "Paris (75001)" tagged with INSEE 75056, not 75101),
-    so those are expanded into one suggestion per postal code with the
-    arrondissement-specific INSEE code resolved the same way Laforet
-    already does (see _arrondissement_insee_code).
+    Le tri est fait ici et non par l'API : son `boost=population` ne
+    s'applique qu'à une recherche par nom, et sans lui `/communes` renvoie
+    l'ordre alphabétique (soit « Abzac » pour la Gironde, au lieu de Bordeaux).
     """
-    postal_codes = commune.get("codesPostaux") or []
-    if not postal_codes:
-        return []
-    city = commune.get("nom")
-    centre = commune.get("centre") or {}
-    coords = centre.get("coordinates") or [None, None]
-    lon, lat = coords[0], coords[1]
-    whole_city_code = commune.get("code")
+    if department_code in _DEPARTMENT_MAIN_CITY_CACHE:
+        return _DEPARTMENT_MAIN_CITY_CACHE[department_code]
 
-    if len(postal_codes) == 1:
-        return [{
-            "label": f"{city} ({postal_codes[0]})",
-            "city": city,
-            "postalCode": postal_codes[0],
-            "inseeCode": whole_city_code,
-            "lat": lat,
-            "lon": lon,
-        }]
-
-    suggestions = []
-    for postal_code in sorted(postal_codes):
-        insee_code = _arrondissement_insee_code(postal_code) or whole_city_code
-        suggestions.append({
-            "label": f"{city} ({postal_code})",
-            "city": city,
-            "postalCode": postal_code,
-            "inseeCode": insee_code,
-            "lat": lat,
-            "lon": lon,
+    city = None
+    try:
+        communes = _query(COMMUNES_API, {
+            "codeDepartement": department_code,
+            "fields": "nom,codesPostaux,population",
         })
+        peuplees = [c for c in communes if c.get("population") and c.get("codesPostaux")]
+        if peuplees:
+            top = max(peuplees, key=lambda c: c["population"])
+            city = {"city": top["nom"], "postalCode": sorted(top["codesPostaux"])[0]}
+    except Exception as e:
+        logger.warning(f"[geocode] Ville principale introuvable pour le département {department_code}: {e}")
+
+    _DEPARTMENT_MAIN_CITY_CACHE[department_code] = city
+    return city
+
+
+def region_departments(region_code: str) -> list[str]:
+    """Les codes des départements d'une région, [] si indéterminable.
+
+    Utilisé pour traduire une recherche régionale chez une source qui ne
+    connaît que les départements (Laforet et son filter[departments][]).
+    """
+    if region_code in _REGION_DEPARTMENTS_CACHE:
+        return _REGION_DEPARTMENTS_CACHE[region_code]
+    try:
+        resp = requests.get(f"{REGIONS_API}/{region_code}/departements", timeout=10)
+        resp.raise_for_status()
+        codes = [d["code"] for d in resp.json()]
+    except Exception as e:
+        logger.warning(f"[geocode] Départements introuvables pour la région {region_code}: {e}")
+        codes = []
+    if codes:
+        _REGION_DEPARTMENTS_CACHE[region_code] = codes
+    return codes
+
+
+# ---------------------------------------------------------------------------
+# Autocomplete
+# ---------------------------------------------------------------------------
+
+def _query(url: str, params: dict) -> list[dict]:
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, list) else []
+
+
+def _labelled(location: dict) -> dict:
+    """Ajoute le libellé d'affichage à un périmètre.
+
+    Importé tardivement : core.criteria dépend de ce module pour les constantes
+    de niveau, l'import en tête créerait un cycle.
+    """
+    from core.criteria import location_label
+
+    return {**location, "label": location_label(location)}
+
+
+def _region_suggestions(query: str) -> list[dict]:
+    suggestions = []
+    for region in _query(REGIONS_API, {"nom": query}):
+        code = region.get("code")
+        name = region.get("nom")
+        if not code or not name:
+            continue
+        suggestions.append(_labelled({
+            "kind": REGION,
+            "name": name,
+            "code": code,
+            "departments": region_departments(code),
+        }))
     return suggestions
 
 
-def search_locations(query: str, limit: int = 20) -> list[dict]:
-    """Autocomplete: French city name -> list of canonical location
-    suggestions, one per city/postal-code match.
+def _department_suggestions(query: str) -> list[dict]:
+    suggestions = []
+    for dept in _query(DEPARTEMENTS_API, {"nom": query}):
+        code = dept.get("code")
+        name = dept.get("nom")
+        if not code or not name:
+            continue
+        suggestions.append(_labelled({
+            "kind": DEPARTMENT,
+            "name": name,
+            "code": code,
+        }))
+    return suggestions
 
-    Uses geo.api.gouv.fr/communes?nom=... (same API as resolve_insee_code,
-    same API Laforet's own autocomplete calls). Paris/Lyon/Marseille are
-    expanded into one suggestion per arrondissement/postal code (see
-    _commune_to_suggestions) instead of one ambiguous whole-city entry —
-    fetching only a handful of base communes so that expansion (up to 20
-    postal codes for Paris alone) doesn't crowd out every other match.
+
+def _commune_suggestions(commune: dict) -> list[dict]:
+    """Une commune -> une entrée « toute la ville » quand elle couvre
+    plusieurs codes postaux, plus une entrée par code postal.
+
+    Une commune ordinaire n'a qu'un seul code postal : une seule entrée, et
+    pas de « toute la ville » qui ferait doublon. Paris/Lyon/Marseille sont
+    renvoyés par l'API comme un agrégat portant tous les codes postaux de
+    leurs arrondissements sous UN seul code INSEE (75056/69123/13055) : les
+    associer tel quel produirait des paires fausses (« Paris (75001) » tagué
+    INSEE 75056 au lieu de 75101), d'où la résolution par arrondissement.
+    """
+    postal_codes = sorted(commune.get("codesPostaux") or [])
+    if not postal_codes:
+        return []
+
+    city = commune.get("nom")
+    insee = commune.get("code")
+    centre = commune.get("centre") or {}
+    coords = centre.get("coordinates") or [None, None]
+    lon, lat = coords[0], coords[1]
+
+    suggestions = []
+    if len(postal_codes) > 1:
+        suggestions.append(_labelled({
+            "kind": WHOLE_CITY,
+            "city": city,
+            "inseeCode": insee,
+            "postalCodes": postal_codes,
+            "lat": lat,
+            "lon": lon,
+        }))
+
+    for postal_code in postal_codes:
+        suggestions.append(_labelled({
+            "kind": CITY,
+            "city": city,
+            "postalCode": postal_code,
+            "inseeCode": (
+                _arrondissement_insee_code(postal_code) if len(postal_codes) > 1 else insee
+            ) or insee,
+            "lat": lat,
+            "lon": lon,
+        }))
+    return suggestions
+
+
+def _drop_redundant_departments(suggestions: list[dict]) -> list[dict]:
+    """Écarte un département qui recouvre exactement une ville déjà proposée.
+
+    Paris est à la fois une commune (INSEE 75056) et un département (75) sur
+    le même territoire : les deux entrées apparaîtraient côte à côte avec le
+    même libellé, sans que l'utilisateur puisse deviner laquelle choisir. On
+    ne garde alors que la ville, qui porte les codes postaux et fonctionne
+    pour les deux sources.
+    """
+    city_names = {
+        s["city"].casefold()
+        for s in suggestions
+        if s["kind"] == WHOLE_CITY and s.get("city")
+    }
+    return [
+        s for s in suggestions
+        if not (s["kind"] == DEPARTMENT and s.get("name", "").casefold() in city_names)
+    ]
+
+
+def search_locations(query: str, limit: int = 20) -> list[dict]:
+    """Autocomplete : un texte libre -> des périmètres de recherche.
+
+    Interroge les trois niveaux de geo.api.gouv.fr (régions, départements,
+    communes) et renvoie les suggestions du plus large au plus précis, pour
+    que « paris » propose d'abord toute la ville puis chaque arrondissement,
+    et que « gironde » propose le département avant les communes homonymes.
+
+    Chaque suggestion porte son niveau (`kind`) et les champs de ce niveau :
+    c'est directement le format d'une entrée de `locations` dans les critères
+    canoniques (voir core.criteria).
     """
     query = query.strip()
     if len(query) < 2:
         return []
-    try:
-        communes = _query_communes(query, limit=5)
-    except Exception as e:
-        logger.warning(f"[geocode] Autocomplete échoué pour '{query}': {e}")
-        return []
 
     suggestions: list[dict] = []
-    seen_codes: set[str] = set()
-    for commune in communes:
-        for s in _commune_to_suggestions(commune):
-            if s["inseeCode"] in seen_codes:
-                continue
-            seen_codes.add(s["inseeCode"])
-            suggestions.append(s)
 
-    return suggestions[:limit]
+    # Les périmètres larges d'abord : ils sont peu nombreux et ne doivent
+    # jamais être noyés par les communes (Paris seul en produit 21).
+    for finder in (_region_suggestions, _department_suggestions):
+        try:
+            suggestions.extend(finder(query))
+        except Exception as e:
+            logger.warning(f"[geocode] Autocomplete {finder.__name__} échoué pour '{query}': {e}")
+
+    try:
+        communes = _query(COMMUNES_API, {
+            "nom": query,
+            "boost": "population",
+            "fields": "nom,code,codesPostaux,centre",
+            "limit": 5,
+        })
+    except Exception as e:
+        logger.warning(f"[geocode] Autocomplete communes échoué pour '{query}': {e}")
+        communes = []
+
+    for commune in communes:
+        suggestions.extend(_commune_suggestions(commune))
+
+    suggestions = _drop_redundant_departments(suggestions)
+
+    # Dédoublonnage sur l'identité réelle du périmètre, pas sur le libellé.
+    seen: set[tuple] = set()
+    unique = []
+    for s in suggestions:
+        key = (s["kind"], s.get("code") or s.get("postalCode") or s.get("inseeCode"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(s)
+
+    return unique[:limit]

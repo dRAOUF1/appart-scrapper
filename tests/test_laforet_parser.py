@@ -370,6 +370,93 @@ class TestDictToListing:
         assert listing.price_value == 1021.0
 
 
+class TestWideAreaSearches:
+    """Périmètres plus larges qu'une commune. Vérifié en live que Laforet les
+    couvre en une seule requête : filter[departments][] est répétable (les 8
+    départements d'Île-de-France rendent 741 annonces) et se combine en UNION
+    avec filter[cities][] (cities=33063 rend 149 annonces, departments=75 en
+    rend 824, les deux ensemble 973)."""
+
+    GIRONDE = {"kind": "department", "name": "Gironde", "code": "33"}
+    IDF = {"kind": "region", "name": "Île-de-France", "code": "11",
+           "departments": ["75", "77", "78", "91", "92", "93", "94", "95"]}
+
+    def test_department_uses_the_departments_filter(self):
+        parser = LaforetParser()
+        with patch("parsers.laforet.department_main_city",
+                   return_value={"city": "Bordeaux", "postalCode": "33000"}):
+            url = parser.build_search_url({"locations": [self.GIRONDE]})
+        assert "filter%5Bdepartments%5D%5B%5D=33" in url
+        # Le chemin est ancré sur la ville principale du département, pour
+        # rester lisible — il n'a aucun effet sur le résultat.
+        assert url.startswith("https://www.laforet.com/ville/location-appartement-bordeaux-33000?")
+        assert "filter%5Bcities%5D" not in url
+
+    def test_region_expands_to_all_its_departments(self):
+        parser = LaforetParser()
+        with patch("parsers.laforet.department_main_city",
+                   return_value={"city": "Paris", "postalCode": "75001"}):
+            url = parser.build_search_url({"locations": [self.IDF]})
+        for dept in self.IDF["departments"]:
+            assert f"filter%5Bdepartments%5D%5B%5D={dept}" in url
+
+    def test_region_without_stored_departments_is_resolved(self):
+        """Une région enregistrée sans ses départements (saisie manuelle) doit
+        les retrouver plutôt que d'abandonner la recherche."""
+        parser = LaforetParser()
+        with patch("parsers.laforet.region_departments", return_value=["2A", "2B"]) as mock_reg:
+            with patch("parsers.laforet.department_main_city",
+                       return_value={"city": "Ajaccio", "postalCode": "20000"}):
+                url = parser.build_search_url({"locations": [
+                    {"kind": "region", "name": "Corse", "code": "94"},
+                ]})
+        # Appelé avec le code de la région (plusieurs fois éventuellement :
+        # region_departments a son propre cache, l'appel réel n'a lieu qu'une).
+        mock_reg.assert_called_with("94")
+        assert "filter%5Bdepartments%5D%5B%5D=2A" in url
+        assert "filter%5Bdepartments%5D%5B%5D=2B" in url
+
+    def test_whole_city_covers_every_arrondissement(self):
+        """« Paris — toute la ville » doit produire un filtre par
+        arrondissement, au lieu d'obliger à saisir les 20 à la main."""
+        parser = LaforetParser()
+        url = parser.build_search_url({"locations": [{
+            "kind": "whole_city", "city": "Paris", "inseeCode": "75056",
+            "postalCodes": ["75001", "75002", "75015"],
+        }]})
+        for insee in ("75101", "75102", "75115"):
+            assert f"filter%5Bcities%5D%5B%5D={insee}" in url
+
+    def test_levels_are_combined_into_a_single_url(self):
+        """Communes et départements dans la même recherche : une seule requête,
+        puisque le site les combine en union."""
+        parser = LaforetParser()
+        with patch("parsers.laforet.department_main_city",
+                   return_value={"city": "Bordeaux", "postalCode": "33000"}):
+            urls = parser.build_search_urls({"locations": [
+                self.GIRONDE,
+                {"city": "Paris", "postalCode": "75014"},
+            ]})
+        assert len(urls) == 1
+        assert "filter%5Bdepartments%5D%5B%5D=33" in urls[0]
+        assert "filter%5Bcities%5D%5B%5D=75114" in urls[0]
+
+    def test_a_department_is_usable_without_any_city(self):
+        """Une recherche départementale n'a ni ville ni code postal : elle doit
+        rester valide (c'était le contrat par défaut de BaseParser)."""
+        parser = LaforetParser()
+        criteria = {"locations": [self.GIRONDE]}
+        assert parser.has_valid_criteria(criteria) is True
+        assert parser.cannot_search_reason(criteria) is None
+
+    def test_no_url_when_the_department_city_cannot_be_found(self):
+        """Sans ville pour ancrer le chemin, Laforet renvoie 404 : mieux vaut
+        aucune URL qu'un lien mort."""
+        parser = LaforetParser()
+        with patch("parsers.laforet.department_main_city", return_value=None):
+            assert parser.build_search_urls({"locations": [self.GIRONDE]}) == []
+
+
 class TestPassesFilters:
     def _listing(self, **overrides):
         base = dict(
@@ -379,42 +466,47 @@ class TestPassesFilters:
         base.update(overrides)
         return Listing(**base)
 
+    @staticmethod
+    def _at(*postal_codes):
+        """Des périmètres au niveau code postal, le cas le plus courant."""
+        return [{"kind": "city", "city": "X", "postalCode": cp} for cp in postal_codes]
+
     def test_price_range(self):
         listing = self._listing(price_value=1000.0)
-        allowed = {"75014"}
+        allowed = self._at("75014")
         assert _passes_filters(listing, {"priceMin": 900, "priceMax": 1100}, allowed)
         assert not _passes_filters(listing, {"priceMax": 900}, allowed)
         assert not _passes_filters(listing, {"priceMin": 1100}, allowed)
 
     def test_surface_range(self):
         listing = self._listing(surface="50")
-        allowed = {"75014"}
+        allowed = self._at("75014")
         assert _passes_filters(listing, {"surfaceMin": 40, "surfaceMax": 60}, allowed)
         assert not _passes_filters(listing, {"surfaceMin": 60}, allowed)
 
     def test_rooms_exact_match(self):
         listing = self._listing(rooms="2")
-        allowed = {"75014"}
+        allowed = self._at("75014")
         assert _passes_filters(listing, {"rooms": ["2", "3"]}, allowed)
         assert not _passes_filters(listing, {"rooms": ["3", "4"]}, allowed)
 
     def test_rooms_five_plus(self):
         listing = self._listing(rooms="6")
-        assert _passes_filters(listing, {"rooms": ["5"]}, {"75014"})
+        assert _passes_filters(listing, {"rooms": ["5"]}, self._at("75014"))
 
     def test_missing_data_does_not_exclude(self):
         listing = self._listing(price_value=None, surface="", rooms="")
-        assert _passes_filters(listing, {"priceMin": 900, "spaceMin": 40, "rooms": ["2"]}, {"75014"})
+        assert _passes_filters(listing, {"priceMin": 900, "surfaceMin": 40, "rooms": ["2"]}, self._at("75014"))
 
     def test_postal_code_must_be_in_allowed_set(self):
         listing = self._listing(zip_code="75014")
-        assert _passes_filters(listing, {}, {"75014"})
-        assert not _passes_filters(listing, {}, {"75015"})
-        assert not _passes_filters(listing, {}, {"94230"})
+        assert _passes_filters(listing, {}, self._at("75014"))
+        assert not _passes_filters(listing, {}, self._at("75015"))
+        assert not _passes_filters(listing, {}, self._at("94230"))
 
     def test_multiple_allowed_postal_codes(self):
         """A merged multi-location search allows any of several postal codes."""
-        allowed = {"75014", "92120"}
+        allowed = self._at("75014", "92120")
         assert _passes_filters(self._listing(zip_code="75014"), {}, allowed)
         assert _passes_filters(self._listing(zip_code="92120"), {}, allowed)
         assert not _passes_filters(self._listing(zip_code="75015"), {}, allowed)

@@ -37,6 +37,8 @@ from __future__ import annotations
 import requests
 from loguru import logger
 
+from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
+
 AUTOCOMPLETE_URL = "https://www.seloger.com/search-mfe-bff/autocomplete"
 DESKTOP_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -50,6 +52,24 @@ PLACE_TYPES = ["HONU", "NBH1", "NBH3", "AD09", "NBH2", "AD08", "AD06", "AD04", "
 # A cached failure is retried after this long — in case the endpoint's
 # shape changes or is temporarily unreachable.
 _RETRY_COOLDOWN_SECONDS = 7 * 24 * 3600
+
+# Le type d'entrée SeLoger correspondant à chaque niveau de périmètre
+# canonique. Vérifié en live : chercher le nom du périmètre suffit, le type
+# discrimine ensuite l'entrée voulue parmi les résultats.
+#
+#   "Île-de-France"  -> AD04FR5     (AD04, région)
+#   "Gironde"        -> AD06FR34    (AD06, département)
+#   "Paris"          -> AD08FR31096 (AD08, ville entière, 21 codes postaux)
+#
+# Et chacun couvre bien tout son périmètre : AD04FR5 rend des annonces
+# réparties sur les 8 départements d'Île-de-France. Les suffixes ne sont pas
+# dérivables du code officiel (Gironde = département 33 mais AD06FR34), d'où
+# l'interrogation de l'autocomplete.
+_KIND_PLACE_TYPES = {
+    REGION: "AD04",
+    DEPARTMENT: "AD06",
+    WHOLE_CITY: "AD08",
+}
 
 
 def _query_autocomplete(text: str) -> list[dict]:
@@ -86,10 +106,8 @@ def _pick_best_match(results: list[dict], postal_code: str) -> dict | None:
     return results[0] if results else None
 
 
-def _find_place_id(city: str, postal_code: str) -> str | None:
-    """Single best-effort attempt to resolve a placeId for this location.
-    Returns None on anything but a clean match — callers cache that as a
-    (retriable) failure, never raise.
+def _find_city_place_id(postal_code: str) -> str | None:
+    """Le placeId d'un code postal précis.
 
     Deliberately queries by postal code ONLY, no city-name fallback: a
     plain city-name query (e.g. "Paris") caps at 10 results, which for a
@@ -100,24 +118,98 @@ def _find_place_id(city: str, postal_code: str) -> str | None:
     (verified live across several cities), so there's no real upside to
     the fallback, only a correctness risk.
     """
+    results = _query_autocomplete(postal_code)
+    match = _pick_best_match(results, postal_code)
+    return match["id"] if match else None
+
+
+def _find_wide_area_place_id(name: str, kind: str) -> str | None:
+    """Le placeId d'un périmètre large (région, département, ville entière).
+
+    Recherche par nom, puis on ne retient qu'une entrée du type attendu : sans
+    ce filtre, « Gironde » renverrait la commune Gironde-sur-Dropt et
+    « Corse » une commune homonyme, au lieu du périmètre demandé.
+    """
+    expected_type = _KIND_PLACE_TYPES.get(kind)
+    if not expected_type or not name:
+        return None
+    for result in _query_autocomplete(name):
+        if result.get("type_key") == expected_type:
+            return result.get("id")
+    return None
+
+
+def area_cache_key(location: dict) -> str | None:
+    """La clé de cache identifiant le périmètre, tous niveaux confondus.
+
+    Le niveau fait partie de la clé : une même valeur peut désigner deux
+    périmètres différents selon le niveau (le département 75 et la région 75
+    — Nouvelle-Aquitaine — existent tous les deux).
+
+    Le niveau commune garde le code INSEE nu comme clé : c'est la convention
+    d'avant l'introduction des périmètres larges, et la conserver évite
+    d'invalider les résolutions déjà en cache.
+    """
+    kind = location.get("kind", CITY)
+    if kind == CITY:
+        return location.get("inseeCode") or None
+    if kind == WHOLE_CITY:
+        insee = location.get("inseeCode")
+        return f"city:{insee}" if insee else None
+    code = location.get("code")
+    if not code:
+        return None
+    return f"{'region' if kind == REGION else 'dept'}:{code}"
+
+
+def _resolve_uncached(location: dict) -> str | None:
+    """Une tentative de résolution, sans cache. None sur tout ce qui n'est pas
+    une correspondance nette — les appelants la mémorisent comme un échec
+    (réessayable), jamais d'exception levée."""
+    kind = location.get("kind", CITY)
     try:
-        results = _query_autocomplete(postal_code)
-        match = _pick_best_match(results, postal_code)
-        return match["id"] if match else None
+        if kind == CITY:
+            return _find_city_place_id(location["postalCode"])
+        if kind == WHOLE_CITY:
+            return _find_wide_area_place_id(location.get("city"), kind)
+        return _find_wide_area_place_id(location.get("name"), kind)
     except Exception as e:
-        logger.debug(f"[seloger_geocode] Résolution échouée pour {city} ({postal_code}): {e}")
+        logger.debug(f"[seloger_geocode] Résolution échouée pour {_describe(location)}: {e}")
         return None
 
 
-def resolve_place_id(insee_code: str, city: str, postal_code: str, repo) -> str | None:
-    """INSEE code -> SeLoger placeId, cache-first.
+def _describe(location: dict) -> str:
+    kind = location.get("kind", CITY)
+    if kind == REGION:
+        return f"région {location.get('name') or location.get('code')}"
+    if kind == DEPARTMENT:
+        return f"département {location.get('name') or location.get('code')}"
+    if kind == WHOLE_CITY:
+        return f"{location.get('city')} (toute la ville)"
+    return f"{location.get('city')} ({location.get('postalCode')})"
+
+
+def resolve_place_id(location: dict, repo) -> str | None:
+    """Un périmètre canonique -> son placeId SeLoger, cache d'abord.
+
+    Fonctionne à tous les niveaux (région, département, ville entière, code
+    postal) : SeLoger a un identifiant pour chacun, et un seul suffit à couvrir
+    tout le périmètre — inutile de le développer en liste de communes.
 
     `repo` (un SelogerGeoRepository) est obligatoire et explicite : il n'est
     surtout pas lu depuis `flask.current_app`, car le scraping s'exécute sur un
     thread de fond, hors contexte d'application — voir
     SeLogerParser._geo_repo() et core.scrape_control.
     """
-    cached = repo.get_cached(insee_code)
+    key = area_cache_key(location)
+    if not key:
+        logger.warning(
+            f"[seloger_geocode] Périmètre non identifiable ({_describe(location)}), "
+            "résolution impossible"
+        )
+        return None
+
+    cached = repo.get_cached(key)
     if cached is not None:
         if cached["place_id"]:
             return cached["place_id"]
@@ -125,12 +217,12 @@ def resolve_place_id(insee_code: str, city: str, postal_code: str, repo) -> str 
         if age is not None and age < _RETRY_COOLDOWN_SECONDS:
             return None  # recent failure, don't hammer the site again yet
 
-    place_id = _find_place_id(city, postal_code)
-    repo.set_cached(insee_code, place_id)
+    place_id = _resolve_uncached(location)
+    repo.set_cached(key, place_id)
     if place_id:
-        logger.info(f"[seloger_geocode] {city} ({postal_code}) -> {place_id}")
+        logger.info(f"[seloger_geocode] {_describe(location)} -> {place_id}")
     else:
-        logger.warning(f"[seloger_geocode] Aucun placeId trouvé pour {city} ({postal_code})")
+        logger.warning(f"[seloger_geocode] Aucun placeId trouvé pour {_describe(location)}")
     return place_id
 
 
@@ -143,11 +235,12 @@ def _seconds_since(resolved_at) -> float | None:
 
 
 def remember_manual_place_id(criteria: dict, repo) -> None:
-    """Bank a manually-pasted SeLoger placeId against its location's INSEE
-    code, if the mapping is unambiguous (exactly one location, exactly one
-    placeId — SeLoger's placeIds list isn't paired to specific locations,
-    so a multi-location manual entry can't be safely attributed to any one
-    of them). Called once at search-creation time; a no-op otherwise.
+    """Mémorise un placeId saisi à la main contre le périmètre auquel il
+    correspond, si l'association est sans ambiguïté (exactement un périmètre,
+    exactement un placeId — la liste de placeIds de SeLoger n'est pas appariée
+    aux localisations, une saisie multi-périmètres ne peut donc être attribuée
+    à aucun en particulier). Appelé une fois à l'enregistrement d'une
+    recherche ; sans effet le reste du temps.
 
     Le placeId saisi à la main vit dans les surcharges de source des
     critères canoniques (voir core.criteria), pas au premier niveau.
@@ -159,10 +252,11 @@ def remember_manual_place_id(criteria: dict, repo) -> None:
     locations = get_locations(criteria)
     if len(place_ids) != 1 or len(locations) != 1:
         return
-    insee_code = locations[0].get("inseeCode")
-    if not insee_code:
+
+    key = area_cache_key(locations[0])
+    if not key:
         return
 
-    if repo.get_cached(insee_code) is None:
-        repo.set_cached(insee_code, place_ids[0])
-        logger.info(f"[seloger_geocode] placeId manuel banqué pour INSEE {insee_code}: {place_ids[0]}")
+    if repo.get_cached(key) is None:
+        repo.set_cached(key, place_ids[0])
+        logger.info(f"[seloger_geocode] placeId manuel banqué pour {key}: {place_ids[0]}")

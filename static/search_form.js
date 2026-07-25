@@ -18,15 +18,24 @@
         land: 'Terrain',
     };
 
-    /* --- Autocomplete de ville -------------------------------------------
-     * Choisir une suggestion remplit le code postal ET le code INSEE caché.
-     * C'est ce code INSEE qui permet ensuite à chaque source de retrouver son
-     * propre identifiant de lieu (SeLoger en a besoin pour son placeId).
+    /* --- Autocomplete de localisation ------------------------------------
+     * Les suggestions couvrent quatre niveaux : région, département, ville
+     * entière, code postal. Choisir une suggestion stocke le périmètre complet
+     * dans un champ caché, en JSON : c'est ce périmètre que le backend
+     * enregistre, et chaque source le traduit ensuite vers son propre
+     * identifiant de lieu.
      */
+    const KIND_HINTS = {
+        region: 'Région',
+        department: 'Département',
+        whole_city: 'Ville entière',
+        city: 'Code postal',
+    };
+
     function attachAutocomplete(row) {
         const input = row.querySelector('[data-location-input]');
         const postal = row.querySelector('[data-location-postal]');
-        const insee = row.querySelector('[data-location-insee]');
+        const payload = row.querySelector('[data-location-payload]');
         const list = row.querySelector('[data-location-suggestions]');
         if (!input || !list) return;
 
@@ -39,9 +48,11 @@
         }
 
         function pick(suggestion) {
-            input.value = suggestion.city;
-            if (postal) postal.value = suggestion.postalCode;
-            if (insee) insee.value = suggestion.inseeCode || '';
+            input.value = suggestion.label;
+            // Le code postal n'a de sens qu'au niveau le plus fin ; pour un
+            // département ou une région, le champ n'a rien à afficher.
+            if (postal) postal.value = suggestion.postalCode || '';
+            if (payload) payload.value = JSON.stringify(suggestion);
             hide();
         }
 
@@ -53,8 +64,22 @@
             }
             suggestions.forEach(function (s) {
                 const li = document.createElement('li');
-                li.textContent = s.label;
                 li.className = 'location-suggestion';
+
+                const label = document.createElement('span');
+                label.textContent = s.label;
+                li.appendChild(label);
+
+                // Le niveau est affiché explicitement : « Gironde » peut être
+                // un département comme une commune, il faut pouvoir choisir.
+                const hint = KIND_HINTS[s.kind];
+                if (hint) {
+                    const badge = document.createElement('span');
+                    badge.className = 'location-suggestion-kind';
+                    badge.textContent = hint;
+                    li.appendChild(badge);
+                }
+
                 li.addEventListener('mousedown', function (e) {
                     e.preventDefault();
                     pick(s);
@@ -65,10 +90,10 @@
         }
 
         input.addEventListener('input', function () {
-            // Une ville retapée à la main n'a plus de code INSEE valide : le
-            // vider évite de garder celui de la ville précédemment choisie,
-            // qui ferait chercher au mauvais endroit.
-            if (insee) insee.value = '';
+            // Une saisie retapée à la main invalide le périmètre choisi
+            // précédemment : le vider évite de conserver celui de l'ancienne
+            // sélection, qui ferait chercher au mauvais endroit.
+            if (payload) payload.value = '';
 
             const query = input.value.trim();
             clearTimeout(timer);
@@ -121,6 +146,9 @@
                 newRow.querySelectorAll('[data-location-suggestions]').forEach(function (ul) {
                     ul.innerHTML = '';
                     ul.hidden = true;
+                });
+                newRow.querySelectorAll('[data-location-payload]').forEach(function (el) {
+                    el.value = '';
                 });
                 list.appendChild(newRow);
                 attachAutocomplete(newRow);

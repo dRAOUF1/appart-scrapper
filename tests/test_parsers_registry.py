@@ -199,7 +199,7 @@ class TestGetLocations:
 
     def test_legacy_flat_city_and_postal_code(self):
         assert get_locations({"city": "Paris", "postalCode": "75014"}) == [
-            {"city": "Paris", "postalCode": "75014"}
+            {"kind": "city", "city": "Paris", "postalCode": "75014"}
         ]
 
     def test_plural_locations_list(self):
@@ -209,14 +209,28 @@ class TestGetLocations:
                 {"city": "Lyon", "postalCode": "69007"},
             ]
         }
-        assert get_locations(criteria) == criteria["locations"]
+        assert get_locations(criteria) == [
+            {"kind": "city", "city": "Paris", "postalCode": "75014"},
+            {"kind": "city", "city": "Lyon", "postalCode": "69007"},
+        ]
 
     def test_plural_locations_takes_precedence_over_flat_keys(self):
         criteria = {
             "city": "Paris", "postalCode": "75014",
             "locations": [{"city": "Lyon", "postalCode": "69007"}],
         }
-        assert get_locations(criteria) == [{"city": "Lyon", "postalCode": "69007"}]
+        assert get_locations(criteria) == [
+            {"kind": "city", "city": "Lyon", "postalCode": "69007"}
+        ]
+
+    def test_wide_area_locations_are_returned_as_is(self):
+        """get_locations() ne suppose plus que tout est une commune : un
+        département ou une région n'a ni ville ni code postal."""
+        criteria = {"locations": [
+            {"kind": "department", "name": "Gironde", "code": "33"},
+            {"kind": "region", "name": "Corse", "code": "94", "departments": ["2A", "2B"]},
+        ]}
+        assert get_locations(criteria) == criteria["locations"]
 
     def test_incomplete_entries_in_locations_list_are_dropped(self):
         criteria = {"locations": [
@@ -224,7 +238,7 @@ class TestGetLocations:
             {"city": "Lyon"},
             {"postalCode": "13001"},
         ]}
-        assert get_locations(criteria) == [{"city": "Paris", "postalCode": "75014"}]
+        assert get_locations(criteria) == [{"kind": "city", "city": "Paris", "postalCode": "75014"}]
 
     def test_no_location_at_all(self):
         assert get_locations({}) == []

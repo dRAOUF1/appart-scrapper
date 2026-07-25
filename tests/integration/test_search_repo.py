@@ -19,7 +19,7 @@ class TestCreateAndGetSearch:
     def test_round_trip_preserves_jsonb_criteria(self, storage):
         user = _make_user(storage)
         criteria = {
-            "locations": [{"city": "Paris", "postalCode": "75013", "inseeCode": "75113"}],
+            "locations": [{"kind": "city", "city": "Paris", "postalCode": "75013", "inseeCode": "75113"}],
             "priceMax": 1500,
             "rooms": [2, 3],
         }
@@ -56,7 +56,7 @@ class TestCreateAndGetSearch:
         fetched = storage.searches.get_search(created["id"])
 
         assert fetched["criteria"] == {
-            "locations": [{"city": "Paris", "postalCode": "75013"}],
+            "locations": [{"kind": "city", "city": "Paris", "postalCode": "75013"}],
             "transaction": "buy",
             "propertyTypes": ["house"],
             "surfaceMin": 40,

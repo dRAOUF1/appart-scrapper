@@ -27,6 +27,7 @@ pytestmark = pytest.mark.integration
 
 EXPECTED_TABLES = {
     "users", "searches", "listings", "search_listings", "admin_logs", "app_settings",
+    "seloger_place_ids",
 }
 
 
@@ -174,3 +175,68 @@ def test_run_migrations_adds_missing_notified_column_to_existing_table(storage):
         storage._release_conn(conn)
 
     assert row is not None
+
+
+def test_seloger_place_ids_uses_the_area_key_column(storage):
+    """La clé de cache identifie un périmètre à n'importe quel niveau (code
+    INSEE de commune, "dept:33", "region:11"...), plus seulement une commune —
+    d'où `area_key` et non `insee_code`."""
+    conn = storage._get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'seloger_place_ids'
+            """)
+            columns = {row[0] for row in cur.fetchall()}
+    finally:
+        storage._release_conn(conn)
+
+    assert "area_key" in columns
+    assert "insee_code" not in columns
+
+
+def test_run_migrations_renames_the_legacy_insee_code_column(storage):
+    """Les bases créées avant les périmètres larges ont une colonne
+    `insee_code` : le renommage doit se faire sans perdre les résolutions déjà
+    en cache (un code INSEE nu reste une clé valide)."""
+    conn = storage._get_ddl_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS seloger_place_ids")
+            cur.execute("""
+                CREATE TABLE seloger_place_ids (
+                    insee_code  TEXT PRIMARY KEY,
+                    place_id    TEXT,
+                    resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            # Clé dédiée à ce test : les autres tests du cache vérifient
+            # qu'un périmètre jamais résolu est absent, une ligne laissée
+            # derrière les ferait échouer.
+            cur.execute(
+                "INSERT INTO seloger_place_ids (insee_code, place_id) VALUES (%s, %s)",
+                ("00001", "AD08FRLEGACY"),
+            )
+            conn.commit()
+    finally:
+        storage._close_conn(conn)
+
+    storage._run_ddl_migrations()
+
+    # La ligne existante survit et reste lisible par le repository.
+    row = storage.seloger_geo.get_cached("00001")
+    assert row is not None
+    assert row["area_key"] == "00001"
+    assert row["place_id"] == "AD08FRLEGACY"
+
+    # Et le renommage ne casse pas une seconde exécution.
+    storage._run_ddl_migrations()
+
+    conn = storage._get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM seloger_place_ids WHERE area_key = %s", ("00001",))
+            conn.commit()
+    finally:
+        storage._release_conn(conn)

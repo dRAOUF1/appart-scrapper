@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -14,6 +15,7 @@ from flask import (
 
 from parsers import list_sources, remember_manual_overrides
 from routes.auth import require_login
+from core.geocode import CITY
 from core.web_utils import to_int
 
 web_bp = Blueprint(
@@ -33,30 +35,43 @@ def _form_list(form_data: dict, key: str) -> list:
 
 
 def _parse_locations_from_form(form_data: dict) -> list[dict]:
-    """Les localisations saisies, une par ligne ville/code postal.
+    """Les périmètres de recherche saisis, un par ligne du formulaire.
 
-    `location_insee_code` est un champ caché rempli par l'autocomplete : il
-    porte le code INSEE de la commune choisie, ce qui permet à chaque source
-    de retrouver son propre identifiant de lieu (SeLoger en a besoin pour
-    résoudre son placeId — voir services.seloger_geocode). Une ville tapée à
-    la main sans passer par les suggestions n'en a pas : la localisation
-    reste utilisable par les sources qui se contentent de ville + code
-    postal.
+    Chaque ligne porte un champ caché `location_payload` rempli par
+    l'autocomplete : le périmètre choisi, sérialisé en JSON. C'est exactement
+    une entrée de `locations` au format canonique (region, department,
+    whole_city ou city selon ce qui a été choisi), ce qui évite d'avoir un
+    champ de formulaire par niveau et par attribut.
+
+    Une ligne remplie à la main, sans passer par les suggestions, n'a pas de
+    payload : elle est alors lue comme une commune (ville + code postal), le
+    seul niveau qu'on puisse deviner d'une saisie libre. Elle reste
+    exploitable par les sources qui se contentent de ville + code postal, mais
+    pas par celles qui ont besoin d'un identifiant de lieu (voir
+    SeLogerParser.cannot_search_reason).
     """
+    payloads = _form_list(form_data, "location_payload")
     cities = _form_list(form_data, "location_city")
     postal_codes = _form_list(form_data, "location_postal_code")
-    insee_codes = _form_list(form_data, "location_insee_code")
 
     locations = []
-    for index, (city, postal_code) in enumerate(zip(cities, postal_codes)):
-        city, postal_code = city.strip(), postal_code.strip()
-        if not city or not postal_code:
-            continue
-        location = {"city": city, "postalCode": postal_code}
-        insee_code = insee_codes[index].strip() if index < len(insee_codes) else ""
-        if insee_code:
-            location["inseeCode"] = insee_code
-        locations.append(location)
+    for index in range(max(len(payloads), len(cities))):
+        payload = payloads[index].strip() if index < len(payloads) else ""
+        if payload:
+            try:
+                parsed = json.loads(payload)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                # `label` n'est qu'un texte d'affichage : la normalisation
+                # l'écarte, mais autant ne pas le transporter jusque-là.
+                locations.append({k: v for k, v in parsed.items() if k != "label"})
+                continue
+
+        city = cities[index].strip() if index < len(cities) else ""
+        postal_code = postal_codes[index].strip() if index < len(postal_codes) else ""
+        if city and postal_code:
+            locations.append({"kind": CITY, "city": city, "postalCode": postal_code})
     return locations
 
 

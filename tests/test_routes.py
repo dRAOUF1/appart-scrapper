@@ -372,9 +372,14 @@ class TestParseSearchCriteriaFromForm:
         produire le vocabulaire de l'une d'elles."""
         from routes.web import _parse_search_criteria_from_form
 
+        import json
+
         form = {
-            "location_city": "Paris", "location_postal_code": "75014",
-            "location_insee_code": "75114",
+            "location_city": "Paris (75014)",
+            "location_postal_code": "75014",
+            "location_payload": json.dumps({
+                "kind": "city", "city": "Paris", "postalCode": "75014", "inseeCode": "75114",
+            }),
             "transaction": "buy", "price_max": "500000",
             "surface_min": "40",
         }
@@ -383,10 +388,68 @@ class TestParseSearchCriteriaFromForm:
         assert criteria["priceMax"] == 500000
         assert criteria["surfaceMin"] == 40
         assert criteria["locations"] == [
-            {"city": "Paris", "postalCode": "75014", "inseeCode": "75114"},
+            {"kind": "city", "city": "Paris", "postalCode": "75014", "inseeCode": "75114"},
         ]
         for source_specific in ("placeIds", "distributionTypes", "estateTypes", "spaceMin", "order"):
             assert source_specific not in criteria
+
+    def test_a_chosen_area_is_transported_as_a_payload(self):
+        """L'autocomplete peut proposer une région, un département ou une ville
+        entière : le périmètre choisi voyage en JSON dans un champ caché, plutôt
+        qu'éclaté en un champ de formulaire par niveau et par attribut."""
+        import json
+        from routes.web import _parse_search_criteria_from_form
+
+        idf = {"kind": "region", "label": "Île-de-France (région)",
+               "name": "Île-de-France", "code": "11", "departments": ["75", "92"]}
+        criteria = _parse_search_criteria_from_form({
+            "location_city": idf["label"],
+            "location_payload": json.dumps(idf),
+        })
+        assert criteria["locations"] == [{
+            "kind": "region", "name": "Île-de-France", "code": "11",
+            "departments": ["75", "92"],
+        }]
+        # `label` n'est qu'un texte d'affichage, il n'a rien à faire en base.
+        assert "label" not in criteria["locations"][0]
+
+    def test_several_levels_in_one_search(self):
+        import json
+        from werkzeug.datastructures import MultiDict
+        from routes.web import _parse_search_criteria_from_form
+
+        form = MultiDict([
+            ("location_city", "Gironde (33)"),
+            ("location_payload", json.dumps({"kind": "department", "name": "Gironde", "code": "33"})),
+            ("location_postal_code", ""),
+            ("location_city", "Poitiers (86000)"),
+            ("location_payload", json.dumps({"kind": "city", "city": "Poitiers",
+                                             "postalCode": "86000", "inseeCode": "86194"})),
+            ("location_postal_code", "86000"),
+        ])
+        criteria = _parse_search_criteria_from_form(form)
+        assert [loc["kind"] for loc in criteria["locations"]] == ["department", "city"]
+
+    def test_a_hand_typed_line_without_a_payload_is_read_as_a_city(self):
+        """Saisie libre, sans passer par les suggestions : le seul niveau qu'on
+        puisse deviner est la commune."""
+        from routes.web import _parse_search_criteria_from_form
+
+        criteria = _parse_search_criteria_from_form({
+            "location_city": "Poitiers", "location_postal_code": "86000",
+            "location_payload": "",
+        })
+        assert criteria["locations"] == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
+
+    def test_a_corrupted_payload_falls_back_to_the_typed_fields(self):
+        """Un payload illisible ne doit pas faire perdre la ligne."""
+        from routes.web import _parse_search_criteria_from_form
+
+        criteria = _parse_search_criteria_from_form({
+            "location_city": "Poitiers", "location_postal_code": "86000",
+            "location_payload": "{pas du json",
+        })
+        assert criteria["locations"] == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
 
     def test_manual_override_is_kept_apart_from_the_criteria(self):
         from routes.web import _parse_search_criteria_from_form
@@ -411,8 +474,8 @@ class TestParseSearchCriteriaFromForm:
         ])
         criteria = _parse_search_criteria_from_form(form)
         assert criteria["locations"] == [
-            {"city": "Paris", "postalCode": "75014"},
-            {"city": "Lyon", "postalCode": "69007"},
+            {"kind": "city", "city": "Paris", "postalCode": "75014"},
+            {"kind": "city", "city": "Lyon", "postalCode": "69007"},
         ]
 
     def test_incomplete_location_rows_are_skipped(self):
@@ -428,7 +491,7 @@ class TestParseSearchCriteriaFromForm:
             ("location_city", "Lyon"), ("location_postal_code", ""),
         ])
         criteria = _parse_search_criteria_from_form(form)
-        assert criteria["locations"] == [{"city": "Paris", "postalCode": "75014"}]
+        assert criteria["locations"] == [{"kind": "city", "city": "Paris", "postalCode": "75014"}]
 
     def test_no_location_rows_means_no_locations_key(self):
         from routes.web import _parse_search_criteria_from_form

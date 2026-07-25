@@ -14,10 +14,16 @@ que toute autre source devait apprendre à parler SeLoger.
 
 Le vocabulaire :
 
-    locations     [{city, postalCode, inseeCode, lat, lon}] — le code INSEE
-                  et les coordonnées viennent de l'autocomplete
-                  (core.geocode) et sont ce qui permet à chaque source de
-                  retrouver son propre identifiant de lieu
+    locations     une liste de périmètres, chacun portant son niveau (`kind`,
+                  voir core.geocode) :
+                    {kind: "region",     name, code, departments[]}
+                    {kind: "department", name, code}
+                    {kind: "whole_city", city, postalCodes[], inseeCode}
+                    {kind: "city",       city, postalCode, inseeCode}
+                  Le code INSEE et les coordonnées viennent de l'autocomplete
+                  et sont ce qui permet à chaque source de retrouver son
+                  propre identifiant de lieu. Une entrée sans `kind` vaut
+                  "city" : c'est le format d'avant les périmètres larges.
     transaction   "rent" | "buy"
     propertyTypes ["apartment", "house", "parking", "land"]
     priceMin/Max  entiers, en euros (loyer mensuel ou prix de vente selon
@@ -44,6 +50,8 @@ tourner sans intervention, et repasse au canonique dès qu'elle est rééditée.
 """
 
 from __future__ import annotations
+
+from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 
 # --- Transactions ---------------------------------------------------------
 RENT = "rent"
@@ -107,12 +115,68 @@ def _to_int(value) -> int | None:
         return None
 
 
+def _normalize_wide_location(loc: dict, kind: str) -> dict | None:
+    """Une région ou un département : identifié par son code, pas par une
+    ville. Sans code, le périmètre est inexploitable et la localisation est
+    écartée."""
+    code = str(loc.get("code") or "").strip()
+    if not code:
+        return None
+    normalized = {"kind": kind, "code": code}
+    name = (loc.get("name") or "").strip()
+    if name:
+        normalized["name"] = name
+    if kind == REGION:
+        # Les départements de la région, mémorisés à la saisie pour ne pas
+        # avoir à réinterroger l'API géo à chaque scrape (les sources qui ne
+        # connaissent que les départements en ont besoin).
+        departments = [str(d).strip() for d in _as_list(loc.get("departments")) if str(d).strip()]
+        if departments:
+            normalized["departments"] = departments
+    return normalized
+
+
+def _normalize_whole_city(loc: dict) -> dict | None:
+    """Toute une commune : tous ses codes postaux d'un coup."""
+    city = (loc.get("city") or "").strip()
+    postal_codes = [str(cp).strip() for cp in _as_list(loc.get("postalCodes")) if str(cp).strip()]
+    if not city or not postal_codes:
+        return None
+    normalized = {"kind": WHOLE_CITY, "city": city, "postalCodes": sorted(set(postal_codes))}
+    for optional in ("inseeCode", "lat", "lon"):
+        if loc.get(optional) is not None:
+            normalized[optional] = loc[optional]
+    return normalized
+
+
+def _normalize_city(loc: dict) -> dict | None:
+    """Un seul code postal — le niveau par défaut, et le seul qui existait
+    avant l'introduction des périmètres larges."""
+    city = (loc.get("city") or "").strip()
+    postal_code = str(loc.get("postalCode") or "").strip()
+    if not city or not postal_code:
+        return None
+    normalized = {"kind": CITY, "city": city, "postalCode": postal_code}
+    for optional in ("inseeCode", "lat", "lon"):
+        if loc.get(optional) is not None:
+            normalized[optional] = loc[optional]
+    return normalized
+
+
 def normalize_locations(criteria: dict) -> list[dict]:
     """Les localisations, depuis `locations` ou l'ancien couple à plat
-    city/postalCode. `inseeCode`/`lat`/`lon` sont conservés quand ils sont
-    là (l'autocomplete les fournit) et simplement absents sinon — une
-    localisation tapée à la main reste exploitable par les sources qui se
-    contentent de ville + code postal.
+    city/postalCode.
+
+    Chaque entrée porte son niveau de périmètre (`kind`) : region,
+    department, whole_city ou city (voir core.geocode). Une entrée sans
+    `kind` est traitée comme `city` — c'est le format d'avant l'introduction
+    des périmètres larges, et les recherches déjà enregistrées continuent
+    donc de fonctionner sans migration.
+
+    `inseeCode`/`lat`/`lon` sont conservés quand ils sont là (l'autocomplete
+    les fournit) et simplement absents sinon — une localisation tapée à la
+    main reste exploitable par les sources qui se contentent de ville + code
+    postal.
     """
     raw = _as_list(criteria.get("locations"))
     if not raw:
@@ -124,16 +188,78 @@ def normalize_locations(criteria: dict) -> list[dict]:
     for loc in raw:
         if not isinstance(loc, dict):
             continue
-        city = (loc.get("city") or "").strip()
-        postal_code = str(loc.get("postalCode") or "").strip()
-        if not city or not postal_code:
-            continue
-        normalized = {"city": city, "postalCode": postal_code}
-        for optional in ("inseeCode", "lat", "lon"):
-            if loc.get(optional) is not None:
-                normalized[optional] = loc[optional]
-        locations.append(normalized)
+        kind = (loc.get("kind") or CITY).strip().lower()
+        if kind in (REGION, DEPARTMENT):
+            normalized = _normalize_wide_location(loc, kind)
+        elif kind == WHOLE_CITY:
+            normalized = _normalize_whole_city(loc)
+        elif kind == CITY:
+            normalized = _normalize_city(loc)
+        else:
+            normalized = None  # niveau inconnu : jamais deviné
+        if normalized:
+            locations.append(normalized)
     return locations
+
+
+def location_postal_prefixes(location: dict) -> list[str]:
+    """Les préfixes de code postal couverts par une localisation.
+
+    Sert à vérifier localement qu'une annonce est bien dans le périmètre
+    demandé, quel que soit le niveau — une source peut élargir d'elle-même
+    (Laforet inclut la métropole autour d'une commune) et ce contrôle est le
+    garde-fou. Un préfixe vide n'est jamais renvoyé : ce serait « tout code
+    postal accepté », l'inverse du but recherché.
+    """
+    from core.geocode import postal_prefix
+
+    kind = location.get("kind", CITY)
+    if kind == CITY:
+        return [location["postalCode"]] if location.get("postalCode") else []
+    if kind == WHOLE_CITY:
+        return list(location.get("postalCodes") or [])
+    if kind == DEPARTMENT:
+        code = location.get("code")
+        return [postal_prefix(code)] if code else []
+    if kind == REGION:
+        return [postal_prefix(d) for d in (location.get("departments") or []) if d]
+    return []
+
+
+def location_label(location: dict) -> str:
+    """Le périmètre en clair, tel qu'on l'affiche à l'utilisateur.
+
+    Même formulation partout : suggestions de l'autocomplete, champ du
+    formulaire, étiquettes des cartes de recherche.
+    """
+    kind = location.get("kind", CITY)
+    if kind == REGION:
+        return f"{location.get('name') or location.get('code')} (région)"
+    if kind == DEPARTMENT:
+        code = location.get("code")
+        name = location.get("name") or code
+        return f"{name} ({code}) — tout le département" if code else str(name)
+    if kind == WHOLE_CITY:
+        count = len(location.get("postalCodes") or [])
+        return f"{location.get('city')} — toute la ville ({count} codes postaux)"
+    return f"{location.get('city')} ({location.get('postalCode')})"
+
+
+def matches_locations(postal_code: str, locations: list[dict]) -> bool:
+    """Le code postal d'une annonce tombe-t-il dans l'un des périmètres ?
+
+    Faux si le code postal est absent ou si aucun périmètre ne le couvre :
+    on n'accorde jamais le bénéfice du doute sur la localisation (contrairement
+    au prix ou à la surface, une annonce dont on ne sait pas situer le bien
+    n'a pas à être remontée).
+    """
+    if not postal_code:
+        return False
+    for location in locations:
+        for prefix in location_postal_prefixes(location):
+            if postal_code.startswith(prefix):
+                return True
+    return False
 
 
 def _normalize_transaction(criteria: dict) -> str | None:
