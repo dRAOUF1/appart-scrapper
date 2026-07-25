@@ -1,7 +1,18 @@
-"""SeLoger scraper — API BFF + classified-search avec LZ-string.
+"""SeLoger scraper — page classified-search + données embarquées.
+
+Les annonces sont lues dans le blob JSON `window["__UFRN_FETCHER__"]` de la
+page de résultats (historiquement compressé en LZ-string, aujourd'hui du
+JSON direct — les deux sont gérés, voir get_detailed_listings).
 
 Utilise un User-Agent iPhone mobile Safari + rotation de proxies gratuits
 pour bypass DataDome sur les environnements cloud (Render, AWS, etc.).
+
+L'API BFF (`/serp-bff/search`) a été retirée : elle servait à récupérer
+l'intégralité des IDs page par page, mais elle rejette désormais nos
+requêtes (400 — son schéma attend un objet `criteria.location` et non plus
+une liste `placeIds`). Elle n'est pas remplacée : la page de résultats est
+triée par date décroissante, donc les 30 annonces qu'elle renvoie sont les
+30 plus récentes, ce qui est exactement ce qu'un tracker doit voir.
 """
 
 from __future__ import annotations
@@ -17,13 +28,6 @@ import requests
 import lzstring
 from loguru import logger
 
-BFF_ONLY_KEYS = {
-    "location", "placeIds", "priceMin", "priceMax", "spaceMin", "spaceMax",
-    "rooms", "bedrooms", "distributionTypes", "estateTypes",
-    "locationsInBuildingExcluded",
-}
-
-BFF_API = "https://www.seloger.com/serp-bff/search"
 SEARCH_URL = "https://www.seloger.com/classified-search"
 
 MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
@@ -201,11 +205,6 @@ def build_search_url(criteria: dict, order: str | None = None) -> str:
     return f"{SEARCH_URL}?{query}"
 
 
-def clean_criteria_for_bff(criteria: dict) -> dict:
-    """Nettoie les critères pour ne garder que les clés acceptées par l'API BFF."""
-    return {k: v for k, v in criteria.items() if k in BFF_ONLY_KEYS}
-
-
 def parse_search_url(url: str) -> dict:
     """Extrait les critères de recherche d'une URL SeLoger."""
     parsed = urlparse(url)
@@ -214,7 +213,14 @@ def parse_search_url(url: str) -> dict:
     criteria = {}
 
     if "locations" in params:
-        criteria["placeIds"] = [v for v in params["locations"]]
+        # Une vraie URL SeLoger peut joindre plusieurs placeIds par des
+        # virgules dans une seule occurrence de `locations=`, là où notre
+        # build_search_url() répète le paramètre. Sans ce split, une URL
+        # multi-villes collée par l'utilisateur devient UN seul placeId
+        # opaque bidon (constaté sur une recherche réelle :
+        # "AD08FR31096,AD08FR36603,AD08FR36621,AD08FR36616" gardé comme une
+        # unique chaîne au lieu de quatre identifiants).
+        criteria["placeIds"] = _split_csv_values(params["locations"])
 
     if "distributionTypes" in params:
         criteria["distributionTypes"] = _split_csv_values(params["distributionTypes"])
@@ -266,64 +272,6 @@ def _split_csv_values(values: list[str]) -> list[str]:
     for v in values:
         result.extend(v.split(","))
     return result
-
-
-def _post_with_429_retry(session: requests.Session, url: str, payload: dict, max_retries: int = 3, max_wait: float = 30) -> requests.Response:
-    """POST, retrying on 429 and honoring Retry-After (capped at max_wait)."""
-    for attempt in range(max_retries + 1):
-        resp = session.post(url, json=payload, timeout=15)
-        if resp.status_code != 429 or attempt == max_retries:
-            return resp
-        try:
-            wait = min(float(resp.headers.get("Retry-After", 5)), max_wait)
-        except (TypeError, ValueError):
-            wait = 5
-        logger.warning(f"  429 Too Many Requests, attente {wait:.1f}s avant retry ({attempt + 1}/{max_retries})...")
-        time.sleep(wait)
-    return resp
-
-
-def get_all_ids(criteria: dict, page_size: int = 30, max_pages: int = 50) -> tuple[list, int]:
-    """Récupère TOUS les IDs via l'API BFF."""
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "fr-FR,fr;q=0.9",
-        "Content-Type": "application/json",
-    })
-    session.get("https://www.seloger.com/classified-search", timeout=15)
-
-    all_ids: list = []
-    all_classifieds: list = []
-    page = 1
-    total = None
-
-    while page <= max_pages:
-        payload = {
-            "criteria": clean_criteria_for_bff(criteria),
-            "paging": {"page": page, "size": page_size},
-        }
-
-        resp = _post_with_429_retry(session, BFF_API, payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-        page_classifieds = data.get("classifieds", [])
-        page_ids = [c["id"] for c in page_classifieds]
-        total = data.get("totalCount", total)
-        all_ids.extend(page_ids)
-        all_classifieds.extend(page_classifieds)
-
-        logger.debug(f"  Page {page}: {len(page_ids)} IDs (total connu: {total})")
-
-        if len(page_ids) < page_size:
-            break
-
-        page += 1
-        time.sleep(0.3)
-
-    return all_ids, total or len(all_ids), all_classifieds
 
 
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
@@ -469,95 +417,20 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
     raise ValueError("Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome. Attends 15-30 minutes et réessaie.")
 
 
-def scrape(criteria: dict, use_bff: bool = True) -> tuple[list[dict], list, int]:
-    """Exécute le scraping complet : données détaillées + IDs."""
-    logger.info(f"[SeLoger] Début du scraping avec critères: {criteria} (BFF={'oui' if use_bff else 'non'})")
+def scrape(criteria: dict) -> list[dict]:
+    """Exécute le scraping : les annonces de la page de résultats.
 
-    bff_classifieds = []
-    all_ids = []
-    total = 0
-    bff_error = None
-    detailed_error = None
+    Une erreur réelle (réseau, blocage anti-bot, format inattendu) remonte à
+    l'appelant plutôt que d'être aplatie en liste vide, pour que
+    ScrapeService puisse distinguer un échec d'une recherche légitimement
+    sans résultat.
 
-    if use_bff:
-        try:
-            all_ids, total, bff_classifieds = get_all_ids(criteria)
-            logger.info(f"[SeLoger] {len(all_ids)} IDs récupérés sur {total} annonces via BFF")
-        except Exception as e:
-            bff_error = e
-            logger.error(f"[SeLoger] Échec BFF: {e}")
+    `criteria` est déjà au format natif SeLoger ici (placeIds,
+    distributionTypes, ...) — la traduction depuis le vocabulaire canonique
+    est faite en amont par SeLogerParser.to_native().
+    """
+    logger.info(f"[SeLoger] Début du scraping avec critères: {criteria}")
 
-    detailed = []
-    try:
-        detailed = get_detailed_listings(criteria, order="DateDesc")
-        logger.info(f"[SeLoger] {len(detailed)} annonces détaillées via mobile UA")
-    except Exception as e:
-        detailed_error = e
-        logger.warning(f"[SeLoger] Échec données détaillées: {e}")
-
-    if detailed:
-        return detailed, [l["id"] for l in detailed], len(detailed)
-
-    if bff_classifieds:
-        logger.info(f"[SeLoger] Fallback: conversion des {len(bff_classifieds)} résultats BFF en listings")
-        detailed = _convert_bff_to_listings(bff_classifieds)
-        return detailed, all_ids, total
-
-    # Aucun résultat des chemins tentés. Si TOUS les chemins tentés ont
-    # levé une exception, ce n'est pas une recherche légitimement vide —
-    # on le signale à l'appelant au lieu de renvoyer un résultat vide
-    # silencieux (masquerait un blocage anti-bot ou un changement de format).
-    attempted_errors = [detailed_error]
-    if use_bff:
-        attempted_errors.append(bff_error)
-    if all(err is not None for err in attempted_errors):
-        raise detailed_error if detailed_error is not None else bff_error
-
-    return [], all_ids, total
-
-
-def _convert_bff_to_listings(classifieds: list[dict]) -> list[dict]:
-    """Convertit les résultats bruts de l'API BFF en format listing standard."""
-    listings = []
-    for c in classifieds:
-        try:
-            card = c.get("card", {})
-            price = card.get("price", {})
-            location = c.get("location", {})
-            address = location.get("address", {})
-            photos = c.get("photos", [])
-
-            listings.append({
-                "id": c.get("id", ""),
-                "legacyId": c.get("legacyId", ""),
-                "title": card.get("title", ""),
-                "headline": card.get("title", ""),
-                "description": "",
-                "price": price.get("text", ""),
-                "priceValue": price.get("value"),
-                "priceDetails": price.get("priceDetails", ""),
-                "surface": card.get("surface", ""),
-                "rooms": card.get("rooms", ""),
-                "propertyType": card.get("propertyType", ""),
-                "city": address.get("city", ""),
-                "district": address.get("district", ""),
-                "zipCode": address.get("zipCode", ""),
-                "url": c.get("urls", {}).get("classified", ""),
-                "photos": [{"url": p.get("url", ""), "alt": p.get("caption", ""), "key": ""} for p in photos],
-                "agency": card.get("agency", {}).get("name", ""),
-                "isPrivate": False,
-                "phone": [],
-                "epc": card.get("energyRate", ""),
-                "ges": card.get("gesRate", ""),
-                "isNew": card.get("isNew", False),
-                "isExclusive": False,
-                "has3DVisit": bool(card.get("has3DTour")),
-                "creationDate": c.get("publicationDate", ""),
-                "updateDate": c.get("lastUpdateDate", ""),
-                "keyfacts": card.get("keyFacts", []),
-            })
-        except Exception as e:
-            logger.debug(f"  Erreur conversion BFF: {e}")
-            continue
-
+    listings = get_detailed_listings(criteria, order="DateDesc")
+    logger.info(f"[SeLoger] {len(listings)} annonces récupérées")
     return listings

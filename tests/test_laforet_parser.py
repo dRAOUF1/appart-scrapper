@@ -4,15 +4,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from models.listing import Listing
+from core.geocode import _arrondissement_insee_code
 from parsers.laforet import (
     LaforetParser,
-    _arrondissement_insee_code,
     _dict_to_listing,
     _extract_genuine_section,
     _parse_cards,
     _parse_total_pages,
     _passes_filters,
-    _resolve_insee_code,
     _slugify,
 )
 
@@ -74,7 +73,7 @@ PAGE_WITH_AGENCY_OFFICE_CARD = """
 
 @pytest.fixture(autouse=True)
 def _clear_insee_cache():
-    from parsers.laforet import _INSEE_CACHE
+    from core.geocode import _INSEE_CACHE
     _INSEE_CACHE.clear()
     yield
     _INSEE_CACHE.clear()
@@ -115,19 +114,49 @@ class TestBuildSearchUrl:
         parser = LaforetParser()
         url = parser.build_search_url({
             "city": "Lyon", "postalCode": "69007",
-            "distributionTypes": ["Sale"], "estateTypes": ["House"],
+            "transaction": "buy", "propertyTypes": ["house"],
         })
         assert url == (
             "https://www.laforet.com/ville/achat-maison-lyon-69007"
             "?filter%5Btypes%5D%5B%5D=house&filter%5Bcities%5D%5B%5D=69387"
         )
 
-    def test_unsupported_estate_type_raises(self):
+    def test_several_property_types_are_merged_into_one_url(self):
+        """filter[types][] est répétable et prime sur le type du slug —
+        vérifié en live, une seule requête suffit pour appartements + maisons."""
         parser = LaforetParser()
-        with pytest.raises(ValueError):
-            parser.build_search_url({
-                "city": "Paris", "postalCode": "75018", "estateTypes": ["Parking"],
-            })
+        url = parser.build_search_url({
+            "city": "Lyon", "postalCode": "69007",
+            "propertyTypes": ["apartment", "house"],
+        })
+        assert "filter%5Btypes%5D%5B%5D=apartment" in url
+        assert "filter%5Btypes%5D%5B%5D=house" in url
+
+    def test_unsupported_property_type_is_reported_not_raised(self):
+        """Régression : un type de bien que Laforet ne référence pas levait
+        une ValueError jusque dans la reconstruction d'URL (ce qui renvoyait
+        un 500 sur /api/searches/<id>/urls). Il est maintenant annoncé par
+        cannot_search_reason() avant tout scrape."""
+        parser = LaforetParser()
+        criteria = {"city": "Paris", "postalCode": "75018", "propertyTypes": ["parking"]}
+
+        reason = parser.cannot_search_reason(criteria)
+        assert reason and "Parking" in reason
+        # Plus d'exception, et surtout AUCUNE url : montrer un lien vers des
+        # appartements à qui demande un parking serait un faux résultat.
+        assert parser.build_search_url(criteria) is None
+        assert parser.build_search_urls(criteria) == []
+
+    def test_a_mixed_request_still_searches_the_supported_types(self):
+        """« appartement + parking » doit tout de même ramener les
+        appartements, pas échouer en entier."""
+        parser = LaforetParser()
+        url = parser.build_search_url({
+            "city": "Paris", "postalCode": "75018",
+            "propertyTypes": ["apartment", "parking"],
+        })
+        assert "filter%5Btypes%5D%5B%5D=apartment" in url
+        assert "parking" not in url
 
     def test_unresolvable_location_falls_back_to_a_plain_url(self):
         """A postal code that can't be resolved to an INSEE code (unknown
@@ -210,74 +239,6 @@ class TestHasValidCriteria:
         ]})
 
 
-class TestArrondissementInseeCode:
-    """Paris/Lyon/Marseille arrondissements need a special code Laforet's
-    filter[cities][] expects — formulas verified against Laforet's own
-    embedded page state (see parsers/laforet.py module docstring), not
-    guessed: 75014->75114, 69007->69387, 13001->13201, etc."""
-
-    def test_paris(self):
-        assert _arrondissement_insee_code("75014") == "75114"
-        assert _arrondissement_insee_code("75001") == "75101"
-        assert _arrondissement_insee_code("75020") == "75120"
-
-    def test_lyon(self):
-        assert _arrondissement_insee_code("69001") == "69381"
-        assert _arrondissement_insee_code("69007") == "69387"
-        assert _arrondissement_insee_code("69009") == "69389"
-
-    def test_marseille(self):
-        assert _arrondissement_insee_code("13001") == "13201"
-        assert _arrondissement_insee_code("13008") == "13208"
-        assert _arrondissement_insee_code("13016") == "13216"
-
-    def test_non_special_cased_postal_code_returns_none(self):
-        assert _arrondissement_insee_code("86000") is None
-        assert _arrondissement_insee_code("44000") is None
-
-    def test_out_of_range_or_malformed_returns_none(self):
-        assert _arrondissement_insee_code("75000") is None
-        assert _arrondissement_insee_code("7500") is None
-        assert _arrondissement_insee_code("abcde") is None
-
-
-class TestResolveInseeCode:
-    def test_special_case_never_hits_the_network(self):
-        with patch("parsers.laforet.requests.get") as mock_get:
-            code = _resolve_insee_code("75014")
-        assert code == "75114"
-        mock_get.assert_not_called()
-
-    def test_general_case_uses_the_public_geo_api(self):
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = [{"code": "86194"}]
-        resp.raise_for_status.return_value = None
-        with patch("parsers.laforet.requests.get", return_value=resp) as mock_get:
-            code = _resolve_insee_code("86000")
-        assert code == "86194"
-        mock_get.assert_called_once()
-
-    def test_result_is_cached(self):
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = [{"code": "86194"}]
-        resp.raise_for_status.return_value = None
-        with patch("parsers.laforet.requests.get", return_value=resp) as mock_get:
-            _resolve_insee_code("86000")
-            _resolve_insee_code("86000")
-        mock_get.assert_called_once()
-
-    def test_returns_none_on_network_error(self):
-        with patch("parsers.laforet.requests.get", side_effect=Exception("boom")):
-            assert _resolve_insee_code("99999") is None
-
-    def test_returns_none_when_no_commune_matches(self):
-        resp = MagicMock(status_code=200)
-        resp.json.return_value = []
-        resp.raise_for_status.return_value = None
-        with patch("parsers.laforet.requests.get", return_value=resp):
-            assert _resolve_insee_code("99999") is None
-
-
 class TestExtractGenuineSection:
     """Laforet always appends a second "Appartements à proximité de {ville}"
     section with backfill noise after the real results — must never be
@@ -330,7 +291,7 @@ class TestParseCards:
 class TestDictToListing:
     def test_maps_to_common_listing_schema(self):
         cards = _parse_cards(SAMPLE_PAGE_HTML)
-        listing = _dict_to_listing(cards[0], "Appartement")
+        listing = _dict_to_listing(cards[0])
         assert listing.listing_id == "lf_52811904"
         assert listing.source == "laforet"
         assert listing.city == "PARIS"
@@ -357,8 +318,8 @@ class TestPassesFilters:
     def test_surface_range(self):
         listing = self._listing(surface="50")
         allowed = {"75014"}
-        assert _passes_filters(listing, {"spaceMin": 40, "spaceMax": 60}, allowed)
-        assert not _passes_filters(listing, {"spaceMin": 60}, allowed)
+        assert _passes_filters(listing, {"surfaceMin": 40, "surfaceMax": 60}, allowed)
+        assert not _passes_filters(listing, {"surfaceMin": 60}, allowed)
 
     def test_rooms_exact_match(self):
         listing = self._listing(rooms="2")

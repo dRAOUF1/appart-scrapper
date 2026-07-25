@@ -27,10 +27,10 @@ def sample_search_data():
         "ntfy_topic": "test-topic",
         "source": "seloger",
         "criteria": {
-            "placeIds": ["750113"],
+            "locations": [{"city": "Paris", "postalCode": "75013", "inseeCode": "75113"}],
             "priceMax": 1500,
-            "distributionTypes": ["Rent"],
-            "estateTypes": ["Apartment"],
+            "transaction": "rent",
+            "propertyTypes": ["apartment"],
         },
         "scrape_interval": 5,
         "is_active": True,

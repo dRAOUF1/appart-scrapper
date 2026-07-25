@@ -79,20 +79,27 @@
 
         <div class="form-section">
             <div class="form-section-label">📍 Localisation</div>
-            {% set _locations = search.criteria.locations if search.criteria.locations else [{'city': search.criteria.city or '', 'postalCode': search.criteria.postalCode or ''}] %}
+            {% set _locations = search.criteria.locations or [{'city': '', 'postalCode': '', 'inseeCode': ''}] %}
             <div class="location-list" data-location-list>
                 {% for loc in _locations %}
-                <div class="location-row">
-                    <input type="text" name="location_city" value="{{ loc.city }}" placeholder="Ville (ex: Paris)" aria-label="Ville">
-                    <input type="text" name="location_postal_code" value="{{ loc.postalCode }}" placeholder="Code postal (ex: 75018)" aria-label="Code postal">
+                <div class="location-row" data-location-row>
+                    <div class="location-autocomplete">
+                        <input type="text" name="location_city" value="{{ loc.city }}"
+                            placeholder="Ville (ex: Paris)" aria-label="Ville"
+                            autocomplete="off" data-location-input>
+                        <ul class="location-suggestions" data-location-suggestions hidden></ul>
+                    </div>
+                    <input type="text" name="location_postal_code" value="{{ loc.postalCode }}"
+                        placeholder="Code postal (ex: 75018)" aria-label="Code postal" data-location-postal>
+                    <input type="hidden" name="location_insee_code" value="{{ loc.inseeCode or '' }}" data-location-insee>
                     <button type="button" class="location-remove-btn" aria-label="Retirer cette ville">✕</button>
                 </div>
                 {% endfor %}
             </div>
             <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une ville</button>
             <small class="form-help" style="display: block; margin-top: 0.5rem;">
-                Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
-                Ajoute plusieurs villes pour toutes les surveiller dans la même recherche.
+                Choisis la ville dans les suggestions : toutes les sources s'appuient dessus pour
+                retrouver le lieu chez elles. Tu peux en ajouter plusieurs dans la même recherche.
             </small>
         </div>
 
@@ -102,8 +109,6 @@
                 {% for src in sources %}
                 <label class="source-card">
                     <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
-                        data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
-                        data-extra-target="extra-{{ src.id }}"
                         {% if src.id in (search.sources or [search.source]) %}checked{% endif %}>
                     <span class="source-card-body">
                         <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
@@ -111,27 +116,11 @@
                         <span class="source-card-check">✓</span>
                     </span>
                 </label>
-                {% if src.requires_extra_location %}
-                <div id="extra-{{ src.id }}" class="source-extra-panel" style="display: none;">
-                    <small class="form-help">{{ src.extra_location_help }}</small>
-                    <div class="form-group" style="margin-top: 0.5rem;">
-                        <label for="search_url">{{ src.extra_location_label }}</label>
-                        <input type="url" id="search_url" name="search_url"
-                            placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
-                        <small class="form-help">Laissez vide pour garder le Place ID déjà enregistré.</small>
-                    </div>
-                    <details style="margin-top: 0.5rem;">
-                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
-                        <input type="text" name="place_ids"
-                            value="{{ search.criteria.placeIds | join(', ') if search.criteria.placeIds else '' }}"
-                            placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
-                    </details>
-                </div>
-                {% endif %}
                 {% endfor %}
             </div>
             <small class="form-help">
-                Une même recherche peut être scrapée sur plusieurs sources à la fois.
+                Une même recherche peut être scrapée sur plusieurs sources à la fois. Les critères
+                ci-dessous sont définis une seule fois : chaque source les traduit à son format.
             </small>
         </div>
 
@@ -151,55 +140,50 @@
                         placeholder="850">
                 </div>
                 <div class="form-group">
-                    <label for="space_min">Surface min (m²)</label>
-                    <input type="number" id="space_min" name="space_min"
-                        value="{{ search.criteria.spaceMin if search.criteria.spaceMin else '' }}"
+                    <label for="surface_min">Surface min (m²)</label>
+                    <input type="number" id="surface_min" name="surface_min"
+                        value="{{ search.criteria.surfaceMin if search.criteria.surfaceMin else '' }}"
                         placeholder="19">
                 </div>
                 <div class="form-group">
-                    <label for="space_max">Surface max (m²)</label>
-                    <input type="number" id="space_max" name="space_max"
-                        value="{{ search.criteria.spaceMax if search.criteria.spaceMax else '' }}"
+                    <label for="surface_max">Surface max (m²)</label>
+                    <input type="number" id="surface_max" name="surface_max"
+                        value="{{ search.criteria.surfaceMax if search.criteria.surfaceMax else '' }}"
                         placeholder="80">
                 </div>
                 <div class="form-group">
-                    <label for="distribution">Type de transaction</label>
-                    <select id="distribution" name="distribution">
-                        <option value="Rent" {% if search.criteria.distributionTypes and 'Rent' in search.criteria.distributionTypes %}selected{% endif %}>Location</option>
-                        <option value="Sale" {% if search.criteria.distributionTypes and 'Sale' in search.criteria.distributionTypes %}selected{% endif %}>Achat</option>
+                    <label for="transaction">Type de transaction</label>
+                    <select id="transaction" name="transaction">
+                        <option value="rent" {% if search.criteria.transaction != 'buy' %}selected{% endif %}>Location</option>
+                        <option value="buy" {% if search.criteria.transaction == 'buy' %}selected{% endif %}>Achat</option>
                     </select>
                 </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
                 <div class="form-group">
-                    <label for="estate_type">Type de bien</label>
-                    <select id="estate_type" name="estate_type">
-                        <option value="Apartment" {% if search.criteria.estateTypes and 'Apartment' in search.criteria.estateTypes %}selected{% endif %}>Appartement</option>
-                        <option value="House" {% if search.criteria.estateTypes and 'House' in search.criteria.estateTypes %}selected{% endif %}>Maison</option>
-                        <option value="Parking" {% if search.criteria.estateTypes and 'Parking' in search.criteria.estateTypes %}selected{% endif %}>Parking</option>
-                        <option value="Land" {% if search.criteria.estateTypes and 'Land' in search.criteria.estateTypes %}selected{% endif %}>Terrain</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="order">Tri</label>
-                    <select id="order" name="order">
-                        <option value="">— Par défaut —</option>
-                        <option value="DateDesc" {% if search.criteria.order == 'DateDesc' %}selected{% endif %}>Plus récent d'abord</option>
-                        <option value="DateAsc" {% if search.criteria.order == 'DateAsc' %}selected{% endif %}>Plus ancien d'abord</option>
-                        <option value="PriceAsc" {% if search.criteria.order == 'PriceAsc' %}selected{% endif %}>Prix croissant</option>
-                        <option value="PriceDesc" {% if search.criteria.order == 'PriceDesc' %}selected{% endif %}>Prix décroissant</option>
-                        <option value="SurfaceAsc" {% if search.criteria.order == 'SurfaceAsc' %}selected{% endif %}>Surface croissante</option>
-                        <option value="SurfaceDesc" {% if search.criteria.order == 'SurfaceDesc' %}selected{% endif %}>Surface décroissante</option>
-                    </select>
+                    <label>Type de bien</label>
+                    <div class="pill-toggle-group">
+                        {% for value, label in [('apartment', 'Appartement'), ('house', 'Maison'), ('parking', 'Parking'), ('land', 'Terrain')] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="property_types" value="{{ value }}"
+                                data-property-type="{{ value }}"
+                                {% if value in (search.criteria.propertyTypes or ['apartment']) %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <small class="form-help" data-property-type-warning hidden></small>
                 </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
                 <div class="form-group">
                     <label>Pièces</label>
                     <div class="pill-toggle-group">
-                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
                             <input type="checkbox" name="rooms" value="{{ n }}"
                                 {% if search.criteria.rooms and n in search.criteria.rooms %}checked{% endif %}>
-                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -207,17 +191,40 @@
                 <div class="form-group">
                     <label>Chambres</label>
                     <div class="pill-toggle-group">
-                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
                             <input type="checkbox" name="bedrooms" value="{{ n }}"
                                 {% if search.criteria.bedrooms and n in search.criteria.bedrooms %}checked{% endif %}>
-                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
                     </div>
                 </div>
             </div>
         </div>
+
+        {% set _override_sources = sources | selectattr('manual_override_label') | list %}
+        {% if _override_sources %}
+        <details class="form-section" style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem;">
+                ⚙️ Options avancées — identifiants de lieu par source
+            </summary>
+            <small class="form-help" style="display: block; margin: 0.75rem 0;">
+                Normalement inutile : chaque source retrouve le lieu seule à partir de la ville
+                choisie plus haut. Ces champs ne servent que si une source ne trouve rien.
+            </small>
+            {% for src in _override_sources %}
+            {% set _current = (search.criteria.sourceOverrides or {}).get(src.id, {}) %}
+            <div class="form-group" style="margin-top: 0.75rem;">
+                <label for="override_{{ src.id }}">{{ src.name }} — {{ src.manual_override_label }}</label>
+                <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}"
+                    value="{{ _current.placeIds | join(', ') if _current.placeIds else '' }}"
+                    placeholder="Ex: AD08FR31096">
+                <small class="form-help">{{ src.manual_override_help }}</small>
+            </div>
+            {% endfor %}
+        </details>
+        {% endif %}
 
         <!-- Current criteria display -->
         {% if search.criteria %}
@@ -237,48 +244,9 @@
 
 {% block scripts %}
 <script>
-// Affiche le champ d'appoint d'une source (ex: URL/Place ID SeLoger) seulement
-// quand cette source est cochée — générique, marche pour toute source future
-// qui déclarerait aussi requires_extra_location.
-document.querySelectorAll('.source-checkbox[data-requires-extra="true"]').forEach(cb => {
-    const target = document.getElementById(cb.dataset.extraTarget);
-    if (!target) return;
-    const sync = () => { target.style.display = cb.checked ? 'block' : 'none'; };
-    cb.addEventListener('change', sync);
-    sync();
-});
-
-// Ville/code postal repetables — une recherche peut couvrir plusieurs
-// villes/codes postaux à la fois. Le bouton "Retirer" reste caché tant
-// qu'il ne reste qu'une seule ligne (au moins une localisation requise).
-document.querySelectorAll('[data-location-list]').forEach(list => {
-    const addBtn = list.parentElement.querySelector('[data-add-location]');
-
-    function refreshRemoveButtons() {
-        const rows = list.querySelectorAll('.location-row');
-        rows.forEach(row => {
-            row.querySelector('.location-remove-btn').style.visibility =
-                rows.length > 1 ? 'visible' : 'hidden';
-        });
-    }
-
-    list.addEventListener('click', e => {
-        if (!e.target.classList.contains('location-remove-btn')) return;
-        if (list.querySelectorAll('.location-row').length <= 1) return;
-        e.target.closest('.location-row').remove();
-        refreshRemoveButtons();
-    });
-
-    if (addBtn) {
-        addBtn.addEventListener('click', () => {
-            const newRow = list.querySelector('.location-row').cloneNode(true);
-            newRow.querySelectorAll('input').forEach(input => { input.value = ''; });
-            list.appendChild(newRow);
-            refreshRemoveButtons();
-        });
-    }
-
-    refreshRemoveButtons();
-});
+// Capacités déclarées par chaque parser (SUPPORTED_*), consommées par
+// static/search_form.js pour prévenir qu'un critère ne sera pas honoré.
+window.SOURCE_CAPABILITIES = {{ sources | tojson }};
 </script>
+<script src="{{ url_for('web.static', filename='search_form.js') }}"></script>
 {% endblock %}

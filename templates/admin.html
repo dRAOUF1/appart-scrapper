@@ -75,24 +75,6 @@
 <div class="card" style="margin-bottom: 1.5rem;">
     <h2>⚙️ Paramètres de scraping</h2>
     <div class="detail-grid">
-        <div class="detail-card">
-            <h3>API BFF SeLoger</h3>
-            <p class="text-muted text-sm" style="margin-bottom: 0.75rem;">
-                Récupère toutes les annonces via l'API BFF (peut causer des erreurs 400 si les critères sont invalides).
-                Si désactivé, se limite aux ~30 premiers résultats.
-            </p>
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <span class="badge {% if stats.bff_enabled %}badge-active{% else %}badge-inactive{% endif %}">
-                    {% if stats.bff_enabled %}✅ Activée{% else %}❌ Désactivée{% endif %}
-                </span>
-                <form method="POST" action="{{ url_for('admin.admin_toggle_bff') }}" style="display: inline;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-ghost">
-                        {% if stats.bff_enabled %}Désactiver{% else %}Activer{% endif %}
-                    </button>
-                </form>
-            </div>
-        </div>
     </div>
 </div>
 

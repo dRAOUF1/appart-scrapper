@@ -21,6 +21,7 @@ from repositories.listing_repo import ListingRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.admin_repo import AdminRepository
 from repositories.settings_repo import SettingsRepository
+from repositories.seloger_geo_repo import SelogerGeoRepository
 
 
 class Storage:
@@ -34,6 +35,7 @@ class Storage:
         self.scrape_logs = ScrapeLogRepository(database_url)
         self.admin = AdminRepository(database_url)
         self.settings = SettingsRepository(database_url)
+        self.seloger_geo = SelogerGeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -192,9 +194,18 @@ class Storage:
                         value TEXT NOT NULL
                     );
                 """)
+                # L'API BFF SeLoger a été retirée (elle renvoie 400 depuis
+                # que son schéma a changé — voir scraper/seloger.py) : le
+                # réglage qui permettait de l'activer/désactiver n'a plus
+                # d'objet. Supprimé ici pour que les bases déjà déployées ne
+                # gardent pas un réglage mort.
+                cur.execute("DELETE FROM app_settings WHERE key = 'use_bff_api';")
                 cur.execute("""
-                    INSERT INTO app_settings (key, value) VALUES ('use_bff_api', 'true')
-                    ON CONFLICT (key) DO NOTHING;
+                    CREATE TABLE IF NOT EXISTS seloger_place_ids (
+                        insee_code  TEXT PRIMARY KEY,
+                        place_id    TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
                 """)
                 phase_start = _log_phase("create_tables")
 

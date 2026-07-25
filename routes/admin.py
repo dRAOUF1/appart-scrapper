@@ -19,7 +19,6 @@ def admin():
     tab = request.args.get("tab", "dashboard")
     storage = current_app.storage
     stats = storage.admin.get_enhanced_admin_stats()
-    stats["bff_enabled"] = storage.settings.get_setting("use_bff_api", "true") == "true"
     return render_template("admin.html", stats=stats, active_tab=tab)
 
 
@@ -344,16 +343,4 @@ def admin_cleanup():
     deleted = storage.listings.delete_old_listings(days=days)
     storage.admin.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
-    return redirect(url_for("admin.admin"))
-
-
-@admin_bp.route("/admin/settings/toggle-bff", methods=["POST"])
-@require_admin
-def admin_toggle_bff():
-    storage = current_app.storage
-    current = storage.settings.get_setting("use_bff_api", "true")
-    new_val = "false" if current == "true" else "true"
-    storage.settings.set_setting("use_bff_api", new_val)
-    storage.admin.log_admin_action("bff_toggled", f"BFF API {'disabled' if new_val == 'false' else 'enabled'}", g.user["username"])
-    flash(f"API BFF {'désactivée' if new_val == 'false' else 'activée'}", "success")
     return redirect(url_for("admin.admin"))

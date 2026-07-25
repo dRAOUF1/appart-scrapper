@@ -12,7 +12,7 @@ from flask import (
     session, flash, g, current_app, jsonify, send_file,
 )
 
-from parsers import list_sources
+from parsers import list_sources, remember_manual_overrides
 from routes.auth import require_login
 from core.web_utils import to_int
 
@@ -23,76 +23,119 @@ web_bp = Blueprint(
 )
 
 
-def _parse_search_criteria_from_form(form_data: dict) -> dict:
-    """Build criteria dict from web form fields."""
-    criteria = {}
-    search_url = form_data.get("search_url", "").strip()
+def _form_list(form_data: dict, key: str) -> list:
+    """Les valeurs multiples d'un champ, que `form_data` soit un MultiDict
+    Flask ou un simple dict (tests)."""
+    if hasattr(form_data, "getlist"):
+        return form_data.getlist(key)
+    value = form_data.get(key, [])
+    return value if isinstance(value, list) else [value]
 
-    if search_url:
-        from scraper.seloger import parse_search_url
-        criteria = parse_search_url(search_url)
-    else:
-        place_ids = form_data.get("place_ids", "").strip()
-        price_min = form_data.get("price_min", "").strip()
-        price_max = form_data.get("price_max", "").strip()
-        space_min = form_data.get("space_min", "").strip()
-        space_max = form_data.get("space_max", "").strip()
-        distribution = form_data.get("distribution", "Rent")
-        estate_type = form_data.get("estate_type", "Apartment")
-        rooms = form_data.getlist("rooms") if hasattr(form_data, "getlist") else form_data.get("rooms", [])
-        bedrooms = form_data.getlist("bedrooms") if hasattr(form_data, "getlist") else form_data.get("bedrooms", [])
-        order = form_data.get("order", "").strip()
-        if place_ids:
-            criteria["placeIds"] = [p.strip() for p in place_ids.split(",")]
-        if price_min:
-            criteria["priceMin"] = int(price_min)
-        if price_max:
-            criteria["priceMax"] = int(price_max)
-        if space_min:
-            criteria["spaceMin"] = int(space_min)
-        if space_max:
-            criteria["spaceMax"] = int(space_max)
-        criteria["distributionTypes"] = [distribution]
-        criteria["estateTypes"] = [estate_type]
-        if rooms:
-            criteria["rooms"] = rooms if isinstance(rooms, list) else [rooms]
-        if bedrooms:
-            criteria["bedrooms"] = bedrooms if isinstance(bedrooms, list) else [bedrooms]
-        criteria["order"] = order or "DateDesc"
 
-    # Ville + code postal : l'entrée de localisation universelle, utilisée
-    # par toutes les sources compatibles (indépendante de l'URL SeLoger
-    # ci-dessus, qui alimente le champ d'appoint propre à SeLoger).
-    # Plusieurs lignes ville/CP peuvent être soumises (une recherche peut
-    # couvrir plusieurs villes/codes postaux à la fois) — voir
-    # parsers.base.get_locations() côté lecture.
-    cities = form_data.getlist("location_city") if hasattr(form_data, "getlist") else form_data.get("location_city", [])
-    postal_codes = form_data.getlist("location_postal_code") if hasattr(form_data, "getlist") else form_data.get("location_postal_code", [])
-    if not isinstance(cities, list):
-        cities = [cities]
-    if not isinstance(postal_codes, list):
-        postal_codes = [postal_codes]
+def _parse_locations_from_form(form_data: dict) -> list[dict]:
+    """Les localisations saisies, une par ligne ville/code postal.
+
+    `location_insee_code` est un champ caché rempli par l'autocomplete : il
+    porte le code INSEE de la commune choisie, ce qui permet à chaque source
+    de retrouver son propre identifiant de lieu (SeLoger en a besoin pour
+    résoudre son placeId — voir services.seloger_geocode). Une ville tapée à
+    la main sans passer par les suggestions n'en a pas : la localisation
+    reste utilisable par les sources qui se contentent de ville + code
+    postal.
+    """
+    cities = _form_list(form_data, "location_city")
+    postal_codes = _form_list(form_data, "location_postal_code")
+    insee_codes = _form_list(form_data, "location_insee_code")
 
     locations = []
-    for city, postal_code in zip(cities, postal_codes):
+    for index, (city, postal_code) in enumerate(zip(cities, postal_codes)):
         city, postal_code = city.strip(), postal_code.strip()
-        if city and postal_code:
-            locations.append({"city": city, "postalCode": postal_code})
+        if not city or not postal_code:
+            continue
+        location = {"city": city, "postalCode": postal_code}
+        insee_code = insee_codes[index].strip() if index < len(insee_codes) else ""
+        if insee_code:
+            location["inseeCode"] = insee_code
+        locations.append(location)
+    return locations
 
+
+def _parse_search_criteria_from_form(form_data: dict) -> dict:
+    """Construit des critères au vocabulaire canonique depuis le formulaire.
+
+    Un seul formulaire pour toutes les sources : l'utilisateur décrit ce
+    qu'il cherche (où, quoi, quel budget), et c'est chaque parser qui traduit
+    ensuite ces critères vers le format de sa source (voir
+    BaseParser.to_native). Le formulaire ne connaît donc le vocabulaire
+    d'aucune source en particulier.
+
+    Seule exception assumée : le champ de saisie libre qu'une source peut
+    déclarer comme repli (`override_<source>`, voir
+    BaseParser.MANUAL_OVERRIDE_LABEL). Ce qui y est saisi est rangé dans
+    `sourceOverrides`, jamais mélangé aux critères.
+    """
+    from core.criteria import normalize_criteria
+
+    criteria: dict = {}
+
+    locations = _parse_locations_from_form(form_data)
     if locations:
         criteria["locations"] = locations
-        # Miroir de la première localisation dans les clés à plat, pour tout
-        # code (ou vieille recherche) qui lit encore city/postalCode direct.
-        criteria["city"] = locations[0]["city"]
-        criteria["postalCode"] = locations[0]["postalCode"]
 
-    return criteria
+    criteria["transaction"] = form_data.get("transaction", "rent")
+    property_types = _form_list(form_data, "property_types")
+    if property_types:
+        criteria["propertyTypes"] = property_types
+
+    for key, field in (
+        ("priceMin", "price_min"),
+        ("priceMax", "price_max"),
+        ("surfaceMin", "surface_min"),
+        ("surfaceMax", "surface_max"),
+    ):
+        value = form_data.get(field, "").strip()
+        if value:
+            criteria[key] = value
+
+    for key in ("rooms", "bedrooms"):
+        values = _form_list(form_data, key)
+        if values:
+            criteria[key] = values
+
+    overrides = _parse_source_overrides_from_form(form_data)
+    if overrides:
+        criteria["sourceOverrides"] = overrides
+
+    # La normalisation fait le reste : types convertis, valeurs illisibles
+    # écartées, vocabulaire garanti canonique avant stockage.
+    return normalize_criteria(criteria)
+
+
+def _parse_source_overrides_from_form(form_data: dict) -> dict:
+    """Les surcharges manuelles saisies, par source qui en propose une."""
+    from parsers import get_parser
+
+    overrides = {}
+    for source in list_sources():
+        if not source["manual_override_label"]:
+            continue
+        raw = form_data.get(f"override_{source['id']}", "").strip()
+        if not raw:
+            continue
+        parsed = get_parser(source["id"]).parse_manual_override(raw)
+        if parsed:
+            overrides[source["id"]] = parsed
+    return overrides
 
 
 def _validate_sources_criteria(sources: list[str], criteria: dict) -> list[dict]:
     """Per-source validity of `criteria`, with a precise, actionable reason
     when a selected source can't run — instead of one generic "invalid
-    criteria" message covering every source indiscriminately."""
+    criteria" message covering every source indiscriminately.
+
+    La raison vient de la source elle-même (BaseParser.cannot_search_reason) :
+    lieu inexploitable, ou critère qu'elle ne sait pas honorer.
+    """
     from parsers import get_parser
 
     results = []
@@ -103,11 +146,13 @@ def _validate_sources_criteria(sources: list[str], criteria: dict) -> list[dict]
             results.append({"id": src, "name": src, "ok": False, "reason": "Source inconnue"})
             continue
 
-        ok = parser.has_valid_criteria(criteria)
-        reason = ""
-        if not ok:
-            reason = parser.EXTRA_LOCATION_HELP if parser.REQUIRES_EXTRA_LOCATION else "Ville et code postal requis"
-        results.append({"id": src, "name": parser.SOURCE_NAME, "ok": ok, "reason": reason})
+        reason = parser.cannot_search_reason(criteria)
+        results.append({
+            "id": src,
+            "name": parser.SOURCE_NAME,
+            "ok": reason is None,
+            "reason": reason or "",
+        })
     return results
 
 
@@ -207,6 +252,7 @@ def searches():
                 g.user["id"], label, ntfy_topic, selected_sources[0], criteria, scrape_interval,
                 sources=selected_sources,
             )
+            remember_manual_overrides(selected_sources, criteria, storage=current_app.storage)
             flash(f"Recherche « {label} » créée !", "success")
         else:
             flash("Label et topic ntfy requis", "error")
@@ -342,6 +388,7 @@ def edit_search(search_id: int):
                 criteria=criteria, scrape_interval=scrape_interval,
                 sources=selected_sources,
             )
+            remember_manual_overrides(selected_sources, criteria, storage=current_app.storage)
             flash("Recherche mise à jour !", "success")
             return redirect(url_for("web.searches"))
         else:

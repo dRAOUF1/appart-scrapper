@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, request, jsonify, current_app, g, send_file
+from loguru import logger
 
-from parsers import list_sources
+from parsers import list_sources, remember_manual_overrides
 from routes.auth import require_token
 from core.schemas import validate_criteria, validate_scrape_interval
 from core.web_utils import to_int
@@ -45,6 +46,22 @@ def get_sources():
     return jsonify(list_sources()), 200
 
 
+@api_bp.route("/locations", methods=["GET"])
+def search_locations_endpoint():
+    """Autocomplete de localisation, commun à toutes les sources.
+
+    Renvoie des localisations canoniques (ville, code postal, code INSEE,
+    coordonnées) : c'est la seule saisie de lieu du formulaire, et le code
+    INSEE qu'elle fournit est ce qui permet ensuite à chaque source de
+    retrouver son propre identifiant de lieu.
+    """
+    from core.geocode import search_locations
+
+    query = request.args.get("q", "")
+    limit = to_int(request.args.get("limit", 10), 10)
+    return jsonify(search_locations(query, limit=max(1, min(limit, 20)))), 200
+
+
 @api_bp.route("/searches", methods=["POST"])
 @require_token
 def create_search():
@@ -68,6 +85,7 @@ def create_search():
     search = current_app.storage.searches.create_search(
         g.user["id"], label, ntfy_topic, sources[0], criteria, scrape_interval, sources=sources
     )
+    remember_manual_overrides(sources, criteria, storage=current_app.storage)
     return jsonify(search), 201
 
 
@@ -93,17 +111,27 @@ def get_search_urls(search_id: int):
     results = []
     for source in sources:
         try:
-            parser = get_parser(source)
+            parser = get_parser(source, storage=current_app.storage)
         except ValueError as e:
             results.append({"source": source, "url": None, "error": str(e)})
             continue
-        urls = parser.build_search_urls(criteria)
+        # Reconstruire une URL peut demander un appel réseau (résolution du
+        # lieu propre à la source) et échouer : une erreur ici ne doit pas
+        # renvoyer un 500 pour toute la page, seulement priver cette source
+        # de son lien.
+        try:
+            urls = parser.build_search_urls(criteria)
+            error = None if urls else "URL reconstruction non disponible pour cette source"
+        except Exception as e:
+            logger.warning(f"[search:{search_id}] URL non reconstructible ({source}): {e}")
+            urls, error = [], f"URL non reconstructible : {e}"
+
         results.append({
             "source": source,
             "url": urls[0] if urls else None,
             "urls": urls,
             "source_name": parser.SOURCE_NAME,
-            "error": None if urls else "URL reconstruction non disponible pour cette source",
+            "error": error,
             "note": parser.URL_NOTE or None,
         })
 

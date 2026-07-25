@@ -7,8 +7,10 @@ looked up by source slug.
 
 Adding a new source:
     1. Create parsers/my_source.py
-    2. Subclass BaseParser, implement scrape(criteria, use_bff) -> list[Listing]
-       (the only method the pipeline calls — see BaseParser docstring)
+    2. Subclass BaseParser, implement scrape(criteria) -> list[Listing]
+       (the only method the pipeline calls — see BaseParser docstring).
+       `criteria` arrive au vocabulaire canonique (core.criteria) : la
+       traduction vers le format de la source se fait dans to_native().
     3. Set SOURCE_ID and SOURCE_NAME class attributes
     4. Import the module in this __init__.py
 
@@ -25,9 +27,28 @@ from parsers.laforet import LaforetParser
 # from parsers.leboncoin import LeBonCoinParser
 
 
-def get_parser(source: str) -> BaseParser:
-    """Get a parser instance by source slug (e.g. 'seloger')."""
-    return ParserRegistry.get(source)
+def get_parser(source: str, storage=None) -> BaseParser:
+    """Get a parser instance by source slug (e.g. 'seloger').
+
+    `storage` est à passer dès qu'on peut : les sources qui ont besoin de la
+    base (SeLoger et son cache d'identifiants de lieu) ne peuvent pas le lire
+    depuis Flask, le scraping tournant sur un thread de fond.
+    """
+    return ParserRegistry.get(source, storage=storage)
+
+
+def remember_manual_overrides(sources: list[str], criteria: dict, storage=None) -> None:
+    """Laisse chaque source capitaliser ce que l'utilisateur a saisi à la main
+    pour elle (voir BaseParser.remember_manual_override).
+
+    À appeler une fois après l'enregistrement d'une recherche. N'échoue
+    jamais : ce n'est qu'une optimisation.
+    """
+    for source in sources:
+        try:
+            ParserRegistry.get(source, storage=storage).remember_manual_override(criteria)
+        except Exception:
+            pass
 
 
 def list_sources() -> list[dict]:
@@ -35,4 +56,7 @@ def list_sources() -> list[dict]:
     return ParserRegistry.list_sources()
 
 
-__all__ = ["BaseParser", "get_parser", "list_sources", "SeLogerParser", "LaforetParser"]
+__all__ = [
+    "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
+    "SeLogerParser", "LaforetParser",
+]

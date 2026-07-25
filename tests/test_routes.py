@@ -367,19 +367,37 @@ class TestAdminRoutes:
 
 
 class TestParseSearchCriteriaFromForm:
-    def test_user_selected_order_is_kept(self):
+    def test_form_produces_canonical_vocabulary_only(self):
+        """Le formulaire est commun à toutes les sources : il ne doit jamais
+        produire le vocabulaire de l'une d'elles."""
         from routes.web import _parse_search_criteria_from_form
 
-        form = {"place_ids": "AD08FR12345", "order": "PriceAsc"}
+        form = {
+            "location_city": "Paris", "location_postal_code": "75014",
+            "location_insee_code": "75114",
+            "transaction": "buy", "price_max": "500000",
+            "surface_min": "40",
+        }
         criteria = _parse_search_criteria_from_form(form)
-        assert criteria["order"] == "PriceAsc"
+        assert criteria["transaction"] == "buy"
+        assert criteria["priceMax"] == 500000
+        assert criteria["surfaceMin"] == 40
+        assert criteria["locations"] == [
+            {"city": "Paris", "postalCode": "75014", "inseeCode": "75114"},
+        ]
+        for source_specific in ("placeIds", "distributionTypes", "estateTypes", "spaceMin", "order"):
+            assert source_specific not in criteria
 
-    def test_defaults_to_date_desc_when_order_missing(self):
+    def test_manual_override_is_kept_apart_from_the_criteria(self):
         from routes.web import _parse_search_criteria_from_form
 
-        form = {"place_ids": "AD08FR12345"}
+        form = {
+            "location_city": "Paris", "location_postal_code": "75014",
+            "override_seloger": "AD08FR12345",
+        }
         criteria = _parse_search_criteria_from_form(form)
-        assert criteria["order"] == "DateDesc"
+        assert criteria["sourceOverrides"]["seloger"] == {"placeIds": ["AD08FR12345"]}
+        assert "placeIds" not in criteria
 
     def test_multiple_location_rows_build_locations_list(self):
         """A search can cover several cities/postal codes — one
@@ -396,9 +414,6 @@ class TestParseSearchCriteriaFromForm:
             {"city": "Paris", "postalCode": "75014"},
             {"city": "Lyon", "postalCode": "69007"},
         ]
-        # First location mirrored into the flat legacy keys.
-        assert criteria["city"] == "Paris"
-        assert criteria["postalCode"] == "75014"
 
     def test_incomplete_location_rows_are_skipped(self):
         """A row with a city but no postal code (or vice versa) — e.g. the
@@ -418,7 +433,7 @@ class TestParseSearchCriteriaFromForm:
     def test_no_location_rows_means_no_locations_key(self):
         from routes.web import _parse_search_criteria_from_form
 
-        criteria = _parse_search_criteria_from_form({"place_ids": "AD08FR12345"})
+        criteria = _parse_search_criteria_from_form({"override_seloger": "AD08FR12345"})
         assert "locations" not in criteria
 
 
@@ -438,17 +453,29 @@ class TestValidateSourcesCriteria:
         results = _validate_sources_criteria(["laforet"], {})
         assert len(results) == 1
         assert results[0]["ok"] is False
-        assert "Ville" in results[0]["reason"]
+        assert "localisation" in results[0]["reason"]
 
     def test_seloger_invalid_gives_source_specific_help_text(self):
-        """SeLoger's failure reason must be its own EXTRA_LOCATION_HELP, not
-        the generic "Ville et code postal requis" — it needs a Place ID."""
+        """La raison de SeLoger doit expliquer ce qui manque VRAIMENT (le code
+        INSEE, qu'on obtient en choisissant la ville dans les suggestions), pas
+        un « Ville et code postal requis » générique alors qu'ils sont remplis."""
         from routes.web import _validate_sources_criteria
-        from parsers.seloger import SeLogerParser
 
         results = _validate_sources_criteria(["seloger"], {"city": "Paris", "postalCode": "75018"})
         assert results[0]["ok"] is False
-        assert results[0]["reason"] == SeLogerParser.EXTRA_LOCATION_HELP
+        assert "INSEE" in results[0]["reason"]
+
+    def test_source_that_cannot_honour_a_property_type_is_reported(self):
+        """Régression : Laforet acceptait « parking » à la validation puis
+        levait une ValueError pendant le scrape."""
+        from routes.web import _validate_sources_criteria
+
+        results = _validate_sources_criteria(["laforet"], {
+            "locations": [{"city": "Paris", "postalCode": "75018"}],
+            "propertyTypes": ["parking"],
+        })
+        assert results[0]["ok"] is False
+        assert "Parking" in results[0]["reason"]
 
     def test_unknown_source_reported_as_invalid(self):
         from routes.web import _validate_sources_criteria
@@ -463,6 +490,8 @@ class TestValidateSourcesCriteria:
             ["seloger", "laforet"], {"city": "Paris", "postalCode": "75018"}
         )
         by_id = {r["id"]: r for r in results}
+        # Laforet se contente de ville + code postal ; SeLoger a besoin du code
+        # INSEE que fournit l'autocomplete pour résoudre son placeId.
         assert by_id["seloger"]["ok"] is False
         assert by_id["laforet"]["ok"] is True
 

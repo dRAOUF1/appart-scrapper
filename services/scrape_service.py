@@ -71,7 +71,6 @@ class ScrapeService:
             )
             return 0
 
-        use_bff = storage.settings.get_setting("use_bff_api", "true") == "true"
         sources = search.get("sources") or [search.get("source", "seloger")]
 
         # Chaque source encode la localisation différemment (placeIds opaques,
@@ -85,20 +84,25 @@ class ScrapeService:
 
         for src in sources:
             try:
-                parser = get_parser(src)
+                parser = get_parser(src, storage=storage)
             except ValueError as e:
                 logger.error(f"[search:{search_id}] Parser inconnu ({src}): {e}")
                 per_source[src] = {"error": f"Parser inconnu: {e}"}
                 continue
 
-            if not parser.has_valid_criteria(criteria):
-                logger.warning(f"[search:{search_id}] Critères invalides pour la source ({src}), source ignorée")
-                per_source[src] = {"error": "Critères invalides ou lieu manquant pour cette source"}
+            # Une source peut ne pas savoir honorer ce qui est demandé (lieu
+            # inexploitable, type de bien qu'elle ne référence pas) : c'est
+            # dit ici, avec sa raison, plutôt que de la laisser échouer en
+            # pleine exécution sur une exception peu parlante.
+            reason = parser.cannot_search_reason(criteria)
+            if reason:
+                logger.warning(f"[search:{search_id}] Source ignorée ({src}) : {reason}")
+                per_source[src] = {"error": reason}
                 continue
             any_valid = True
 
             try:
-                source_listings = parser.scrape(criteria, use_bff=use_bff)
+                source_listings = parser.scrape(criteria)
             except Exception as e:
                 err_msg = str(e)
                 logger.error(f"[search:{search_id}] Erreur scraping ({src}): {err_msg}")

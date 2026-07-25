@@ -8,16 +8,41 @@ class TestValidateCriteria:
     def test_none_returns_empty_dict(self):
         assert validate_criteria(None) == {}
 
-    def test_valid_criteria_passes_through(self):
-        criteria = {"placeIds": ["AD08FR12345"], "priceMax": 1500}
+    def test_canonical_criteria_pass_through(self):
+        criteria = {
+            "locations": [{"city": "Paris", "postalCode": "75015"}],
+            "transaction": "rent",
+            "propertyTypes": ["apartment"],
+            "priceMax": 1500,
+        }
         result = validate_criteria(criteria)
-        assert result["placeIds"] == ["AD08FR12345"]
+        assert result["transaction"] == "rent"
+        assert result["propertyTypes"] == ["apartment"]
         assert result["priceMax"] == 1500
 
-    def test_unknown_extra_fields_are_preserved(self):
+    def test_legacy_criteria_are_converted(self):
+        """Un client (ou une intégration) qui envoie encore l'ancien
+        vocabulaire SeLoger reste accepté — c'est stocké en canonique."""
+        result = validate_criteria({
+            "distributionTypes": ["Sale"],
+            "estateTypes": ["House"],
+            "spaceMin": 40,
+            "city": "Poitiers", "postalCode": "86000",
+        })
+        assert result["transaction"] == "buy"
+        assert result["propertyTypes"] == ["house"]
+        assert result["surfaceMin"] == 40
+        assert result["locations"] == [{"city": "Poitiers", "postalCode": "86000"}]
+
+    def test_source_specific_keys_land_in_source_overrides(self):
+        """placeIds et locationsInBuildingExcluded sont propres à SeLoger :
+        conservés, mais rangés comme surcharge de source, pas comme critères."""
         criteria = {"placeIds": ["x"], "locationsInBuildingExcluded": ["y"]}
         result = validate_criteria(criteria)
-        assert result["locationsInBuildingExcluded"] == ["y"]
+        assert result["sourceOverrides"]["seloger"] == {
+            "placeIds": ["x"],
+            "locationsInBuildingExcluded": ["y"],
+        }
 
     def test_non_dict_raises(self):
         with pytest.raises(ValueError):

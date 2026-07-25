@@ -36,16 +36,22 @@
         <div class="form-section">
             <div class="form-section-label">📍 Localisation</div>
             <div class="location-list" data-location-list>
-                <div class="location-row">
-                    <input type="text" name="location_city" placeholder="Ville (ex: Paris)" aria-label="Ville">
-                    <input type="text" name="location_postal_code" placeholder="Code postal (ex: 75018)" aria-label="Code postal">
+                <div class="location-row" data-location-row>
+                    <div class="location-autocomplete">
+                        <input type="text" name="location_city" placeholder="Ville (ex: Paris)"
+                            aria-label="Ville" autocomplete="off" data-location-input>
+                        <ul class="location-suggestions" data-location-suggestions hidden></ul>
+                    </div>
+                    <input type="text" name="location_postal_code" placeholder="Code postal (ex: 75018)"
+                        aria-label="Code postal" data-location-postal>
+                    <input type="hidden" name="location_insee_code" value="" data-location-insee>
                     <button type="button" class="location-remove-btn" aria-label="Retirer cette ville">✕</button>
                 </div>
             </div>
             <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une ville</button>
             <small class="form-help" style="display: block; margin-top: 0.5rem;">
-                Utilisée par toutes les sources compatibles (Laforet aujourd'hui, et toute source ajoutée plus tard).
-                Ajoute plusieurs villes pour toutes les surveiller dans la même recherche.
+                Choisis la ville dans les suggestions : toutes les sources s'appuient dessus pour
+                retrouver le lieu chez elles. Tu peux en ajouter plusieurs dans la même recherche.
             </small>
         </div>
 
@@ -55,8 +61,6 @@
                 {% for src in sources %}
                 <label class="source-card">
                     <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
-                        data-requires-extra="{{ 'true' if src.requires_extra_location else 'false' }}"
-                        data-extra-target="extra-{{ src.id }}"
                         {% if src.id == 'seloger' %}checked{% endif %}>
                     <span class="source-card-body">
                         <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
@@ -64,24 +68,11 @@
                         <span class="source-card-check">✓</span>
                     </span>
                 </label>
-                {% if src.requires_extra_location %}
-                <div id="extra-{{ src.id }}" class="source-extra-panel" style="display: none;">
-                    <small class="form-help">{{ src.extra_location_help }}</small>
-                    <div class="form-group" style="margin-top: 0.5rem;">
-                        <label for="search_url">{{ src.extra_location_label }}</label>
-                        <input type="url" id="search_url" name="search_url"
-                            placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096">
-                    </div>
-                    <details style="margin-top: 0.5rem;">
-                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem;">Ou coller un Place ID directement</summary>
-                        <input type="text" name="place_ids" placeholder="Ex: AD08FR31096" style="margin-top: 0.5rem;">
-                    </details>
-                </div>
-                {% endif %}
                 {% endfor %}
             </div>
             <small class="form-help">
-                Une même recherche peut être scrapée sur plusieurs sources à la fois.
+                Une même recherche peut être scrapée sur plusieurs sources à la fois. Les critères
+                ci-dessous sont définis une seule fois : chaque source les traduit à son format.
             </small>
         </div>
 
@@ -97,50 +88,45 @@
                     <input type="number" id="price_max" name="price_max" placeholder="850">
                 </div>
                 <div class="form-group">
-                    <label for="space_min">Surface min (m²)</label>
-                    <input type="number" id="space_min" name="space_min" placeholder="19">
+                    <label for="surface_min">Surface min (m²)</label>
+                    <input type="number" id="surface_min" name="surface_min" placeholder="19">
                 </div>
                 <div class="form-group">
-                    <label for="space_max">Surface max (m²)</label>
-                    <input type="number" id="space_max" name="space_max" placeholder="80">
+                    <label for="surface_max">Surface max (m²)</label>
+                    <input type="number" id="surface_max" name="surface_max" placeholder="80">
                 </div>
                 <div class="form-group">
-                    <label for="distribution">Transaction</label>
-                    <select id="distribution" name="distribution">
-                        <option value="Rent">Location</option>
-                        <option value="Sale">Achat</option>
+                    <label for="transaction">Transaction</label>
+                    <select id="transaction" name="transaction">
+                        <option value="rent">Location</option>
+                        <option value="buy">Achat</option>
                     </select>
                 </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
                 <div class="form-group">
-                    <label for="estate_type">Type de bien</label>
-                    <select id="estate_type" name="estate_type">
-                        <option value="Apartment">Appartement</option>
-                        <option value="House">Maison</option>
-                        <option value="Parking">Parking</option>
-                        <option value="Land">Terrain</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="order">Tri</label>
-                    <select id="order" name="order">
-                        <option value="">— Par défaut —</option>
-                        <option value="DateDesc">Plus récent d'abord</option>
-                        <option value="DateAsc">Plus ancien d'abord</option>
-                        <option value="PriceAsc">Prix croissant</option>
-                        <option value="PriceDesc">Prix décroissant</option>
-                        <option value="SurfaceAsc">Surface croissante</option>
-                        <option value="SurfaceDesc">Surface décroissante</option>
-                    </select>
+                    <label>Type de bien</label>
+                    <div class="pill-toggle-group">
+                        {% for value, label in [('apartment', 'Appartement'), ('house', 'Maison'), ('parking', 'Parking'), ('land', 'Terrain')] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="property_types" value="{{ value }}"
+                                data-property-type="{{ value }}"
+                                {% if value == 'apartment' %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <small class="form-help" data-property-type-warning hidden></small>
                 </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
                 <div class="form-group">
                     <label>Pièces</label>
                     <div class="pill-toggle-group">
-                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
                             <input type="checkbox" name="rooms" value="{{ n }}">
-                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -148,16 +134,36 @@
                 <div class="form-group">
                     <label>Chambres</label>
                     <div class="pill-toggle-group">
-                        {% for n in ['1', '2', '3', '4', '5'] %}
+                        {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
                             <input type="checkbox" name="bedrooms" value="{{ n }}">
-                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == '5' else '' }}</span>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
                     </div>
                 </div>
             </div>
         </div>
+
+        {% set _override_sources = sources | selectattr('manual_override_label') | list %}
+        {% if _override_sources %}
+        <details class="form-section" style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem;">
+                ⚙️ Options avancées — identifiants de lieu par source
+            </summary>
+            <small class="form-help" style="display: block; margin: 0.75rem 0;">
+                Normalement inutile : chaque source retrouve le lieu seule à partir de la ville
+                choisie plus haut. Ces champs ne servent que si une source ne trouve rien.
+            </small>
+            {% for src in _override_sources %}
+            <div class="form-group" style="margin-top: 0.75rem;">
+                <label for="override_{{ src.id }}">{{ src.name }} — {{ src.manual_override_label }}</label>
+                <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}" placeholder="Ex: AD08FR31096">
+                <small class="form-help">{{ src.manual_override_help }}</small>
+            </div>
+            {% endfor %}
+        </details>
+        {% endif %}
 
         <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1.5rem;">Créer la recherche</button>
     </form>
@@ -216,23 +222,19 @@
           <span class="criteria-tag">📍 {{ pid }}</span>
           {% endfor %}
           {% endif %}
-          {% if s.criteria.locations %}
-          {% for loc in s.criteria.locations %}
+          {% for loc in s.criteria.locations or [] %}
           <span class="criteria-tag">📍 {{ loc.city }} {{ loc.postalCode }}</span>
           {% endfor %}
-          {% elif s.criteria.city or s.criteria.postalCode %}
-          <span class="criteria-tag">📍 {{ s.criteria.city or '' }} {{ s.criteria.postalCode or '' }}</span>
-          {% endif %}
           {% if s.criteria.priceMin or s.criteria.priceMax %}
           <span class="criteria-tag">💰
             {% if s.criteria.priceMin %}{{ s.criteria.priceMin }}{% else %}0{% endif %} -
             {% if s.criteria.priceMax %}{{ s.criteria.priceMax }}{% else %}∞{% endif %}€
           </span>
           {% endif %}
-          {% if s.criteria.spaceMin or s.criteria.spaceMax %}
+          {% if s.criteria.surfaceMin or s.criteria.surfaceMax %}
           <span class="criteria-tag">📐
-            {% if s.criteria.spaceMin %}≥{{ s.criteria.spaceMin }}{% endif %}
-            {% if s.criteria.spaceMax %}≤{{ s.criteria.spaceMax }}{% endif %}m²
+            {% if s.criteria.surfaceMin %}≥{{ s.criteria.surfaceMin }}{% endif %}
+            {% if s.criteria.surfaceMax %}≤{{ s.criteria.surfaceMax }}{% endif %}m²
           </span>
           {% endif %}
           {% if s.criteria.rooms %}
@@ -241,14 +243,16 @@
           {% if s.criteria.bedrooms %}
           <span class="criteria-tag">🛏️ {{ s.criteria.bedrooms | join(', ') }} ch.</span>
           {% endif %}
-          {% if s.criteria.distributionTypes %}
-          <span class="criteria-tag">{{ '🏠 Location' if s.criteria.distributionTypes[0] == 'Rent' else '🔑 Achat' }}</span>
+          {% if s.criteria.transaction %}
+          <span class="criteria-tag">{{ '🔑 Achat' if s.criteria.transaction == 'buy' else '🏠 Location' }}</span>
           {% endif %}
-          {% if s.criteria.estateTypes %}
-          <span class="criteria-tag">🏗️ {{ s.criteria.estateTypes | join(', ') }}</span>
-          {% endif %}
-          {% if s.criteria.order %}
-          <span class="criteria-tag">↕️ {{ s.criteria.order }}</span>
+          {% if s.criteria.propertyTypes %}
+          {% set _type_labels = {'apartment': 'Appartement', 'house': 'Maison', 'parking': 'Parking', 'land': 'Terrain'} %}
+          <span class="criteria-tag">🏗️
+            {%- for t in s.criteria.propertyTypes %}
+            {{ _type_labels.get(t, t) }}{{ ', ' if not loop.last else '' }}
+            {%- endfor %}
+          </span>
           {% endif %}
         </div>
         {% endif %}
@@ -322,50 +326,12 @@
 
 {% block scripts %}
 <script>
-// Affiche le champ d'appoint d'une source (ex: URL/Place ID SeLoger) seulement
-// quand cette source est cochée — générique, marche pour toute source future
-// qui déclarerait aussi requires_extra_location.
-document.querySelectorAll('.source-checkbox[data-requires-extra="true"]').forEach(cb => {
-    const target = document.getElementById(cb.dataset.extraTarget);
-    if (!target) return;
-    const sync = () => { target.style.display = cb.checked ? 'block' : 'none'; };
-    cb.addEventListener('change', sync);
-    sync();
-});
-
-// Ville/code postal repetables — une recherche peut couvrir plusieurs
-// villes/codes postaux à la fois. Le bouton "Retirer" reste caché tant
-// qu'il ne reste qu'une seule ligne (au moins une localisation requise).
-document.querySelectorAll('[data-location-list]').forEach(list => {
-    const addBtn = list.parentElement.querySelector('[data-add-location]');
-
-    function refreshRemoveButtons() {
-        const rows = list.querySelectorAll('.location-row');
-        rows.forEach(row => {
-            row.querySelector('.location-remove-btn').style.visibility =
-                rows.length > 1 ? 'visible' : 'hidden';
-        });
-    }
-
-    list.addEventListener('click', e => {
-        if (!e.target.classList.contains('location-remove-btn')) return;
-        if (list.querySelectorAll('.location-row').length <= 1) return;
-        e.target.closest('.location-row').remove();
-        refreshRemoveButtons();
-    });
-
-    if (addBtn) {
-        addBtn.addEventListener('click', () => {
-            const newRow = list.querySelector('.location-row').cloneNode(true);
-            newRow.querySelectorAll('input').forEach(input => { input.value = ''; });
-            list.appendChild(newRow);
-            refreshRemoveButtons();
-        });
-    }
-
-    refreshRemoveButtons();
-});
-
+// Capacités déclarées par chaque parser (SUPPORTED_*), consommées par
+// static/search_form.js pour prévenir qu'un critère ne sera pas honoré.
+window.SOURCE_CAPABILITIES = {{ sources | tojson }};
+</script>
+<script src="{{ url_for('web.static', filename='search_form.js') }}"></script>
+<script>
 function copyText(elementId) {
 const text = document.getElementById(elementId).textContent;
 navigator.clipboard.writeText(text).then(() => {

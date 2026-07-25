@@ -19,7 +19,14 @@ only within the *first*, genuine section; the noise section is unaffected
 by the filter and must still be excluded the same way. `filter[cities][]`
 takes INSEE-style commune codes, not postal codes, and Paris/Lyon/Marseille
 need their arrondissement-specific code (not the whole-city INSEE code) —
-see _resolve_insee_code().
+c'est core.geocode qui s'en charge, partagé avec les autres sources.
+
+Plusieurs types de bien tiennent aussi dans une seule requête :
+filter[types][] est répétable et prime sur le type inscrit dans le slug du
+chemin (vérifié en live — une page "achat-appartement-bordeaux-33000" avec
+filter[types][]=apartment&filter[types][]=house rend bien 17 appartements
+et 18 maisons). Le type d'une annonce est donc lu dans son URL, pas déduit
+de ce qui a été demandé — voir _property_type_from_url().
 
 filter[min]/filter[max]/filter[surface] (price/surface) were also verified
 live: they have a real but imprecise effect on the genuine section (one
@@ -39,6 +46,8 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
+from core.criteria import APARTMENT, BUY, HOUSE, RENT
+from core.geocode import resolve_insee_code as _resolve_insee_code
 from models.listing import Listing
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
@@ -53,11 +62,13 @@ MAX_PAGES = 30
 
 # Path uses French slugs; the filter[...] query params use English values —
 # verified live these are genuinely two different vocabularies on this site.
-TRANSACTION_SLUGS = {"Rent": "location", "Sale": "achat"}
-TRANSACTION_FILTER_VALUES = {"Rent": "rent", "Sale": "buy"}
-TYPE_SLUGS = {"Apartment": "appartement", "House": "maison"}
-TYPE_FILTER_VALUES = {"Apartment": "apartment", "House": "house"}
-TYPE_LABELS = {v: k for k, v in TYPE_SLUGS.items()}
+# Les clés sont le vocabulaire canonique (core.criteria).
+TRANSACTION_SLUGS = {RENT: "location", BUY: "achat"}
+TRANSACTION_FILTER_VALUES = {RENT: "rent", BUY: "buy"}
+TYPE_SLUGS = {APARTMENT: "appartement", HOUSE: "maison"}
+TYPE_FILTER_VALUES = {APARTMENT: "apartment", HOUSE: "house"}
+# Le libellé affiché dans le titre des annonces trouvées.
+TYPE_DISPLAY_NAMES = {APARTMENT: "Appartement", HOUSE: "Maison"}
 
 # Marks where the real results end and the always-appended "nearby" backfill
 # section begins — see module docstring. Verified this text is present even
@@ -81,12 +92,6 @@ _CITY_ZIP_RE = re.compile(r"([A-ZÀ-Ü][A-Za-zÀ-ÿ' \-]*?)\s*\((\d{5})\)")
 _SURFACE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m²")
 _ROOMS_RE = re.compile(r"(\d+)\s*pi[eè]ce")
 
-# INSEE code lookups never change during a process's life — cache them so a
-# search scraped every few minutes forever doesn't hit the public geo API
-# on every single run.
-_INSEE_CACHE: dict[str, str | None] = {}
-
-
 def _slugify(text: str) -> str:
     """Lowercase, strip accents, non-alnum -> '-' (e.g. 'Le Kremlin-Bicêtre' -> 'le-kremlin-bicetre')."""
     normalized = unicodedata.normalize("NFKD", text)
@@ -95,91 +100,41 @@ def _slugify(text: str) -> str:
     return slug
 
 
-def _first(value, default=None):
-    if isinstance(value, list):
-        return value[0] if value else default
-    return value or default
+def _transaction(criteria: dict) -> str:
+    """La transaction canonique demandée. La location par défaut : c'est ce
+    que le formulaire propose en premier, et une recherche sans transaction
+    explicite n'a jamais voulu dire "achat"."""
+    transaction = criteria.get("transaction")
+    return transaction if transaction in TRANSACTION_SLUGS else RENT
 
 
-def _transaction_slug(criteria: dict) -> str:
-    distribution = _first(criteria.get("distributionTypes"), "Rent")
-    return TRANSACTION_SLUGS.get(distribution, "location")
+def _property_types(criteria: dict) -> list[str]:
+    """Les types de bien canoniques que Laforet sait traiter parmi ceux
+    demandés.
 
-
-def _transaction_filter_value(criteria: dict) -> str:
-    distribution = _first(criteria.get("distributionTypes"), "Rent")
-    return TRANSACTION_FILTER_VALUES.get(distribution, "rent")
-
-
-def _type_slug(criteria: dict) -> str:
-    estate_type = _first(criteria.get("estateTypes"), "Apartment")
-    if estate_type not in TYPE_SLUGS:
-        raise ValueError(
-            f"Laforet ne supporte pas le type de bien '{estate_type}' "
-            f"(uniquement {sorted(TYPE_SLUGS)})"
-        )
-    return TYPE_SLUGS[estate_type]
-
-
-def _type_filter_value(criteria: dict) -> str:
-    estate_type = _first(criteria.get("estateTypes"), "Apartment")
-    return TYPE_FILTER_VALUES[estate_type]
-
-
-def _arrondissement_insee_code(postal_code: str) -> str | None:
-    """Paris/Lyon/Marseille arrondissements: INSEE's `/communes` API only
-    tracks these at the whole-city level (75056/69123/13055), but Laforet's
-    filter[cities][] needs the arrondissement-specific "commune associée"
-    code. Formulas verified against Laforet's own embedded page state for
-    several arrondissements of each city (75014->75114, 69007->69387,
-    13001->13201, etc.) — not guessed, checked against real values Laforet
-    itself computes for its own default single-arrondissement pages.
+    - Aucun type demandé -> appartement, le défaut du formulaire.
+    - Types demandés dont certains sont hors capacités (parking, terrain) ->
+      on garde les autres sans lever d'exception : une recherche mixte
+      « appartement + parking » doit tout de même ramener les appartements.
+    - Uniquement des types hors capacités -> liste vide, et surtout PAS le
+      défaut appartement : renvoyer des appartements à qui demande un parking
+      serait un faux résultat. Les appelants traitent ce cas comme
+      « rien à chercher » (voir build_search_urls et scrape).
     """
-    if len(postal_code) != 5 or not postal_code.isdigit():
-        return None
-    if postal_code.startswith("75"):
-        arr = int(postal_code[-2:])
-        if 1 <= arr <= 20:
-            return f"751{arr:02d}"
-    elif postal_code.startswith("690"):
-        arr = int(postal_code[-1])
-        if 1 <= arr <= 9:
-            return f"693{80 + arr}"
-    elif postal_code.startswith("130"):
-        arr = int(postal_code[-2:])
-        if 1 <= arr <= 16:
-            return f"132{arr:02d}"
-    return None
+    requested = criteria.get("propertyTypes") or []
+    if not requested:
+        return [APARTMENT]
+    return [t for t in requested if t in TYPE_SLUGS]
 
 
-def _lookup_insee_code(postal_code: str) -> str | None:
-    """Resolve any other French postal code via the official, free, public
-    geo.api.gouv.fr API (no key, no auth) — the same API Laforet's own city
-    autocomplete calls (verified live via network capture)."""
-    try:
-        resp = requests.get(
-            "https://geo.api.gouv.fr/communes",
-            params={"codePostal": postal_code, "fields": "code"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data[0]["code"] if data else None
-    except Exception as e:
-        logger.warning(f"[Laforet] Résolution INSEE échouée pour {postal_code}: {e}")
-        return None
+def _location_insee_code(location: dict) -> str | None:
+    """Le code INSEE d'une localisation canonique.
 
-
-def _resolve_insee_code(postal_code: str) -> str | None:
-    """Postal code -> the commune code Laforet's filter[cities][] expects.
-    None if it can't be resolved (unknown/foreign postal code, or the geo
-    API is unreachable) — callers fall back to a per-location request."""
-    if postal_code not in _INSEE_CACHE:
-        code = _arrondissement_insee_code(postal_code)
-        if code is None:
-            code = _lookup_insee_code(postal_code)
-        _INSEE_CACHE[postal_code] = code
-    return _INSEE_CACHE[postal_code]
+    Celui fourni par l'autocomplete est utilisé tel quel (aucun appel
+    réseau) ; sinon il est résolu depuis le code postal via core.geocode —
+    le point de vérité partagé entre toutes les sources.
+    """
+    return location.get("inseeCode") or _resolve_insee_code(location["postalCode"])
 
 
 def _extract_genuine_section(html: str) -> str:
@@ -279,17 +234,17 @@ def _passes_filters(listing: Listing, criteria: dict, allowed_postal_codes: set)
         if price_max and listing.price_value > price_max:
             return False
 
-    space_min = criteria.get("spaceMin")
-    space_max = criteria.get("spaceMax")
+    surface_min = criteria.get("surfaceMin")
+    surface_max = criteria.get("surfaceMax")
     if listing.surface:
         try:
             surface = float(listing.surface.replace(",", "."))
         except ValueError:
             surface = None
         if surface is not None:
-            if space_min and surface < space_min:
+            if surface_min and surface < surface_min:
                 return False
-            if space_max and surface > space_max:
+            if surface_max and surface > surface_max:
                 return False
 
     rooms_filter = criteria.get("rooms")
@@ -306,8 +261,24 @@ def _passes_filters(listing: Listing, criteria: dict, allowed_postal_codes: set)
     return True
 
 
-def _dict_to_listing(data: dict, property_type: str) -> Listing:
+def _property_type_from_url(url: str) -> str:
+    """Le type de bien lu dans l'URL de l'annonce elle-même.
+
+    Une même requête peut mélanger les types (filter[types][] est répétable
+    et prime sur le slug du chemin — vérifié en live : une page
+    "achat-appartement-..." avec filter[types][]=apartment&...=house rend
+    bien 17 appartements et 18 maisons). Le type ne peut donc pas être
+    déduit de ce qui a été demandé, il doit être lu par annonce.
+    """
+    for canonical, slug in TYPE_SLUGS.items():
+        if f"/{slug}-" in url:
+            return TYPE_DISPLAY_NAMES[canonical]
+    return ""
+
+
+def _dict_to_listing(data: dict) -> Listing:
     price_value = data["price_value"]
+    property_type = _property_type_from_url(data["url"])
     return Listing(
         listing_id=f"lf_{data['reference']}",
         url=data["url"],
@@ -334,14 +305,70 @@ class LaforetParser(BaseParser):
     SOURCE_NAME = "Laforêt"
     SOURCE_DESCRIPTION = "Laforet.com — scraping HTML serveur (ville + code postal)"
 
+    # Laforet ne référence que de l'habitation : ni parking, ni terrain
+    # (son URL n'a pas de slug pour eux et filter[types][] ne les connaît
+    # pas). Déclaré ici pour que ce soit dit à l'utilisateur avant le
+    # scrape, plutôt que levé en pleine exécution.
+    SUPPORTED_PROPERTY_TYPES = (APARTMENT, HOUSE)
+
     URL_NOTE = (
         "Ce lien ne montre que la localisation : les filtres prix/surface/pièces "
         "sont appliqués par le scraper mais volontairement absents de l'URL, "
         "car leur effet côté site n'est pas assez fiable pour s'y fier seul."
     )
 
-    # has_valid_criteria: no override needed — get_locations() (at least one
-    # city+postalCode pair) is exactly BaseParser's default contract.
+    # has_valid_criteria / cannot_search_reason : pas de surcharge nécessaire,
+    # ville + code postal (le contrat par défaut de BaseParser) suffisent —
+    # le code INSEE dont filter[cities][] a besoin est résolu à partir du
+    # code postal quand l'autocomplete ne l'a pas déjà fourni.
+
+    def to_native(self, criteria: dict) -> dict:
+        """Rien à traduire : Laforet construit ses URLs directement depuis le
+        canonique (voir _search_paths). Les bornes prix/surface/pièces sont
+        appliquées côté scraper par _passes_filters, qui lit lui aussi le
+        canonique."""
+        return criteria
+
+    def _base_path(self, criteria: dict, location: dict) -> str:
+        """Le chemin de la page de résultats pour cette localisation.
+
+        Le type dans le slug est celui du premier type demandé, mais il n'a
+        pas d'effet réel : filter[types][] prime sur lui (vérifié en live).
+        """
+        transaction = TRANSACTION_SLUGS[_transaction(criteria)]
+        type_slug = TYPE_SLUGS[_property_types(criteria)[0]]
+
+        return (
+            f"{BASE_URL}/ville/{transaction}-{type_slug}-"
+            f"{_slugify(location['city'])}-{location['postalCode']}"
+        )
+
+    def _type_filters(self, criteria: dict) -> list[tuple[str, str]]:
+        """Un filter[types][] par type de bien demandé — le paramètre est
+        répétable et c'est lui qui gouverne réellement le résultat."""
+        return [
+            ("filter[types][]", TYPE_FILTER_VALUES[t])
+            for t in _property_types(criteria)
+        ]
+
+    def _split_locations(self, criteria: dict) -> tuple[list[tuple[dict, str]], list[dict]]:
+        """Sépare les localisations selon qu'on a pu ou non leur trouver un
+        code INSEE : les résolues partent dans une requête fusionnée unique
+        (filter[cities][]), les autres dans une requête chacune plutôt que
+        d'être silencieusement abandonnées."""
+        resolved: list[tuple[dict, str]] = []
+        unresolved: list[dict] = []
+        for location in get_locations(criteria):
+            code = _location_insee_code(location)
+            if code:
+                resolved.append((location, code))
+            else:
+                logger.warning(
+                    f"[Laforet] Code INSEE introuvable pour {location['city']} "
+                    f"{location['postalCode']}, requête séparée pour cette localisation"
+                )
+                unresolved.append(location)
+        return resolved, unresolved
 
     def build_search_url(self, criteria: dict) -> str | None:
         """First location's URL — see build_search_urls() for all of them."""
@@ -356,41 +383,35 @@ class LaforetParser(BaseParser):
         code. Only a location that can't be resolved gets its own plain
         URL, matching the real per-location fallback.
         """
-        locations = get_locations(criteria)
-        if not locations:
+        if not get_locations(criteria):
+            return []
+        if not _property_types(criteria):
+            # Seuls des types que Laforet ne référence pas (parking, terrain) :
+            # aucune URL plutôt qu'un lien qui montrerait autre chose que ce qui
+            # a été demandé.
             return []
 
-        transaction = _transaction_slug(criteria)
-        type_slug = _type_slug(criteria)
-
-        resolved = []
-        unresolved = []
-        for loc in locations:
-            code = _resolve_insee_code(loc["postalCode"])
-            (resolved if code else unresolved).append((loc, code) if code else loc)
+        resolved, unresolved = self._split_locations(criteria)
 
         urls = []
         if resolved:
             primary_loc, _ = resolved[0]
-            base_path = (
-                f"{BASE_URL}/ville/{transaction}-{type_slug}-"
-                f"{_slugify(primary_loc['city'])}-{primary_loc['postalCode']}"
-            )
-            query_pairs = [("filter[types][]", _type_filter_value(criteria))]
+            query_pairs = self._type_filters(criteria)
             query_pairs += [("filter[cities][]", code) for _, code in resolved]
-            urls.append(f"{base_path}?{urlencode(query_pairs)}")
-        for loc in unresolved:
-            urls.append(f"{BASE_URL}/ville/{transaction}-{type_slug}-{_slugify(loc['city'])}-{loc['postalCode']}")
+            urls.append(f"{self._base_path(criteria, primary_loc)}?{urlencode(query_pairs)}")
+        for location in unresolved:
+            urls.append(self._base_path(criteria, location))
         return urls
 
-    def scrape(self, criteria: dict, use_bff: bool = True) -> list[Listing]:
-        """`use_bff` is a SeLoger-specific concept and is ignored here."""
+    def scrape(self, criteria: dict) -> list[Listing]:
         locations = get_locations(criteria)
         if not locations:
             raise ValueError("Laforet nécessite au moins une localisation (ville + code postal) dans les critères")
-
-        type_slug = _type_slug(criteria)
-        property_type = TYPE_LABELS[type_slug]
+        if not _property_types(criteria):
+            raise ValueError(
+                "Laforet ne référence aucun des types de bien demandés "
+                f"(uniquement {sorted(TYPE_SLUGS)})"
+            )
 
         session = requests.Session()
         session.headers.update({
@@ -398,24 +419,13 @@ class LaforetParser(BaseParser):
             "Accept": "text/html, application/xhtml+xml",
         })
 
-        # Resolve every location to the INSEE-style code filter[cities][]
-        # needs, so they can all be merged into one request+pagination
-        # (verified live: this correctly combines multiple cities' results
-        # in a single, properly-scoped page). A location that can't be
-        # resolved (unknown postal code, geo API unreachable) falls back to
-        # its own separate request instead of being silently dropped.
-        resolved: list[tuple[dict, str]] = []
-        unresolved: list[dict] = []
-        for loc in locations:
-            code = _resolve_insee_code(loc["postalCode"])
-            if code:
-                resolved.append((loc, code))
-            else:
-                logger.warning(
-                    f"[Laforet] Code INSEE introuvable pour {loc['city']} {loc['postalCode']}, "
-                    "requête séparée pour cette localisation"
-                )
-                unresolved.append(loc)
+        # Toutes les localisations résolues en code INSEE partent dans une
+        # seule requête + pagination via filter[cities][] (vérifié en live :
+        # ça combine correctement les résultats de plusieurs villes dans une
+        # page bien cadrée). Celle qui ne se résout pas (code postal inconnu,
+        # API geo injoignable) prend sa propre requête au lieu d'être
+        # silencieusement abandonnée.
+        resolved, unresolved = self._split_locations(criteria)
 
         seen: set[str] = set()
         listings: list[Listing] = []
@@ -427,7 +437,7 @@ class LaforetParser(BaseParser):
             attempts += 1
             try:
                 listings.extend(
-                    self._scrape_merged(session, criteria, resolved, property_type, seen)
+                    self._scrape_merged(session, criteria, resolved, seen)
                 )
             except Exception as e:
                 failures += 1
@@ -439,7 +449,7 @@ class LaforetParser(BaseParser):
             attempts += 1
             try:
                 listings.extend(
-                    self._scrape_location(session, criteria, location, property_type, seen)
+                    self._scrape_location(session, criteria, location, seen)
                 )
             except Exception as e:
                 failures += 1
@@ -452,21 +462,15 @@ class LaforetParser(BaseParser):
         logger.info(f"[Laforet] Scraping terminé : {len(listings)} annonces uniques")
         return listings
 
-    def _scrape_merged(self, session, criteria: dict, resolved: list, property_type: str, seen: set) -> list[Listing]:
+    def _scrape_merged(self, session, criteria: dict, resolved: list, seen: set) -> list[Listing]:
         """One request (+ pagination) covering every resolved location at
         once, via filter[cities][]=<INSEE code> repeated per location."""
         primary_loc, _ = resolved[0]
-        transaction = _transaction_slug(criteria)
-        type_slug = _type_slug(criteria)
-        base_path = (
-            f"{BASE_URL}/ville/{transaction}-{type_slug}-"
-            f"{_slugify(primary_loc['city'])}-{primary_loc['postalCode']}"
-        )
-        city_codes = [code for _, code in resolved]
+        base_path = self._base_path(criteria, primary_loc)
         allowed_postal_codes = {loc["postalCode"] for loc, _ in resolved}
 
-        base_query = [("filter[types][]", _type_filter_value(criteria))]
-        base_query += [("filter[cities][]", code) for code in city_codes]
+        base_query = self._type_filters(criteria)
+        base_query += [("filter[cities][]", code) for _, code in resolved]
 
         listings: list[Listing] = []
         page = 1
@@ -489,7 +493,7 @@ class LaforetParser(BaseParser):
             for card in _parse_cards(genuine_html):
                 if card["reference"] in seen:
                     continue
-                listing = _dict_to_listing(card, property_type)
+                listing = _dict_to_listing(card)
                 if not _passes_filters(listing, criteria, allowed_postal_codes):
                     continue
                 seen.add(card["reference"])
@@ -505,15 +509,10 @@ class LaforetParser(BaseParser):
 
         return listings
 
-    def _scrape_location(self, session, criteria: dict, location: dict, property_type: str, seen: set) -> list[Listing]:
+    def _scrape_location(self, session, criteria: dict, location: dict, seen: set) -> list[Listing]:
         """Fallback path for a single location whose postal code couldn't
         be resolved to an INSEE code (or when the merged request failed)."""
-        transaction = _transaction_slug(criteria)
-        type_slug = _type_slug(criteria)
-        base_search_url = (
-            f"{BASE_URL}/ville/{transaction}-{type_slug}-"
-            f"{_slugify(location['city'])}-{location['postalCode']}"
-        )
+        base_search_url = self._base_path(criteria, location)
         allowed_postal_codes = {location["postalCode"]}
 
         listings: list[Listing] = []
@@ -536,7 +535,7 @@ class LaforetParser(BaseParser):
             for card in _parse_cards(genuine_html):
                 if card["reference"] in seen:
                     continue
-                listing = _dict_to_listing(card, property_type)
+                listing = _dict_to_listing(card)
                 if not _passes_filters(listing, criteria, allowed_postal_codes):
                     continue
                 seen.add(card["reference"])

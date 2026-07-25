@@ -22,7 +22,7 @@ class TestAutoRegistration:
             SOURCE_NAME = "Fake"
             SOURCE_DESCRIPTION = "A fake source for tests"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         assert ParserRegistry._parsers["fake_source"] is FakeParser
@@ -31,7 +31,7 @@ class TestAutoRegistration:
         before = dict(ParserRegistry._parsers)
 
         class NoSourceIdParser(BaseParser):
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         assert ParserRegistry._parsers == before
@@ -43,7 +43,7 @@ class TestGet:
             SOURCE_ID = "fake_get"
             SOURCE_NAME = "Fake"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         instance = ParserRegistry.get("fake_get")
@@ -54,7 +54,7 @@ class TestGet:
             SOURCE_ID = "known_source"
             SOURCE_NAME = "Known"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         with pytest.raises(ValueError) as exc_info:
@@ -70,14 +70,16 @@ class TestListSources:
             SOURCE_NAME = "Listed"
             SOURCE_DESCRIPTION = "Description here"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         sources = ParserRegistry.list_sources()
         matching = [s for s in sources if s["id"] == "listed_source"]
         assert matching == [{
             "id": "listed_source", "name": "Listed", "description": "Description here",
-            "requires_extra_location": False, "extra_location_label": "", "extra_location_help": "",
+            "supported_transactions": ["rent", "buy"],
+            "supported_property_types": ["apartment", "house", "parking", "land"],
+            "manual_override_label": "", "manual_override_help": "",
             "url_note": "",
         }]
 
@@ -95,7 +97,7 @@ class TestBaseParserDefaults:
         class FakeParser(BaseParser):
             SOURCE_ID = "no_parse"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         with pytest.raises(NotImplementedError):
@@ -105,7 +107,7 @@ class TestBaseParserDefaults:
         class FakeParser(BaseParser):
             SOURCE_ID = "no_url"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         assert FakeParser().build_search_url({}) is None
@@ -123,7 +125,7 @@ class TestBaseParserDefaults:
         class FakeParser(BaseParser):
             SOURCE_ID = "default_validity"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         parser = FakeParser()
@@ -132,17 +134,21 @@ class TestBaseParserDefaults:
         assert parser.has_valid_criteria({"anything": 1}) is False
         assert parser.has_valid_criteria({}) is False
 
-    def test_extra_location_metadata_defaults_to_none_required(self):
+    def test_a_source_covers_everything_and_needs_no_override_by_default(self):
+        """Une nouvelle source n'a rien à déclarer pour fonctionner : elle est
+        censée couvrir tout le vocabulaire canonique et n'exiger aucune saisie
+        propre à elle. Ne restreindre que si c'est réellement le cas."""
         class FakeParser(BaseParser):
-            SOURCE_ID = "no_extra_location"
+            SOURCE_ID = "no_manual_override"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         parser = FakeParser()
-        assert parser.REQUIRES_EXTRA_LOCATION is False
-        assert parser.EXTRA_LOCATION_LABEL == ""
-        assert parser.EXTRA_LOCATION_HELP == ""
+        assert parser.SUPPORTED_TRANSACTIONS == ("rent", "buy")
+        assert parser.SUPPORTED_PROPERTY_TYPES == ("apartment", "house", "parking", "land")
+        assert parser.MANUAL_OVERRIDE_LABEL == ""
+        assert parser.parse_manual_override("anything") == {}
 
     def test_has_valid_criteria_default_accepts_multiple_locations(self):
         """A search can cover several cities/postal codes at once — the
@@ -150,7 +156,7 @@ class TestBaseParserDefaults:
         class FakeParser(BaseParser):
             SOURCE_ID = "multi_location_validity"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         parser = FakeParser()
@@ -167,7 +173,7 @@ class TestBaseParserDefaults:
         class FakeParser(BaseParser):
             SOURCE_ID = "single_url_wrap"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
             def build_search_url(self, criteria):
@@ -180,7 +186,7 @@ class TestBaseParserDefaults:
         class FakeParser(BaseParser):
             SOURCE_ID = "no_url_wrap"
 
-            def scrape(self, criteria, use_bff=True):
+            def scrape(self, criteria):
                 return []
 
         assert FakeParser().build_search_urls({}) == []
@@ -229,10 +235,15 @@ class TestPerSourceHasValidCriteria:
     """Each source encodes location differently, so validity is delegated
     per-parser instead of a single hardcoded key (e.g. placeIds)."""
 
-    def test_seloger_requires_place_ids(self):
+    def test_seloger_needs_an_insee_code_or_a_manual_place_id(self):
         from parsers.seloger import SeLogerParser
         parser = SeLogerParser()
-        assert parser.has_valid_criteria({"placeIds": ["750113"]}) is True
+        assert parser.has_valid_criteria(
+            {"sourceOverrides": {"seloger": {"placeIds": ["750113"]}}}
+        ) is True
+        assert parser.has_valid_criteria(
+            {"locations": [{"city": "Paris", "postalCode": "75013", "inseeCode": "75113"}]}
+        ) is True
         assert parser.has_valid_criteria({"priceMax": 1500}) is False
         assert parser.has_valid_criteria({}) is False
 
@@ -257,23 +268,29 @@ class TestExtraLocationMetadata:
     public geocoding API), so it declares an extra manual field via this
     metadata — the UI renders it generically from here."""
 
-    def test_seloger_requires_extra_location_field(self):
+    def test_seloger_offers_a_manual_override_field(self):
+        """Le repli quand la résolution automatique du placeId ne trouve rien."""
         from parsers.seloger import SeLogerParser
-        assert SeLogerParser.REQUIRES_EXTRA_LOCATION is True
-        assert SeLogerParser.EXTRA_LOCATION_LABEL
-        assert SeLogerParser.EXTRA_LOCATION_HELP
+        assert SeLogerParser.MANUAL_OVERRIDE_LABEL
+        assert SeLogerParser.MANUAL_OVERRIDE_HELP
 
-    def test_laforet_does_not_require_extra_location_field(self):
+    def test_laforet_needs_no_manual_override_field(self):
         from parsers.laforet import LaforetParser
-        assert LaforetParser.REQUIRES_EXTRA_LOCATION is False
+        assert LaforetParser.MANUAL_OVERRIDE_LABEL == ""
 
-    def test_list_sources_includes_extra_location_metadata(self):
+    def test_laforet_declares_its_property_type_limits(self):
+        """Laforet ne référence ni parking ni terrain : déclaré, donc dit à
+        l'utilisateur avant le scrape au lieu d'échouer en cours de route."""
+        sources = ParserRegistry.list_sources()
+        laforet = next(s for s in sources if s["id"] == "laforet")
+        assert laforet["supported_property_types"] == ["apartment", "house"]
+
+    def test_list_sources_includes_manual_override_metadata(self):
         sources = ParserRegistry.list_sources()
         seloger = next(s for s in sources if s["id"] == "seloger")
         laforet = next(s for s in sources if s["id"] == "laforet")
-        assert seloger["requires_extra_location"] is True
-        assert seloger["extra_location_label"]
-        assert laforet["requires_extra_location"] is False
+        assert seloger["manual_override_label"]
+        assert laforet["manual_override_label"] == ""
 
     def test_laforet_url_note_explains_missing_filters(self):
         """Laforet's build_search_url() deliberately omits price/surface/rooms

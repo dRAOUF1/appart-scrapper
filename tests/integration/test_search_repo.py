@@ -18,7 +18,11 @@ def _make_user(storage):
 class TestCreateAndGetSearch:
     def test_round_trip_preserves_jsonb_criteria(self, storage):
         user = _make_user(storage)
-        criteria = {"placeIds": ["750113"], "priceMax": 1500, "rooms": ["2", "3"]}
+        criteria = {
+            "locations": [{"city": "Paris", "postalCode": "75013", "inseeCode": "75113"}],
+            "priceMax": 1500,
+            "rooms": [2, 3],
+        }
 
         created = storage.searches.create_search(
             user["id"], "Paris 13e", "topic-x", "seloger", criteria, 10,
@@ -29,6 +33,36 @@ class TestCreateAndGetSearch:
         assert fetched["criteria"] == criteria
         assert fetched["label"] == "Paris 13e"
         assert fetched["scrape_interval"] == 10
+
+    def test_criteria_stored_in_the_old_vocabulary_are_read_back_canonical(self, storage):
+        """Les recherches créées avant l'unification ne sont PAS migrées en
+        base : elles sont normalisées à la lecture, donc tout ce qui lit une
+        recherche (scraper, URLs, formulaire, admin) ne voit que du canonique.
+        Ce test écrit volontairement l'ancien vocabulaire pour reproduire une
+        ligne déjà en production."""
+        user = _make_user(storage)
+        legacy = {
+            "placeIds": ["AD08FR31096"],
+            "city": "Paris", "postalCode": "75013",
+            "distributionTypes": ["Sale"],
+            "estateTypes": ["House"],
+            "spaceMin": 40,
+            "rooms": ["2", "3"],
+        }
+
+        created = storage.searches.create_search(
+            user["id"], "Vieille recherche", "topic-legacy", "seloger", legacy, 10,
+        )
+        fetched = storage.searches.get_search(created["id"])
+
+        assert fetched["criteria"] == {
+            "locations": [{"city": "Paris", "postalCode": "75013"}],
+            "transaction": "buy",
+            "propertyTypes": ["house"],
+            "surfaceMin": 40,
+            "rooms": [2, 3],
+            "sourceOverrides": {"seloger": {"placeIds": ["AD08FR31096"]}},
+        }
 
 
 class TestDeleteSearchCascade:

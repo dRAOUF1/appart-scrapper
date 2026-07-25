@@ -92,7 +92,8 @@ Auth via header : `X-API-Token: <token>`
 |----------|---------|------|-------------|
 | `/api/users` | POST | — | Créer un utilisateur |
 | `/api/users/login` | POST | — | Se connecter (ne renvoie pas le token) |
-| `/api/sources` | GET | — | Lister les sources disponibles |
+| `/api/sources` | GET | — | Lister les sources disponibles et leurs capacités |
+| `/api/locations?q=` | GET | — | Autocomplete de ville (ville, code postal, code INSEE) |
 | `/api/stats` | GET | token | Statistiques du compte |
 
 ### Recherches
@@ -137,6 +138,39 @@ La suite est divisée en deux :
   ```
   Ce compose démarre un Postgres jetable et lance toute la suite (unitaires + intégration) dedans.
 
+## Critères unifiés
+
+L'utilisateur définit ses critères **une seule fois**, dans un vocabulaire
+canonique qui n'appartient à aucune source ; c'est chaque parser qui les traduit
+ensuite au format de la sienne. Le front, la base et le pipeline ne connaissent
+que ce vocabulaire — voir `core/criteria.py`.
+
+| Critère | Valeurs |
+|---------|---------|
+| `locations` | `[{city, postalCode, inseeCode, lat, lon}]` — le code INSEE vient de l'autocomplete (`GET /api/locations`) et permet à chaque source de retrouver son propre identifiant de lieu |
+| `transaction` | `rent` \| `buy` |
+| `propertyTypes` | `apartment`, `house`, `parking`, `land` |
+| `priceMin` / `priceMax` | entiers, en euros |
+| `surfaceMin` / `surfaceMax` | entiers, en m² |
+| `rooms` / `bedrooms` | `[int]` — `5` signifie « 5 et plus » |
+| `sourceOverrides` | `{"<source>": {...}}` — la seule échappatoire : ce que l'utilisateur a saisi à la main pour une source précise (aujourd'hui le Place ID SeLoger, en repli) |
+
+Les recherches créées avant l'unification **ne sont pas migrées** : elles sont
+normalisées à la lecture (`SearchRepository._load_criteria`), donc l'ancien
+vocabulaire SeLoger (`distributionTypes`, `estateTypes`, `placeIds`, `spaceMin`)
+reste compris partout, y compris via l'API.
+
+### Ajouter une source
+
+1. Créer `parsers/ma_source.py`, hériter de `BaseParser`, définir `SOURCE_ID` et `SOURCE_NAME`
+2. Restreindre `SUPPORTED_TRANSACTIONS` / `SUPPORTED_PROPERTY_TYPES` **seulement** si la source ne couvre pas tout — c'est ce qui permet de prévenir l'utilisateur avant un scrape au lieu d'échouer en cours de route
+3. Implémenter `to_native(criteria)` (traduction du canonique) et `scrape(criteria)`
+4. Importer le module dans `parsers/__init__.py`
+
+Aucune modification du front, du schéma stocké ni de l'API n'est nécessaire : la
+source apparaît dans le formulaire, et ses capacités y sont affichées
+automatiquement à partir de ce qu'elle déclare.
+
 ## Structure
 
 ```
@@ -145,15 +179,15 @@ La suite est divisée en deux :
 ├── notifier.py      # Notifications ntfy
 ├── repositories/    # CRUD par domaine (users, searches, listings, ...)
 ├── models/          # Dataclasses (Listing, Search, ...)
-├── parsers/         # Parsers par source (SeLoger, ...), enregistrés via BaseParser
-├── scraper/         # Scraping SeLoger (API BFF + classified-search)
-├── services/        # Orchestration du scraping (ScrapeService)
+├── parsers/         # Parsers par source (SeLoger, Laforêt), enregistrés via BaseParser
+├── scraper/         # Scraping SeLoger (page classified-search)
+├── services/        # Orchestration du scraping + résolution des lieux par source
 ├── routes/          # Blueprints Flask (api, web, admin, auth)
-├── core/            # Helpers transverses (scrape_control, web_utils, schemas)
+├── core/            # Vocabulaire des critères (criteria), géocodage (geocode), helpers
 ├── scrape_logs/     # Capture, stockage et export/import des logs de scrape
 ├── config/          # Chargement config (loader.py + config.yaml)
 ├── templates/       # Pages HTML (Jinja2)
-├── static/          # CSS
+├── static/          # CSS + JS du formulaire de recherche
 ├── tests/           # Tests unitaires (+ tests/integration/ pour les tests DB réels)
 ├── Dockerfile       # Déploiement
 ├── Dockerfile.test  # Image de test (docker-compose.test.yml)

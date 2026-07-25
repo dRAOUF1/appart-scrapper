@@ -11,6 +11,23 @@ from repositories.base import BaseRepository
 class SearchRepository(BaseRepository):
     """Search CRUD operations."""
 
+    def _load_criteria(self, d: dict) -> dict:
+        """Parse la colonne JSON `criteria` puis la ramène au vocabulaire
+        canonique (core.criteria).
+
+        C'est le point unique de normalisation à la lecture : les recherches
+        créées avant l'unification sont stockées dans l'ancien vocabulaire
+        (celui de SeLoger : distributionTypes/estateTypes/placeIds) et ne
+        sont volontairement PAS migrées en base. Tout ce qui lit une
+        recherche — scraper, reconstruction d'URL, formulaire d'édition,
+        admin — passe par ici et ne voit donc que du canonique.
+        """
+        from core.criteria import normalize_criteria
+
+        self._parse_json_column(d, "criteria")
+        d["criteria"] = normalize_criteria(d.get("criteria"))
+        return d
+
     @staticmethod
     def _normalize_sources(d: dict) -> dict:
         """Rows created before multi-source support have `sources IS NULL`
@@ -146,7 +163,7 @@ class SearchRepository(BaseRepository):
                 result = []
                 for r in cur.fetchall():
                     d = dict(r)
-                    self._parse_json_column(d, "criteria")
+                    self._load_criteria(d)
                     self._normalize_sources(d)
                     result.append(d)
                 return result
@@ -165,7 +182,7 @@ class SearchRepository(BaseRepository):
                 if not row:
                     return None
                 d = dict(row)
-                self._parse_json_column(d, "criteria")
+                self._load_criteria(d)
                 self._normalize_sources(d)
                 return d
         finally:
@@ -229,7 +246,7 @@ class SearchRepository(BaseRepository):
                 result = []
                 for r in cur.fetchall():
                     d = dict(r)
-                    self._parse_json_column(d, "criteria")
+                    self._load_criteria(d)
                     self._normalize_sources(d)
                     result.append(d)
                 return result
@@ -251,7 +268,7 @@ class SearchRepository(BaseRepository):
                 if not search:
                     return None
                 result = dict(search)
-                self._parse_json_column(result, "criteria")
+                self._load_criteria(result)
                 self._normalize_sources(result)
 
                 cur.execute(

@@ -23,7 +23,7 @@ def _search(**overrides):
     base = {
         "id": 1,
         "is_active": True,
-        "criteria": {"placeIds": ["123"]},
+        "criteria": {"locations": [{"city": "Paris", "postalCode": "75018", "inseeCode": "75118"}]},
         "scrape_interval": 5,
         "last_scraped": None,
     }

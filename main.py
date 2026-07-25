@@ -4,7 +4,7 @@ SeLoger API Platform — Point d'entrée unique.
 Sert à la fois l'API REST (/api/*) et le frontend web (/) depuis
 un seul processus Flask, compatible Render (un seul web service).
 
-Le scraping est fait côté serveur via les API SeLoger (BFF + classified-search).
+Le scraping est fait côté serveur, source par source (voir parsers/).
 Architecture parallèle :
   - ThreadPoolExecutor(max_workers=1) : max 1 scrape à la fois (évite OOM)
   - APScheduler : scheduling propre sans threads bloqués

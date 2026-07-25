@@ -12,7 +12,7 @@ class TestBlacklistMode:
         mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
-            "criteria": {"placeIds": ["123"]},
+            "criteria": {"locations": [{"city": "Paris", "postalCode": "75018", "inseeCode": "75118"}]},
             "source": "seloger",
             "ntfy_topic": "test-topic",
             "blacklisted_agencies": ["Bad Agency"],
@@ -35,6 +35,7 @@ class TestBlacklistMode:
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
+        mock_parser.cannot_search_reason.return_value = None
         mock_parser.scrape.return_value = [mock_listing]
 
         service = ScrapeService(mock_app.storage, mock_app.notifier)
@@ -50,7 +51,7 @@ class TestBlacklistMode:
         mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
-            "criteria": {"placeIds": ["123"]},
+            "criteria": {"locations": [{"city": "Paris", "postalCode": "75018", "inseeCode": "75118"}]},
             "source": "seloger",
             "ntfy_topic": "test-topic",
             "blacklisted_agencies": ["Bad Agency"],
@@ -73,6 +74,7 @@ class TestBlacklistMode:
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
+        mock_parser.cannot_search_reason.return_value = None
         mock_parser.scrape.return_value = [mock_listing]
 
         service = ScrapeService(mock_app.storage, mock_app.notifier)
@@ -88,7 +90,7 @@ class TestBlacklistMode:
         mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
-            "criteria": {"placeIds": ["123"]},
+            "criteria": {"locations": [{"city": "Paris", "postalCode": "75018", "inseeCode": "75118"}]},
             "source": "seloger",
             "ntfy_topic": "test-topic",
             "blacklisted_agencies": ["Bad Agency"],
@@ -115,6 +117,7 @@ class TestBlacklistMode:
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
+        mock_parser.cannot_search_reason.return_value = None
         mock_parser.scrape.return_value = [mock_listing_blacklisted, mock_listing_good]
 
         service = ScrapeService(mock_app.storage, mock_app.notifier)
@@ -132,7 +135,7 @@ class TestBlacklistMode:
         mock_app.storage.searches.get_search.return_value = {
             "id": 1,
             "user_id": 1,
-            "criteria": {"placeIds": ["123"]},
+            "criteria": {"locations": [{"city": "Paris", "postalCode": "75018", "inseeCode": "75118"}]},
             "source": "seloger",
             "ntfy_topic": "test-topic",
             "blacklisted_agencies": ["Bad Agency"],
@@ -154,6 +157,7 @@ class TestBlacklistMode:
         mock_app.app_context.return_value.__exit__ = MagicMock()
 
         mock_parser = MagicMock()
+        mock_parser.cannot_search_reason.return_value = None
         mock_parser.scrape.return_value = [mock_listing]
 
         service = ScrapeService(mock_app.storage, mock_app.notifier)
