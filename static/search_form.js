@@ -34,7 +34,6 @@
 
     function attachAutocomplete(row) {
         const input = row.querySelector('[data-location-input]');
-        const postal = row.querySelector('[data-location-postal]');
         const payload = row.querySelector('[data-location-payload]');
         const list = row.querySelector('[data-location-suggestions]');
         if (!input || !list) return;
@@ -48,10 +47,10 @@
         }
 
         function pick(suggestion) {
+            // Le libellé porte déjà le code postal quand il en a un
+            // (« Paris (75015) ») : un champ séparé n'aurait rien à afficher
+            // pour un département ou une région.
             input.value = suggestion.label;
-            // Le code postal n'a de sens qu'au niveau le plus fin ; pour un
-            // département ou une région, le champ n'a rien à afficher.
-            if (postal) postal.value = suggestion.postalCode || '';
             if (payload) payload.value = JSON.stringify(suggestion);
             hide();
         }

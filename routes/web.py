@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -34,28 +35,47 @@ def _form_list(form_data: dict, key: str) -> list:
     return value if isinstance(value, list) else [value]
 
 
+_TYPED_POSTAL_CODE_RE = re.compile(r"\b(\d{5})\b")
+
+
+def _location_from_free_text(text: str) -> dict | None:
+    """Une saisie libre -> une commune, si elle contient de quoi la situer.
+
+    Filet de sécurité pour une ligne remplie à la main sans passer par les
+    suggestions : « Poitiers 86000 » ou « Poitiers (86000) » restent
+    exploitables. Sans code postal, il n'y a rien à chercher — et surtout pas
+    de commune à deviner, plusieurs pouvant porter le même nom.
+
+    Une localisation obtenue ainsi n'a pas de code INSEE : les sources qui en
+    ont besoin le diront (voir SeLogerParser.cannot_search_reason).
+    """
+    match = _TYPED_POSTAL_CODE_RE.search(text)
+    if not match:
+        return None
+    city = _TYPED_POSTAL_CODE_RE.sub("", text).strip(" ()-—,").strip()
+    if not city:
+        return None
+    return {"kind": CITY, "city": city, "postalCode": match.group(1)}
+
+
 def _parse_locations_from_form(form_data: dict) -> list[dict]:
     """Les périmètres de recherche saisis, un par ligne du formulaire.
 
-    Chaque ligne porte un champ caché `location_payload` rempli par
-    l'autocomplete : le périmètre choisi, sérialisé en JSON. C'est exactement
-    une entrée de `locations` au format canonique (region, department,
-    whole_city ou city selon ce qui a été choisi), ce qui évite d'avoir un
-    champ de formulaire par niveau et par attribut.
+    Chaque ligne n'a qu'un seul champ visible, doublé d'un champ caché
+    `location_payload` que l'autocomplete remplit avec le périmètre choisi,
+    sérialisé en JSON. C'est exactement une entrée de `locations` au format
+    canonique (region, department, whole_city ou city selon ce qui a été
+    choisi) : il n'y a donc ni champ par niveau, ni champ par attribut, et le
+    code postal n'a pas à être ressaisi puisque la suggestion le porte déjà.
 
-    Une ligne remplie à la main, sans passer par les suggestions, n'a pas de
-    payload : elle est alors lue comme une commune (ville + code postal), le
-    seul niveau qu'on puisse deviner d'une saisie libre. Elle reste
-    exploitable par les sources qui se contentent de ville + code postal, mais
-    pas par celles qui ont besoin d'un identifiant de lieu (voir
-    SeLogerParser.cannot_search_reason).
+    Une ligne tapée à la main, sans suggestion, n'a pas de payload : son texte
+    est alors interprété comme une commune (voir _location_from_free_text).
     """
     payloads = _form_list(form_data, "location_payload")
-    cities = _form_list(form_data, "location_city")
-    postal_codes = _form_list(form_data, "location_postal_code")
+    typed = _form_list(form_data, "location_city")
 
     locations = []
-    for index in range(max(len(payloads), len(cities))):
+    for index in range(max(len(payloads), len(typed))):
         payload = payloads[index].strip() if index < len(payloads) else ""
         if payload:
             try:
@@ -68,10 +88,11 @@ def _parse_locations_from_form(form_data: dict) -> list[dict]:
                 locations.append({k: v for k, v in parsed.items() if k != "label"})
                 continue
 
-        city = cities[index].strip() if index < len(cities) else ""
-        postal_code = postal_codes[index].strip() if index < len(postal_codes) else ""
-        if city and postal_code:
-            locations.append({"kind": CITY, "city": city, "postalCode": postal_code})
+        text = typed[index].strip() if index < len(typed) else ""
+        if text:
+            location = _location_from_free_text(text)
+            if location:
+                locations.append(location)
     return locations
 
 

@@ -42,8 +42,6 @@
                             aria-label="Localisation" autocomplete="off" data-location-input>
                         <ul class="location-suggestions" data-location-suggestions hidden></ul>
                     </div>
-                    <input type="text" name="location_postal_code" placeholder="Code postal"
-                        aria-label="Code postal" data-location-postal>
                     <input type="hidden" name="location_payload" value="" data-location-payload>
                     <button type="button" class="location-remove-btn" aria-label="Retirer cette localisation">✕</button>
                 </div>
@@ -51,8 +49,9 @@
             <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une localisation</button>
             <small class="form-help" style="display: block; margin-top: 0.5rem;">
                 Tape une ville, un département (« Gironde ») ou une région (« Île-de-France ») et
-                choisis dans les suggestions. « Paris » propose aussi la ville entière, tous
-                arrondissements d'un coup. Tu peux en ajouter plusieurs dans la même recherche.
+                choisis dans les suggestions — le code postal est repris automatiquement.
+                « Paris » propose aussi la ville entière, tous arrondissements d'un coup.
+                Tu peux ajouter plusieurs localisations dans la même recherche.
             </small>
         </div>
 

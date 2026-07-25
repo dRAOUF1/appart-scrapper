@@ -431,22 +431,34 @@ class TestParseSearchCriteriaFromForm:
         assert [loc["kind"] for loc in criteria["locations"]] == ["department", "city"]
 
     def test_a_hand_typed_line_without_a_payload_is_read_as_a_city(self):
-        """Saisie libre, sans passer par les suggestions : le seul niveau qu'on
-        puisse deviner est la commune."""
+        """Le champ de localisation est unique : le code postal n'est plus
+        ressaisi à part, il est lu dans le texte tapé."""
+        from routes.web import _parse_search_criteria_from_form
+
+        for texte in ("Poitiers 86000", "Poitiers (86000)", "86000 Poitiers"):
+            criteria = _parse_search_criteria_from_form({
+                "location_city": texte, "location_payload": "",
+            })
+            assert criteria["locations"] == [
+                {"kind": "city", "city": "Poitiers", "postalCode": "86000"}
+            ], texte
+
+    def test_a_typed_line_without_a_postal_code_is_dropped(self):
+        """Sans code postal, la commune n'est pas identifiable — et il ne faut
+        surtout pas en deviner une, plusieurs pouvant porter le même nom."""
         from routes.web import _parse_search_criteria_from_form
 
         criteria = _parse_search_criteria_from_form({
-            "location_city": "Poitiers", "location_postal_code": "86000",
-            "location_payload": "",
+            "location_city": "Poitiers", "location_payload": "",
         })
-        assert criteria["locations"] == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
+        assert "locations" not in criteria
 
-    def test_a_corrupted_payload_falls_back_to_the_typed_fields(self):
+    def test_a_corrupted_payload_falls_back_to_the_typed_text(self):
         """Un payload illisible ne doit pas faire perdre la ligne."""
         from routes.web import _parse_search_criteria_from_form
 
         criteria = _parse_search_criteria_from_form({
-            "location_city": "Poitiers", "location_postal_code": "86000",
+            "location_city": "Poitiers (86000)",
             "location_payload": "{pas du json",
         })
         assert criteria["locations"] == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
@@ -455,7 +467,7 @@ class TestParseSearchCriteriaFromForm:
         from routes.web import _parse_search_criteria_from_form
 
         form = {
-            "location_city": "Paris", "location_postal_code": "75014",
+            "location_city": "Paris (75014)",
             "override_seloger": "AD08FR12345",
         }
         criteria = _parse_search_criteria_from_form(form)
@@ -463,14 +475,14 @@ class TestParseSearchCriteriaFromForm:
         assert "placeIds" not in criteria
 
     def test_multiple_location_rows_build_locations_list(self):
-        """A search can cover several cities/postal codes — one
-        location_city/location_postal_code pair per submitted row."""
+        """Une recherche peut couvrir plusieurs localisations — une ligne, donc
+        un champ, par périmètre."""
         from werkzeug.datastructures import MultiDict
         from routes.web import _parse_search_criteria_from_form
 
         form = MultiDict([
-            ("location_city", "Paris"), ("location_postal_code", "75014"),
-            ("location_city", "Lyon"), ("location_postal_code", "69007"),
+            ("location_city", "Paris (75014)"),
+            ("location_city", "Lyon (69007)"),
         ])
         criteria = _parse_search_criteria_from_form(form)
         assert criteria["locations"] == [
@@ -479,16 +491,15 @@ class TestParseSearchCriteriaFromForm:
         ]
 
     def test_incomplete_location_rows_are_skipped(self):
-        """A row with a city but no postal code (or vice versa) — e.g. the
-        user added a row and didn't fill it in — must not produce a bogus
-        half-empty location."""
+        """Une ligne vide (l'utilisateur en a ajouté une sans la remplir) ou
+        sans code postal ne doit pas produire de localisation bancale."""
         from werkzeug.datastructures import MultiDict
         from routes.web import _parse_search_criteria_from_form
 
         form = MultiDict([
-            ("location_city", "Paris"), ("location_postal_code", "75014"),
-            ("location_city", ""), ("location_postal_code", ""),
-            ("location_city", "Lyon"), ("location_postal_code", ""),
+            ("location_city", "Paris (75014)"),
+            ("location_city", ""),
+            ("location_city", "Lyon"),
         ])
         criteria = _parse_search_criteria_from_form(form)
         assert criteria["locations"] == [{"kind": "city", "city": "Paris", "postalCode": "75014"}]
