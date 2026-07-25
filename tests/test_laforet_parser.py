@@ -392,40 +392,56 @@ class TestWideAreaSearches:
         assert url.startswith("https://www.laforet.com/ville/location-appartement-bordeaux-33000?")
         assert "filter%5Bcities%5D" not in url
 
-    def test_region_expands_to_all_its_departments(self):
+    def test_region_uses_the_native_region_filter(self):
+        """Laforet a un filtre région : un seul paramètre, pas l'énumération de
+        ses départements. Vérifié en live que filter[regions][]=11 rend les 741
+        annonces d'Île-de-France, exactement comme les 8 départements."""
         parser = LaforetParser()
         with patch("parsers.laforet.department_main_city",
                    return_value={"city": "Paris", "postalCode": "75001"}):
             url = parser.build_search_url({"locations": [self.IDF]})
-        for dept in self.IDF["departments"]:
-            assert f"filter%5Bdepartments%5D%5B%5D={dept}" in url
+        assert "filter%5Bregions%5D%5B%5D=11" in url
+        # Et surtout pas les 8 départements en plus, ce serait redondant.
+        assert "filter%5Bdepartments%5D" not in url
 
-    def test_region_without_stored_departments_is_resolved(self):
-        """Une région enregistrée sans ses départements (saisie manuelle) doit
-        les retrouver plutôt que d'abandonner la recherche."""
+    def test_region_without_stored_departments_still_works(self):
+        """Le filtre région ne dépend pas de la liste des départements : elle ne
+        sert qu'à ancrer le chemin de l'URL sur une ville réelle."""
         parser = LaforetParser()
-        with patch("parsers.laforet.region_departments", return_value=["2A", "2B"]) as mock_reg:
+        with patch("parsers.laforet.region_departments", return_value=["2A", "2B"]):
             with patch("parsers.laforet.department_main_city",
                        return_value={"city": "Ajaccio", "postalCode": "20000"}):
                 url = parser.build_search_url({"locations": [
                     {"kind": "region", "name": "Corse", "code": "94"},
                 ]})
-        # Appelé avec le code de la région (plusieurs fois éventuellement :
-        # region_departments a son propre cache, l'appel réel n'a lieu qu'une).
-        mock_reg.assert_called_with("94")
-        assert "filter%5Bdepartments%5D%5B%5D=2A" in url
-        assert "filter%5Bdepartments%5D%5B%5D=2B" in url
+        assert "filter%5Bregions%5D%5B%5D=94" in url
+        assert url.startswith("https://www.laforet.com/ville/location-appartement-ajaccio-20000?")
 
-    def test_whole_city_covers_every_arrondissement(self):
-        """« Paris — toute la ville » doit produire un filtre par
-        arrondissement, au lieu d'obliger à saisir les 20 à la main."""
+    def test_whole_city_uses_the_single_commune_code(self):
+        """« Paris — toute la ville » doit utiliser LE code de la commune
+        (75056), que Laforet comprend directement : vérifié en live qu'il rend
+        exactement le même résultat que l'énumération des 20 arrondissements
+        (66 annonces dans les deux cas)."""
         parser = LaforetParser()
         url = parser.build_search_url({"locations": [{
             "kind": "whole_city", "city": "Paris", "inseeCode": "75056",
             "postalCodes": ["75001", "75002", "75015"],
         }]})
+        assert "filter%5Bcities%5D%5B%5D=75056" in url
+        # Aucun code d'arrondissement : on n'énumère plus.
         for insee in ("75101", "75102", "75115"):
-            assert f"filter%5Bcities%5D%5B%5D={insee}" in url
+            assert insee not in url
+
+    def test_whole_city_falls_back_to_postal_codes_without_a_commune_code(self):
+        """Localisation enregistrée sans code de commune : les codes des codes
+        postaux restent équivalents, mieux que pas de filtre."""
+        parser = LaforetParser()
+        url = parser.build_search_url({"locations": [{
+            "kind": "whole_city", "city": "Paris",
+            "postalCodes": ["75001", "75015"],
+        }]})
+        assert "filter%5Bcities%5D%5B%5D=75101" in url
+        assert "filter%5Bcities%5D%5B%5D=75115" in url
 
     def test_levels_are_combined_into_a_single_url(self):
         """Communes et départements dans la même recherche : une seule requête,

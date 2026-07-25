@@ -33,11 +33,12 @@ filter[types][]=apartment&filter[types][]=house rend bien 17 appartements
 et 18 maisons). Le type d'une annonce est donc lu dans son URL, pas déduit
 de ce qui a été demandé — voir _property_type_from_url().
 
-filter[min]/filter[max]/filter[surface] (price/surface) were also verified
-live: they have a real but imprecise effect on the genuine section (one
-example let a listing above the requested max through), so price/surface/
-rooms filtering is still fully enforced client-side in _passes_filters(),
-same as before — only the *location* merging is trusted to the server now.
+Les filtres prix/surface/pièces (filter[min], filter[max], filter[surface],
+filter[rooms]) sont eux aussi envoyés, MAIS uniquement en présence d'un filtre
+de périmètre : seuls, ils font basculer le site en recherche nationale et le
+cadrage du chemin est perdu. Voir _criteria_filters(), qui détaille leurs
+sémantiques et le gain mesuré. Le filtrage reste appliqué intégralement côté
+client par _passes_filters() : ces filtres dégrossissent sans être exacts.
 """
 
 from __future__ import annotations
@@ -174,32 +175,52 @@ def _city_insee_codes(location: dict) -> list[str]:
 
     - city : son propre code INSEE, fourni par l'autocomplete ou résolu depuis
       le code postal via core.geocode (le point de vérité partagé).
-    - whole_city : un code par arrondissement/code postal, ce qui permet de
-      couvrir Paris ou Bordeaux entiers en une seule requête.
-    - region/department : rien ici, ils passent par filter[departments][].
+    - whole_city : LE code INSEE de la commune, un seul. Laforet comprend
+      directement le code de la commune entière (75056 pour Paris) et rend
+      exactement le même résultat qu'en énumérant ses 20 arrondissements
+      (vérifié : 66 annonces dans les deux cas) — inutile de les développer.
+    - region/department : rien ici, ils ont leurs propres filtres.
     """
     kind = location.get("kind", CITY)
     if kind == CITY:
         code = location.get("inseeCode") or _resolve_insee_code(location["postalCode"])
         return [code] if code else []
     if kind == WHOLE_CITY:
+        insee = location.get("inseeCode")
+        if insee:
+            return [insee]
+        # Pas de code de commune (localisation enregistrée sans) : se rabattre
+        # sur les codes des codes postaux, moins direct mais équivalent.
         codes = []
         for postal_code in location.get("postalCodes") or []:
             code = _resolve_insee_code(postal_code)
             if code and code not in codes:
                 codes.append(code)
-        # Aucun arrondissement résolu : se rabattre sur le code de la commune
-        # elle-même, qui reste mieux que pas de filtre du tout.
-        if not codes and location.get("inseeCode"):
-            codes = [location["inseeCode"]]
         return codes
     return []
 
 
+def _region_codes(location: dict) -> list[str]:
+    """Le code de région, pour filter[regions][].
+
+    Laforet a un filtre région natif : `filter[regions][]=11` rend les 741
+    annonces d'Île-de-France, exactement comme l'énumération de ses 8
+    départements — mais en un seul paramètre, et le site l'affiche alors comme
+    son propre filtre de localisation.
+
+    Attention au pluriel avec crochets : `filter[region]=11` ne filtre rien et
+    renvoie le flux national (2545 annonces, de l'Ain aux Pyrénées).
+    """
+    if location.get("kind") == REGION and location.get("code"):
+        return [location["code"]]
+    return []
+
+
 def _department_codes(location: dict) -> list[str]:
-    """Les codes de département couverts par une localisation, pour
-    filter[departments][] — vérifié en live : ce paramètre est répétable et
-    couvre les 8 départements d'Île-de-France en une seule requête.
+    """Les codes de département couverts par une localisation.
+
+    Sert au filtre filter[departments][] pour un département, et à ancrer le
+    chemin de l'URL sur une ville réelle pour une région (voir _path_anchor).
 
     Attention, c'est bien `filter[departments][]` au pluriel : au singulier,
     `filter[department]` ne filtre rien et renvoie le flux national.
@@ -412,9 +433,9 @@ class LaforetParser(BaseParser):
     SUPPORTED_PROPERTY_TYPES = (APARTMENT, HOUSE)
 
     URL_NOTE = (
-        "Ce lien ne montre que la localisation : les filtres prix/surface/pièces "
-        "sont appliqués par le scraper mais volontairement absents de l'URL, "
-        "car leur effet côté site n'est pas assez fiable pour s'y fier seul."
+        "Laforêt n'a pas de filtre de surface maximale, et son filtre de pièces "
+        "est un minimum : ce lien peut donc montrer un peu plus large que la "
+        "recherche. Le scraper applique les critères exacts de son côté."
     )
 
     # has_valid_criteria / cannot_search_reason : pas de surcharge nécessaire,
@@ -474,19 +495,79 @@ class LaforetParser(BaseParser):
             for t in _property_types(criteria)
         ]
 
+    def _criteria_filters(self, criteria: dict) -> list[tuple[str, str]]:
+        """Les filtres prix / surface / pièces à envoyer au site.
+
+        À N'ENVOYER QUE conjointement à un filtre de périmètre
+        (filter[cities][] ou filter[departments][]). Seuls, ils font basculer
+        le site en recherche nationale et le cadrage du chemin est perdu :
+        vérifié en live, une page /paris-75014 avec un filtre prix rend 39
+        annonces dont 39 hors du 75014 (Bordeaux, Lyon, Chambéry...). C'est le
+        piège qui avait fait retirer ces filtres à l'époque où
+        filter[cities][] n'existait pas encore dans ce code.
+
+        Avec un périmètre, en revanche, le cadrage tient parfaitement et le
+        gain est net : sur la Gironde, la première page passe de 18 à 39
+        annonces effectivement dans le budget demandé, ce qui compte d'autant
+        plus qu'on ne lit que cette première page (les annonces les plus
+        récentes).
+
+        Sémantiques vérifiées côté site :
+          filter[min]/filter[max]  bornes de prix
+          filter[surface]          surface MINIMUM (il n'existe aucun filtre
+                                   de surface maximum)
+          filter[rooms]            nombre de pièces MINIMUM, pas une égalité
+                                   (rooms=3 rend du 3, 4, 5 et 6 pièces)
+
+        Le filtrage reste appliqué intégralement côté client par
+        _passes_filters : ces filtres dégrossissent, ils ne sont pas exacts
+        (une annonce à 424 000 € passe avec filter[max]=400000) et ne couvrent
+        ni la surface maximale ni une sélection précise de nombres de pièces.
+        """
+        filters: list[tuple[str, str]] = []
+
+        for param, key in (("filter[min]", "priceMin"), ("filter[max]", "priceMax")):
+            value = criteria.get(key)
+            if value:
+                filters.append((param, str(value)))
+
+        surface_min = criteria.get("surfaceMin")
+        if surface_min:
+            filters.append(("filter[surface]", str(surface_min)))
+
+        rooms = criteria.get("rooms") or []
+        # Le paramètre étant un minimum, seul le plus petit nombre de pièces
+        # demandé peut être transmis sans risquer d'exclure une annonce voulue.
+        # Un minimum de 1 n'écarte rien : autant ne pas l'envoyer.
+        if rooms and min(rooms) > 1:
+            filters.append(("filter[rooms]", str(min(rooms))))
+
+        return filters
+
     def _location_filters(self, location: dict) -> list[tuple[str, str]]:
         """Les paramètres de filtre couvrant le périmètre d'une localisation.
 
-        Une commune (ou une ville entière) passe par filter[cities][], un
-        département ou une région par filter[departments][]. Les deux
-        s'additionnent : vérifié en live que le site les combine en UNION
-        (cities=33063 rend 149 annonces, departments=75 en rend 824, les deux
-        ensemble 973), ce qui permet de couvrir tous les périmètres d'une
-        recherche dans une seule requête.
+        Chaque niveau a le filtre natif que Laforet lui destine — un seul
+        paramètre suffit à chaque fois, sans rien développer :
+
+            region      filter[regions][]=11        (l'Île-de-France entière)
+            department  filter[departments][]=33    (toute la Gironde)
+            whole_city  filter[cities][]=75056      (tout Paris)
+            city        filter[cities][]=75115      (Paris 15e)
+
+        Les filtres se cumulent en UNION : vérifié en live que cities=33063
+        (149 annonces) et departments=75 (824) donnent 973 ensemble. Une même
+        recherche peut donc couvrir plusieurs périmètres, de niveaux
+        différents, dans une seule requête.
         """
+        region_codes = _region_codes(location)
+        if region_codes:
+            return [("filter[regions][]", code) for code in region_codes]
+
         city_codes = _city_insee_codes(location)
         if city_codes:
             return [("filter[cities][]", code) for code in city_codes]
+
         return [("filter[departments][]", code) for code in _department_codes(location)]
 
     def _split_locations(self, criteria: dict) -> tuple[list[dict], list[tuple[str, str]], list[dict]]:
@@ -542,7 +623,8 @@ class LaforetParser(BaseParser):
         if filterable:
             base_path = self._base_path(criteria, filterable[0])
             if base_path:
-                urls.append(f"{base_path}?{urlencode(self._type_filters(criteria) + filters)}")
+                query = self._type_filters(criteria) + filters + self._criteria_filters(criteria)
+                urls.append(f"{base_path}?{urlencode(query)}")
         for location in plain:
             base_path = self._base_path(criteria, location)
             if base_path:
@@ -617,7 +699,7 @@ class LaforetParser(BaseParser):
         if not base_path:
             raise ValueError("aucune ville pour ancrer l'URL de recherche")
 
-        base_query = self._type_filters(criteria) + filters
+        base_query = self._type_filters(criteria) + filters + self._criteria_filters(criteria)
 
         listings: list[Listing] = []
         page = 1
