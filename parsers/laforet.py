@@ -6,11 +6,16 @@ slug + postal code, e.g.:
 
     https://www.laforet.com/ville/location-appartement-paris-75018
 
-That page always renders two sections: the real, correctly-scoped results,
-followed unconditionally by a second "Appartements à proximité de {ville}"
-section backfilled with listings from neighboring communes/arrondissements.
-Both use the same card markup, so anything that parses the whole page
-indiscriminately picks up that noise — see _extract_genuine_section().
+Cette page rend toujours deux sections : les vrais résultats, correctement
+cadrés, puis une section « Appartements à proximité de {ville} » alimentée par
+les communes/arrondissements voisins. Les deux utilisent le même balisage de
+carte, donc tout ce qui parse la page entière ramasse ce bruit — voir
+_extract_genuine_section().
+
+Les résultats eux-mêmes peuvent être découpés en plusieurs blocs, dont un
+titré « Autres annonces ». Ce titre ressemble à un début de remplissage mais
+n'en est pas un : couper dessus fait perdre la majeure partie des annonces
+(voir le commentaire de _NEARBY_SECTION_MARKER, chiffres à l'appui).
 
 Multiple locations in one search are merged server-side via
 `filter[cities][]=<INSEE code>` query params (verified live against the
@@ -70,11 +75,24 @@ TYPE_FILTER_VALUES = {APARTMENT: "apartment", HOUSE: "house"}
 # Le libellé affiché dans le titre des annonces trouvées.
 TYPE_DISPLAY_NAMES = {APARTMENT: "Appartement", HOUSE: "Maison"}
 
-# Marks where the real results end and the always-appended "nearby" backfill
-# section begins — see module docstring. Verified this text is present even
-# on pages with plenty of native inventory (Poitiers) where it has no effect
-# (the "nearby" section is simply empty there), so truncating here is safe
-# in every case, not just the sparse-inventory one.
+# Marque où les vrais résultats s'arrêtent et où commence le remplissage que
+# Laforet ajoute derrière (voir le docstring du module).
+#
+# ATTENTION — ne pas ajouter "Autres annonces" ici. La page porte aussi ce
+# titre, et il ressemble à s'y tromper à un début de section de remplissage,
+# mais c'est un simple sous-titre QUI DÉCOUPE LES RÉSULTATS EUX-MÊMES en
+# plusieurs blocs. Couper dessus fait perdre la majorité des annonces —
+# mesuré sur 12 recherches réelles en comparant au compteur que le site
+# affiche ("N annonces à louer/vendre") :
+#
+#     recherche             site   coupe "proximité"   coupe "Autres annonces"
+#     Lille location          15         15  ✓                  3  ✗
+#     Toulouse achat maison   11         11  ✓                  1  ✗
+#     Marseille 8e achat      16         16  ✓                  7  ✗
+#     Boulogne location       11         11  ✓                  5  ✗
+#
+# Le compteur du site est l'arbitre : couper sur ce seul marqueur le retrouve
+# exactement sur les 9 recherches dont le stock tient dans une page.
 _NEARBY_SECTION_MARKER = "proximité de"
 
 # Must match the full listing-detail path shape, not just "ends in -<digits>".
@@ -84,6 +102,9 @@ _NEARBY_SECTION_MARKER = "proximité de"
 # "-<digit>", so a looser pattern misidentifies these office cards as real
 # listings (verified live: this returned a fake "listing" whose url was just
 # the agency's own page, with no price/surface/rooms/location at all).
+#
+# L'ancrage final sur (\d+)$ impose de nettoyer l'URL avant de la confronter au
+# motif : voir _listing_path().
 _DETAIL_LINK_RE = re.compile(
     r"/agence-immobiliere/[^/]+/(?:louer|acheter)/[^/]+/(?:appartement|maison)-[^/]+-(\d+)$"
 )
@@ -138,8 +159,12 @@ def _location_insee_code(location: dict) -> str | None:
 
 
 def _extract_genuine_section(html: str) -> str:
-    """Strip the always-appended "nearby" backfill section (see module
-    docstring) before anything parses cards or pagination out of the page."""
+    """Ne garde que la partie de la page qui contient les vrais résultats, en
+    retirant la section de remplissage ajoutée derrière (voir
+    _NEARBY_SECTION_MARKER, et l'avertissement sur "Autres annonces").
+
+    À appeler avant tout parsing de cartes ou de pagination.
+    """
     idx = html.find(_NEARBY_SECTION_MARKER)
     return html[:idx] if idx != -1 else html
 
@@ -177,6 +202,18 @@ def _parse_total_pages(html: str) -> int:
     return 1
 
 
+def _listing_path(href: str) -> str:
+    """L'URL d'annonce débarrassée de son ancre et de sa query string.
+
+    Laforet lie parfois directement une section de la page de l'annonce, par
+    exemple `.../maison-11-pieces-52637604#section-video` quand elle a une
+    vidéo. Comme _DETAIL_LINK_RE est ancré sur la fin (`(\\d+)$`), ces liens ne
+    correspondaient à rien et l'annonce était purement ignorée — constaté en
+    live sur Rennes (6 annonces récupérées pour 7 annoncées par le site).
+    """
+    return href.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+
+
 def _parse_cards(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     results = []
@@ -184,7 +221,7 @@ def _parse_cards(html: str) -> list[dict]:
         link = None
         for a in article.find_all("a", href=True):
             if "/agence-immobiliere/" in a["href"]:
-                link = a["href"]
+                link = _listing_path(a["href"])
                 break
         if not link:
             continue

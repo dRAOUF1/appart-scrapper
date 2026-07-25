@@ -253,6 +253,42 @@ class TestExtractGenuineSection:
         html = "<html>no marker here, plenty of native inventory</html>"
         assert _extract_genuine_section(html) == html
 
+    def test_other_listings_heading_must_not_truncate(self):
+        """Garde-fou : la page porte aussi un titre « Autres annonces », qui
+        ressemble à un début de section de remplissage mais découpe en réalité
+        LES RÉSULTATS eux-mêmes en plusieurs blocs.
+
+        Couper dessus paraît prudent et fait perdre la majorité des annonces.
+        Mesuré sur 12 recherches réelles, en prenant pour arbitre le compteur
+        que le site affiche lui-même :
+
+            recherche             site   "proximité"   "Autres annonces"
+            Lille location          15        15 ok            3  faux
+            Toulouse achat maison   11        11 ok            1  faux
+            Marseille 8e achat      16        16 ok            7  faux
+
+        Ce test échoue si quelqu'un « corrige » à nouveau dans ce sens.
+        """
+        html = "RESULTAT-BLOC-1<h2>Autres annonces</h2>RESULTAT-BLOC-2"
+        assert _extract_genuine_section(html) == html
+
+    def test_real_result_cards_survive_an_other_listings_heading(self):
+        """Concrètement : les cartes situées après « Autres annonces » sont des
+        résultats et doivent ressortir."""
+        html = (
+            '<article><a href="https://www.laforet.com/agence-immobiliere/lille/louer/'
+            'lille/appartement-2-pieces-11111111">x</a>'
+            '<h3>Appartement <span>700 €/mois</span> <span>LILLE (59000)</span></h3>'
+            '<div>40 m² • 2 pièces</div></article>'
+            '<h2>Autres annonces</h2>'
+            '<article><a href="https://www.laforet.com/agence-immobiliere/lille/louer/'
+            'lille/appartement-3-pieces-22222222">y</a>'
+            '<h3>Appartement <span>900 €/mois</span> <span>LILLE (59000)</span></h3>'
+            '<div>60 m² • 3 pièces</div></article>'
+        )
+        refs = {c["reference"] for c in _parse_cards(_extract_genuine_section(html))}
+        assert refs == {"11111111", "22222222"}
+
 
 class TestParseTotalPages:
     def test_reads_last_position_from_itemlist(self):
@@ -263,6 +299,41 @@ class TestParseTotalPages:
 
 
 class TestParseCards:
+    def test_listing_link_with_an_anchor_is_still_recognised(self):
+        """Régression : Laforet lie parfois une section de la page de l'annonce
+        (`...-52637604#section-video` quand elle a une vidéo). Le motif étant
+        ancré sur la fin, ces annonces étaient purement ignorées — constaté en
+        live sur Rennes, 6 annonces récupérées pour 7 annoncées par le site."""
+        html = (
+            '<article><a href="https://www.laforet.com/agence-immobiliere/rennes/acheter/'
+            'rennes/maison-11-pieces-52637604#section-video">x</a>'
+            '<h3>Maison <span>560 000 €</span> <span>RENNES (35000)</span></h3>'
+            '<div>200 m² • 11 pièces</div></article>'
+        )
+        cards = _parse_cards(html)
+        assert len(cards) == 1
+        assert cards[0]["reference"] == "52637604"
+        # L'ancre ne doit pas rester dans l'URL stockée.
+        assert "#" not in cards[0]["url"]
+
+    def test_listing_link_with_a_query_string_is_still_recognised(self):
+        html = (
+            '<article><a href="https://www.laforet.com/agence-immobiliere/rennes/acheter/'
+            'rennes/maison-4-pieces-12345678?utm_source=x">y</a>'
+            '<h3>Maison <span>300 000 €</span> <span>RENNES (35000)</span></h3>'
+            '<div>90 m² • 4 pièces</div></article>'
+        )
+        cards = _parse_cards(html)
+        assert len(cards) == 1
+        assert cards[0]["reference"] == "12345678"
+
+    def test_agency_office_card_is_still_rejected(self):
+        """Le nettoyage de l'URL ne doit pas rouvrir la porte aux cartes
+        d'agence (bug corrigé par 53d792d) : /agence-immobiliere/lyon-7 finit
+        aussi par -<chiffre> mais n'est pas une annonce."""
+        cards = _parse_cards(PAGE_WITH_AGENCY_OFFICE_CARD)
+        assert cards == []
+
     def test_extracts_expected_fields(self):
         cards = _parse_cards(SAMPLE_PAGE_HTML)
         assert len(cards) == 2
