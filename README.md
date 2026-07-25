@@ -126,8 +126,26 @@ Auth via header : `X-API-Token: <token>`
 
 ## Tests
 
-La suite est divisée en deux :
-- **Tests unitaires** (`tests/`, mocks, aucune dépendance externe) :
+La suite est divisée en trois étages, chacun avec son marqueur (appliqué
+automatiquement selon le répertoire) :
+
+| Répertoire | Marqueur | Ce qu'il exerce | Dépendances |
+|------------|----------|-----------------|-------------|
+| `tests/unit/` | `unit` | logique pure ou doublée (critères, parsers, scraper, services, constructeurs SQL) | aucune |
+| `tests/functional/` | `functional` | l'app Flask **réelle** (`create_app()`) avec `Storage` doublé : routes, autorisation, CSRF | aucune |
+| `tests/integration/` | `integration` | le SQL réel : migrations DDL, repositories, pool, verrou du scheduler | Postgres jetable |
+
+Le socle (`tests/conftest.py`) installe des garde-fous *autouse*, chacun né d'un
+incident réel : les répertoires de logs sont redirigés vers `tmp_path` (le
+pipeline y **supprime** des fichiers), le transport HTTP réel et `psycopg2`
+lèvent hors tests marqués, `time.sleep` est neutralisé et ses durées
+enregistrées (fixture `slept`, qui permet d'asserter le throttling), et les
+caches process (géo, registre de parsers, pools, proxies) sont réinitialisés
+entre chaque test. Les fixtures partagées sont dans `tests/functional/conftest.py`,
+les constructeurs d'objets dans `tests/helpers/factories.py`, les doubles dans
+`tests/helpers/fakes.py`.
+
+- **Tests unitaires et fonctionnels** (aucune dépendance externe) :
   ```bash
   pip install -r requirements-dev.txt
   pytest tests/ -m "not integration"
@@ -231,8 +249,27 @@ automatiquement à partir de ce qu'elle déclare.
 ├── config/          # Chargement config (loader.py + config.yaml)
 ├── templates/       # Pages HTML (Jinja2)
 ├── static/          # CSS + JS du formulaire de recherche
-├── tests/           # Tests unitaires (+ tests/integration/ pour les tests DB réels)
+├── tests/           # unit/ (pur ou doublé), functional/ (app réelle), integration/ (vrai Postgres)
+│   ├── conftest.py  #   garde-fous autouse : logs isolés, réseau et DB coupés, temps figé
+│   └── helpers/     #   factories.py (constructeurs) + fakes.py (doubles)
+├── .github/         # Pipeline CI (workflows/ci.yml) + seuil de couverture
+├── pyproject.toml   # Config pytest, coverage et ruff
 ├── Dockerfile       # Déploiement
 ├── Dockerfile.test  # Image de test (docker-compose.test.yml)
 └── requirements.txt
 ```
+
+## Intégration continue
+
+`.github/workflows/ci.yml` — sur chaque push de `main` et chaque pull request.
+Un seul check est à protéger côté GitHub : **`CI`**, qui agrège tous les autres.
+
+| Job | Ce qu'il garantit |
+|-----|-------------------|
+| `lint` | `ruff check` sur tout le dépôt |
+| `unit` | la suite hors intégration passe **sans Postgres** — donc n'en dépend pas —, et les tests d'intégration sont bien **sautés** sans `TEST_DATABASE_URL` (non-régression de l'incident de fuite en production) |
+| `integration` | les tests d'intégration passent sur Postgres **16 et 17**, et ont réellement tourné (un `skipped` fait échouer le job : une suite verte qui n'exécute rien est un faux positif) |
+| `coverage` | la suite complète dépasse le seuil de `.github/coverage-threshold` — ce seuil ne doit que monter |
+| `docker` | l'image de production build, `scripts/migrate.py` s'exécute depuis elle, `/health` répond, et l'image n'embarque **ni `tests/` ni `.env`** |
+| `compose` | le chemin `docker compose -f docker-compose.test.yml` documenté ci-dessus fonctionne |
+| `audit` | `pip-audit` sur les dépendances, et ni `.env` ni dump `.sql` dans l'index git |

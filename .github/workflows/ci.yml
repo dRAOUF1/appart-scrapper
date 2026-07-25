@@ -70,10 +70,14 @@ jobs:
         # trouvé une base ailleurs — exactement l'incident du 2026-07-14.
         run: |
           set -euo pipefail
-          out=$(pytest tests/integration/ -q --no-header 2>&1 | tail -3)
+          out=$(pytest tests/integration/ -q --no-header 2>&1 | tail -5)
           echo "$out"
+          if grep -q 'no tests ran' <<<"$out"; then
+            echo "::error::Aucun test d'intégration collecté : la suite ne couvre plus le SQL réel."
+            exit 1
+          fi
           if ! grep -qE '[0-9]+ skipped' <<<"$out"; then
-            echo "::error::Les tests d'intégration n'ont pas été sautés sans TEST_DATABASE_URL."
+            echo "::error::Les tests d'intégration n'ont pas été sautés sans TEST_DATABASE_URL — ils ont trouvé une base."
             exit 1
           fi
 
