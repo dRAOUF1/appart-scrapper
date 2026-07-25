@@ -361,6 +361,62 @@ class TestDictToListing:
         assert listing.price_value == 1021.0
 
 
+class TestCardPhotos:
+    """Les annonces Laforêt n'avaient aucune image, là où SeLoger en remonte —
+    la vignette de la liste d'annonces restait vide."""
+
+    CARD_WITH_PHOTOS = """
+    <html><body><article>
+      <a href="https://www.laforet.com/agence-immobiliere/poitiers/louer/poitiers/appartement-2-pieces-52829947">p</a>
+      <h3>Appartement <span>370 €/mois</span> <span>POITIERS (86000)</span></h3>
+      <div>17 m² • 2 pièces</div>
+      <img loading="lazy" src="/glide/office9/lf/catalog/images/pr_p/5/52829947a.jpg?w=400&amp;s=aaa" alt="">
+      <img loading="lazy" src="/glide/office9/lf/catalog/images/pr_p/5/52829947b.jpg?w=400&amp;s=bbb" alt="">
+      <img loading="lazy" src="/glide/office9/lf/catalog/images/pr_p/5/52829947a.jpg?w=400&amp;s=aaa" alt="">
+    </article></body></html>
+    """
+
+    def test_photos_are_absolute_and_keep_their_signature(self):
+        """La query string porte une signature (`&s=...`) sans laquelle le
+        serveur d'images répond 403 — elle ne doit surtout pas être coupée,
+        contrairement à ce que fait _listing_path() sur les liens d'annonces."""
+        card = _parse_cards(self.CARD_WITH_PHOTOS)[0]
+        assert card["photos"][0] == (
+            "https://www.laforet.com/glide/office9/lf/catalog/images/pr_p/5/52829947a.jpg?w=400&s=aaa"
+        )
+
+    def test_duplicates_are_collapsed_and_order_kept(self):
+        card = _parse_cards(self.CARD_WITH_PHOTOS)[0]
+        assert len(card["photos"]) == 2
+        assert card["photos"][0].endswith("s=aaa")
+        assert card["photos"][1].endswith("s=bbb")
+
+    def test_listing_gets_a_thumbnail_and_the_full_list(self):
+        """Même forme que SeLoger : image_url pour la vignette, photos en JSON."""
+        import json as _json
+
+        listing = _dict_to_listing(_parse_cards(self.CARD_WITH_PHOTOS)[0])
+        assert listing.image_url.endswith("s=aaa")
+        photos = _json.loads(listing.photos)
+        assert [p["url"] for p in photos] == [listing.image_url, listing.image_url.replace("a.jpg?w=400&s=aaa", "b.jpg?w=400&s=bbb")]
+
+    def test_a_card_without_photos_stays_valid(self):
+        listing = _dict_to_listing(_parse_cards(SAMPLE_PAGE_HTML)[0])
+        assert listing.image_url == ""
+        assert listing.photos == "[]"
+
+    def test_inline_data_images_are_ignored(self):
+        """Les placeholders base64 ne sont pas des photos d'annonce."""
+        html = self.CARD_WITH_PHOTOS.replace(
+            '<img loading="lazy" src="/glide/office9/lf/catalog/images/pr_p/5/52829947a.jpg?w=400&amp;s=aaa" alt="">',
+            '<img src="data:image/gif;base64,R0lGODlh" alt="">',
+            1,
+        )
+        card = _parse_cards(html)[0]
+        assert all(not url.startswith("data:") for url in card["photos"])
+        assert card["photos"][0].endswith("s=bbb")
+
+
 class TestWideAreaSearches:
     """Périmètres plus larges qu'une commune. Vérifié en live que Laforet les
     couvre en une seule requête : filter[departments][] est répétable (les 8

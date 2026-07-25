@@ -43,6 +43,7 @@ client par _passes_filters() : ces filtres dégrossissent sans être exacts.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from urllib.parse import urlencode
@@ -259,6 +260,29 @@ def _listing_path(href: str) -> str:
     return href.split("#", 1)[0].split("?", 1)[0].rstrip("/")
 
 
+def _card_photos(article) -> list[str]:
+    """Les URLs des photos d'une carte, absolues et dans l'ordre d'affichage.
+
+    Les `src` sont relatifs et leur query string porte une SIGNATURE
+    (`...jpg?w=400&h=250&...&s=6380268...`) : il faut la conserver
+    intégralement, sinon le serveur d'images répond 403. C'est aussi pourquoi
+    on ne réutilise pas _listing_path() ici, qui strippe la query.
+
+    Les cartes portent plusieurs photos (a, b, c...), les suivantes masquées
+    pour un défilement côté client — elles sont toutes gardées, comme le fait
+    déjà SeLoger.
+    """
+    photos = []
+    for img in article.find_all("img"):
+        src = (img.get("src") or "").strip()
+        if not src or src.startswith("data:"):
+            continue
+        url = f"{BASE_URL}{src}" if src.startswith("/") else src
+        if url not in photos:
+            photos.append(url)
+    return photos
+
+
 def _parse_cards(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     results = []
@@ -290,6 +314,7 @@ def _parse_cards(html: str) -> list[dict]:
             "surface": surface_m.group(1) if surface_m else "",
             "rooms": rooms_m.group(1) if rooms_m else "",
             "agency": link.split("/agence-immobiliere/", 1)[1].split("/", 1)[0],
+            "photos": _card_photos(article),
         })
     return results
 
@@ -365,6 +390,7 @@ def _property_type_from_url(url: str) -> str:
 def _dict_to_listing(data: dict) -> Listing:
     price_value = data["price_value"]
     property_type = _property_type_from_url(data["url"])
+    photos = data.get("photos") or []
     return Listing(
         listing_id=f"lf_{data['reference']}",
         url=data["url"],
@@ -380,6 +406,10 @@ def _dict_to_listing(data: dict) -> Listing:
         legacy_id=data["reference"],
         price_value=price_value,
         property_type=property_type,
+        # Même forme que SeLoger : la première photo sert de vignette, la liste
+        # complète est stockée en JSON (voir parsers/seloger.py).
+        image_url=photos[0] if photos else "",
+        photos=json.dumps([{"url": url, "alt": "", "key": ""} for url in photos]),
     )
 
 
