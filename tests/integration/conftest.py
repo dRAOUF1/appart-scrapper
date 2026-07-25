@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -27,11 +28,29 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "db", ""}
+
+
 @pytest.fixture(scope="session")
 def pg_url():
-    url = os.environ.get("DATABASE_URL")
+    """URL d'un Postgres jetable, lue depuis TEST_DATABASE_URL et JAMAIS DATABASE_URL.
+
+    `DATABASE_URL` pointe la production et peut arriver dans os.environ par un
+    simple `load_dotenv()` en side effect d'import. Ces tests TRUNCATE toutes les
+    tables : on exige donc une variable dédiée, et on refuse tout host distant.
+    """
+    url = os.environ.get("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("DATABASE_URL non défini — tests d'intégration sautés")
+        pytest.skip("TEST_DATABASE_URL non défini — tests d'intégration sautés")
+
+    host = (urlparse(url).hostname or "").lower()
+    if host not in _LOCAL_HOSTS:
+        pytest.fail(
+            f"TEST_DATABASE_URL pointe un host non local ({host!r}). Ces tests "
+            "vident toutes les tables : refus catégorique de toucher autre chose "
+            "qu'un Postgres jetable local ou conteneurisé.",
+            pytrace=False,
+        )
     return url
 
 

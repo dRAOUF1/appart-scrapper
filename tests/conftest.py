@@ -1,5 +1,32 @@
-"""Shared test fixtures."""
+"""Shared test fixtures et garde-fous globaux de la suite.
+
+Garde-fou principal : `DATABASE_URL` est purgé de l'environnement pour toute la
+durée du run. Cette variable pointe la base de PRODUCTION et peut atterrir dans
+`os.environ` par simple effet de bord d'import (un `load_dotenv()` au niveau
+module). Les tests d'intégration TRUNCATE toutes les tables : ils lisent
+exclusivement `TEST_DATABASE_URL` (voir tests/integration/conftest.py).
+"""
+
+import os
+
 import pytest
+
+
+def pytest_configure(config):
+    """Purge DATABASE_URL avant la collecte des tests."""
+    os.environ.pop("DATABASE_URL", None)
+
+
+def pytest_collection_finish(session):
+    """Re-purge après la collecte : un import de test peut avoir appelé load_dotenv()."""
+    os.environ.pop("DATABASE_URL", None)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_production_database_url():
+    """Filet de sécurité : aucune étape de test ne doit voir DATABASE_URL."""
+    os.environ.pop("DATABASE_URL", None)
+    yield
 
 
 @pytest.fixture

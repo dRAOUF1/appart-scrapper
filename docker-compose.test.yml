@@ -23,7 +23,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://testuser:testpass@postgres:5432/testdb
+      TEST_DATABASE_URL: postgresql://testuser:testpass@postgres:5432/testdb
       SECRET_KEY: test-secret-key
     volumes:
       - .:/app

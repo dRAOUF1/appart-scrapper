@@ -20,9 +20,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).parent / ".env")
-
 from flask import Flask, g
 from flask_wtf import CSRFProtect
 from loguru import logger
@@ -36,6 +33,11 @@ _scrape_futures: dict[int, object] = {}
 
 
 def create_app() -> Flask:
+    # Chargé ici et NON au niveau module : importer `main` pour un helper (ce que
+    # font les tests du scheduler) ne doit jamais peupler os.environ avec le
+    # DATABASE_URL de production. Voir tests/integration/conftest.py.
+    load_dotenv(Path(__file__).parent / ".env")
+
     startup_start = time.monotonic()
     config = load_config()
 

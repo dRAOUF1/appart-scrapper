@@ -132,11 +132,27 @@ La suite est divisée en deux :
   pip install -r requirements-dev.txt
   pytest tests/ -m "not integration"
   ```
-- **Tests d'intégration** (`tests/integration/`, vrai Postgres) : sautés automatiquement si `DATABASE_URL` n'est pas défini. Pour les exécuter réellement :
+- **Tests d'intégration** (`tests/integration/`, vrai Postgres) : sautés automatiquement si **`TEST_DATABASE_URL`** n'est pas défini. Pour les exécuter réellement :
   ```bash
   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
   ```
   Ce compose démarre un Postgres jetable et lance toute la suite (unitaires + intégration) dedans.
+
+  Ou contre un Postgres jetable local :
+  ```bash
+  docker run -d --rm --name appart-test-pg -e POSTGRES_USER=testuser \
+    -e POSTGRES_PASSWORD=testpass -e POSTGRES_DB=testdb -p 55432:5432 postgres:16-alpine
+  TEST_DATABASE_URL=postgresql://testuser:testpass@localhost:55432/testdb pytest tests/
+  ```
+
+> ⚠️ **Jamais `DATABASE_URL` pour les tests.** Les tests d'intégration font
+> `TRUNCATE ... CASCADE` sur toutes les tables avant chaque test. Ils lisent donc
+> exclusivement `TEST_DATABASE_URL`, refusent tout host non local, et
+> `tests/conftest.py` purge `DATABASE_URL` de l'environnement pendant tout le run
+> (cette variable pointe la production et peut arriver via un `load_dotenv()` en
+> effet de bord d'import). Un run sain sans `TEST_DATABASE_URL` affiche des
+> `skipped` : si les tests d'intégration ne sont **pas** sautés alors que vous
+> n'avez pas défini `TEST_DATABASE_URL`, arrêtez tout — ils tapent une vraie base.
 
 ## Critères unifiés
 
