@@ -43,7 +43,6 @@ client par _passes_filters() : ces filtres dégrossissent sans être exacts.
 
 from __future__ import annotations
 
-import json
 import re
 import unicodedata
 from urllib.parse import urlencode
@@ -200,30 +199,18 @@ def _city_insee_codes(location: dict) -> list[str]:
     return []
 
 
-def _region_codes(location: dict) -> list[str]:
-    """Le code de région, pour filter[regions][].
-
-    Laforet a un filtre région natif : `filter[regions][]=11` rend les 741
-    annonces d'Île-de-France, exactement comme l'énumération de ses 8
-    départements — mais en un seul paramètre, et le site l'affiche alors comme
-    son propre filtre de localisation.
-
-    Attention au pluriel avec crochets : `filter[region]=11` ne filtre rien et
-    renvoie le flux national (2545 annonces, de l'Ain aux Pyrénées).
-    """
-    if location.get("kind") == REGION and location.get("code"):
-        return [location["code"]]
-    return []
-
-
 def _department_codes(location: dict) -> list[str]:
     """Les codes de département couverts par une localisation.
 
-    Sert au filtre filter[departments][] pour un département, et à ancrer le
-    chemin de l'URL sur une ville réelle pour une région (voir _path_anchor).
+    Une région est traitée comme l'ensemble de ses départements. Laforet a bien
+    un filtre région natif (`filter[regions][]=11`) qui donne exactement le même
+    résultat — 741 annonces pour l'Île-de-France dans les deux cas — mais les
+    départements sont préférés ici : ils rendent le périmètre explicite dans
+    l'URL, et ne dépendent pas d'un découpage régional propre au site.
 
     Attention, c'est bien `filter[departments][]` au pluriel : au singulier,
-    `filter[department]` ne filtre rien et renvoie le flux national.
+    `filter[department]` ne filtre rien et renvoie le flux national (2545
+    annonces, de l'Ain aux Pyrénées).
     """
     kind = location.get("kind")
     if kind == DEPARTMENT:
@@ -258,28 +245,6 @@ def _parse_price(text: str) -> float | None:
         return float(digits)
     except ValueError:
         return None
-
-
-def _parse_total_pages(html: str) -> int:
-    """Read the total page count from the ItemList JSON-LD block."""
-    soup = BeautifulSoup(html, "lxml")
-    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
-        if not tag.string:
-            continue
-        try:
-            data = json.loads(tag.string)
-        except json.JSONDecodeError:
-            continue
-        blocks = data if isinstance(data, list) else [data]
-        for block in blocks:
-            if block.get("@type") == "ItemList":
-                positions = [
-                    item.get("position", 1)
-                    for item in block.get("itemListElement", [])
-                ]
-                if positions:
-                    return max(positions)
-    return 1
 
 
 def _listing_path(href: str) -> str:
@@ -547,12 +512,11 @@ class LaforetParser(BaseParser):
     def _location_filters(self, location: dict) -> list[tuple[str, str]]:
         """Les paramètres de filtre couvrant le périmètre d'une localisation.
 
-        Chaque niveau a le filtre natif que Laforet lui destine — un seul
-        paramètre suffit à chaque fois, sans rien développer :
+        Chaque niveau passe par le filtre que Laforet lui destine :
 
-            region      filter[regions][]=11        (l'Île-de-France entière)
+            region      filter[departments][] pour chacun de ses départements
             department  filter[departments][]=33    (toute la Gironde)
-            whole_city  filter[cities][]=75056      (tout Paris)
+            whole_city  filter[cities][]=75056      (tout Paris, un seul code)
             city        filter[cities][]=75115      (Paris 15e)
 
         Les filtres se cumulent en UNION : vérifié en live que cities=33063
@@ -560,10 +524,6 @@ class LaforetParser(BaseParser):
         recherche peut donc couvrir plusieurs périmètres, de niveaux
         différents, dans une seule requête.
         """
-        region_codes = _region_codes(location)
-        if region_codes:
-            return [("filter[regions][]", code) for code in region_codes]
-
         city_codes = _city_insee_codes(location)
         if city_codes:
             return [("filter[cities][]", code) for code in city_codes]
@@ -701,41 +661,75 @@ class LaforetParser(BaseParser):
 
         base_query = self._type_filters(criteria) + filters + self._criteria_filters(criteria)
 
-        listings: list[Listing] = []
-        page = 1
-        total_pages = 1
-
-        while page <= total_pages and page <= MAX_PAGES:
+        def fetch(page: int) -> str:
             query = list(base_query)
             if page > 1:
                 query.append(("page", page))
-
             resp = session.get(base_path, params=query, timeout=15)
             if resp.status_code == 404:
                 raise ValueError(f"URL de base invalide ({base_path})")
             resp.raise_for_status()
+            return resp.text
 
-            genuine_html = _extract_genuine_section(resp.text)
-            if page == 1:
-                total_pages = _parse_total_pages(genuine_html)
+        return self._collect_pages(fetch, criteria, locations, seen, "requête fusionnée")
 
-            for card in _parse_cards(genuine_html):
-                if card["reference"] in seen:
+    def _collect_pages(self, fetch, criteria: dict, locations: list[dict],
+                       seen: set, label: str) -> list[Listing]:
+        """Parcourt les pages de résultats jusqu'à épuisement, en collectant les
+        annonces qui passent les filtres.
+
+        La condition d'arrêt est « cette page n'apporte plus aucune annonce
+        inédite », et non le nombre de pages annoncé par le site : ce nombre se
+        lisait dans un bloc JSON-LD ItemList qui DISPARAÎT dès qu'un filtre est
+        envoyé. La boucle s'arrêtait donc toujours après la première page —
+        constaté sur une recherche Île-de-France à 850-870 € et 25-30 m² :
+        2 annonces retenues au lieu de 4, les deux autres (Vitry-sur-Seine et
+        Suresnes) attendant en page 2 sur les 97 résultats annoncés par le site.
+
+        Compter les annonces inédites plutôt que les pages est aussi ce qui
+        absorbe le chevauchement entre pages consécutives (page 2 rend 40
+        cartes dont seulement 20 nouvelles).
+
+        MAX_PAGES borne le parcours : une recherche large sans filtre serré
+        pourrait sinon enchaîner les requêtes très longtemps.
+        """
+        listings: list[Listing] = []
+        pages_lues = 0
+        # Les références rencontrées dans CETTE requête, y compris celles que
+        # les filtres écartent : c'est ce qui détecte l'épuisement des pages.
+        # Distinct de `seen`, qui ne retient que les annonces effectivement
+        # gardées et est partagé entre les requêtes d'un même scrape — une carte
+        # écartée pour un périmètre doit pouvoir être retenue pour un autre.
+        vues_ici: set[str] = set()
+
+        for page in range(1, MAX_PAGES + 1):
+            cards = _parse_cards(_extract_genuine_section(fetch(page)))
+            pages_lues = page
+
+            nouvelles = 0
+            for card in cards:
+                reference = card["reference"]
+                if reference in vues_ici:
+                    continue
+                vues_ici.add(reference)
+                nouvelles += 1
+
+                if reference in seen:
                     continue
                 listing = _dict_to_listing(card)
-                if not _passes_filters(listing, criteria, locations):
-                    continue
-                seen.add(card["reference"])
-                listings.append(listing)
+                if _passes_filters(listing, criteria, locations):
+                    seen.add(reference)
+                    listings.append(listing)
 
-            page += 1
-
-        if total_pages > MAX_PAGES:
+            if not nouvelles:
+                break
+        else:
             logger.warning(
-                f"[Laforet] requête fusionnée : {total_pages} pages disponibles, limité à {MAX_PAGES} "
-                f"({len(listings)} annonces récupérées, résultat partiel)"
+                f"[Laforet] {label} : limite de {MAX_PAGES} pages atteinte "
+                f"({len(listings)} annonces retenues, résultat possiblement partiel)"
             )
 
+        logger.debug(f"[Laforet] {label} : {pages_lues} page(s) lue(s), {len(listings)} annonces retenues")
         return listings
 
     def _scrape_location(self, session, criteria: dict, location: dict, seen: set) -> list[Listing]:
@@ -744,40 +738,14 @@ class LaforetParser(BaseParser):
         base_search_url = self._base_path(criteria, location)
         if not base_search_url:
             raise ValueError(f"aucune ville pour ancrer l'URL ({_describe(location)})")
-        locations = [location]
 
-        listings: list[Listing] = []
-        page = 1
-        total_pages = 1
-
-        while page <= total_pages and page <= MAX_PAGES:
+        def fetch(page: int) -> str:
             sep = "&" if "?" in base_search_url else "?"
             page_url = base_search_url if page == 1 else f"{base_search_url}{sep}page={page}"
-
             resp = session.get(page_url, timeout=15)
             if resp.status_code == 404:
                 raise ValueError(f"ville/code postal invalide ({page_url})")
             resp.raise_for_status()
+            return resp.text
 
-            genuine_html = _extract_genuine_section(resp.text)
-            if page == 1:
-                total_pages = _parse_total_pages(genuine_html)
-
-            for card in _parse_cards(genuine_html):
-                if card["reference"] in seen:
-                    continue
-                listing = _dict_to_listing(card)
-                if not _passes_filters(listing, criteria, locations):
-                    continue
-                seen.add(card["reference"])
-                listings.append(listing)
-
-            page += 1
-
-        if total_pages > MAX_PAGES:
-            logger.warning(
-                f"[Laforet] {location['city']} {location['postalCode']}: {total_pages} pages disponibles, "
-                f"limité à {MAX_PAGES} ({len(listings)} annonces récupérées, résultat partiel)"
-            )
-
-        return listings
+        return self._collect_pages(fetch, criteria, [location], seen, _describe(location))
