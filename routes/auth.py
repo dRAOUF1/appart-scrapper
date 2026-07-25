@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 from functools import wraps
 
-from flask import session, redirect, url_for, flash, current_app, g
+from flask import current_app, flash, g, redirect, session, url_for
 
 
 def require_token(f):
     """Decorator: require valid X-API-Token header for API endpoints."""
     @wraps(f)
     def wrapper(*args, **kwargs):
-        from flask import request, jsonify
+        from flask import jsonify, request
         token = request.headers.get("X-API-Token", "")
         if not token:
             return jsonify({"error": "Header X-API-Token manquant"}), 401

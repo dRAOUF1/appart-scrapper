@@ -73,4 +73,3 @@ def clean_db(storage):
         conn.commit()
     finally:
         storage._release_conn(conn)
-    yield

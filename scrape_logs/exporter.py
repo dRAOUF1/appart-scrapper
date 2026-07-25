@@ -98,7 +98,7 @@ def import_search_logs(search_id: int, zip_path: str, allow_override: bool = Fal
         try:
             metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
         except Exception as e:
-            raise ValueError(f"metadata.json invalide: {e}")
+            raise ValueError(f"metadata.json invalide: {e}") from e
 
         if not isinstance(metadata, list):
             raise ValueError("metadata.json invalide: format attendu liste")
@@ -167,7 +167,10 @@ def import_search_logs(search_id: int, zip_path: str, allow_override: bool = Fal
     }
 
 
-def _append_import_audit(search_id: int, imported: int, skipped: int, remapped: int, allow_override: bool, performed_by: str) -> None:
+def _append_import_audit(
+    search_id: int, imported: int, skipped: int, remapped: int,
+    allow_override: bool, performed_by: str,
+) -> None:
     _ensure_dir(SCRAPE_LOGS_DIR)
     timestamp = datetime.utcnow().isoformat()
     line = (

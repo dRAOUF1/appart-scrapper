@@ -20,7 +20,10 @@ class Notifier:
         """Remove non-ASCII characters from header values (HTTP headers are latin-1)."""
         return value.encode("ascii", errors="replace").decode("ascii")
 
-    def send(self, topic: str, title: str, message: str, url: str = "", priority: str = "", tags: str = "house") -> bool:
+    def send(
+        self, topic: str, title: str, message: str,
+        url: str = "", priority: str = "", tags: str = "house",
+    ) -> bool:
         """
         Send a notification via ntfy to a specific topic.
 
@@ -55,9 +58,8 @@ class Notifier:
             if resp.status_code == 200:
                 logger.debug(f"Notification envoyee [{topic}]: {title}")
                 return True
-            else:
-                logger.warning(f"Erreur ntfy ({resp.status_code}): {resp.text}")
-                return False
+            logger.warning(f"Erreur ntfy ({resp.status_code}): {resp.text}")
+            return False
         except requests.RequestException as e:
             logger.error(f"Erreur reseau ntfy : {e}")
             return False

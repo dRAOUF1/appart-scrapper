@@ -10,14 +10,23 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from flask import (
-    Blueprint, request, render_template, redirect, url_for,
-    session, flash, g, current_app, jsonify, send_file,
+    Blueprint,
+    current_app,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
 )
 
-from parsers import list_sources, remember_manual_overrides
-from routes.auth import require_login
 from core.geocode import CITY
 from core.web_utils import to_int
+from parsers import list_sources, remember_manual_overrides
+from routes.auth import require_login
 
 web_bp = Blueprint(
     "web", __name__,
@@ -427,8 +436,7 @@ def edit_search(search_id: int):
             remember_manual_overrides(selected_sources, criteria, storage=current_app.storage)
             flash("Recherche mise à jour !", "success")
             return redirect(url_for("web.searches"))
-        else:
-            flash("Label et topic ntfy requis", "error")
+        flash("Label et topic ntfy requis", "error")
 
     stats = storage.scrape_logs.get_scrape_stats(search_id)
     return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)

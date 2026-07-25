@@ -17,6 +17,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -91,7 +92,7 @@ def create_app() -> Flask:
             except Exception:
                 pass
 
-    from datetime import datetime, timezone, date
+    from datetime import date, datetime
     from zoneinfo import ZoneInfo
 
     @app.template_filter("parse_iso_date")
@@ -113,7 +114,7 @@ def create_app() -> Flask:
         if isinstance(dt, date) and not isinstance(dt, datetime):
             return datetime(dt.year, dt.month, dt.day, tzinfo=FR_TZ)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt.astimezone(FR_TZ)
 
     import logging
@@ -122,6 +123,7 @@ def create_app() -> Flask:
     @app.context_processor
     def inject_admin():
         import datetime
+
         from core.criteria import location_label
 
         return {
@@ -134,7 +136,7 @@ def create_app() -> Flask:
 
     _start_background_tasks(app)
 
-    from routes import api_bp, web_bp, admin_bp
+    from routes import admin_bp, api_bp, web_bp
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(web_bp)
     app.register_blueprint(admin_bp)
@@ -193,8 +195,9 @@ def _source_has_valid_criteria(source: str, criteria: dict) -> bool:
 
 def _start_background_tasks(app: Flask):
     """Démarre le scheduler APScheduler. Rien de bloquant."""
+    from datetime import datetime, timedelta
+
     from apscheduler.schedulers.background import BackgroundScheduler
-    from datetime import datetime, timedelta, timezone
 
     from core.scrape_control import submit_scrape
 
@@ -216,7 +219,7 @@ def _start_background_tasks(app: Flask):
                 # Naive datetime representing UTC — matches the naive TIMESTAMP
                 # columns populated by Postgres CURRENT_TIMESTAMP (DB session
                 # timezone must be UTC for this comparison to be correct).
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                now = datetime.now(UTC).replace(tzinfo=None)
                 for user in all_users:
                     searches = app.storage.searches.get_user_searches(user["id"])
                     for s in searches:

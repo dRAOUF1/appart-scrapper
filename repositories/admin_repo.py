@@ -316,7 +316,10 @@ class AdminRepository(BaseRepository):
             self._release_conn(conn)
 
     def truncate_table(self, table_name: str) -> bool:
-        ALLOWED_TABLES = {"users", "searches", "listings", "search_listings", "scrape_logs", "admin_logs", "app_settings"}
+        ALLOWED_TABLES = {
+            "users", "searches", "listings", "search_listings",
+            "scrape_logs", "admin_logs", "app_settings",
+        }
         if table_name not in ALLOWED_TABLES:
             logger.error(f"Truncate refused: table '{table_name}' non autorisée")
             return False

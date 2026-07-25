@@ -19,7 +19,10 @@ from scrape_logs.storage import (
 class ScrapeLogRepository(BaseRepository):
     """Scrape log CRUD operations (file storage)."""
 
-    def create_scrape_log(self, search_id: int, status: str, listings_found: int = 0, new_listings: int = 0, error_message: str = "", details: dict | None = None, started_at=None) -> int:
+    def create_scrape_log(
+        self, search_id: int, status: str, listings_found: int = 0, new_listings: int = 0,
+        error_message: str = "", details: dict | None = None, started_at=None,
+    ) -> int:
         now = started_at or datetime.utcnow()
         completed_at = datetime.utcnow()
         duration = (completed_at - now).total_seconds() if started_at else 0
@@ -124,5 +127,7 @@ class ScrapeLogRepository(BaseRepository):
     def export_scrape_logs(self, search_id: int) -> str:
         return export_search_logs(search_id)
 
-    def import_scrape_logs(self, search_id: int, zip_path: str, allow_override: bool = False, performed_by: str = "") -> dict:
+    def import_scrape_logs(
+        self, search_id: int, zip_path: str, allow_override: bool = False, performed_by: str = "",
+    ) -> dict:
         return import_search_logs(search_id, zip_path, allow_override, performed_by)

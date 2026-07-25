@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import psycopg2
 import psycopg2.extras
-from psycopg2.extras import execute_values
 from loguru import logger
+from psycopg2.extras import execute_values
 
 from repositories.base import BaseRepository
 
@@ -55,14 +53,16 @@ class ListingRepository(BaseRepository):
 
                 listing_data = [
                     (
-                        l.listing_id, l.url, clean(l.title), clean(l.price), l.surface, l.rooms,
-                        clean(l.location), clean(l.image_url), clean(l.description), clean(l.agency), l.source,
-                        l.legacy_id, l.price_value, clean(l.price_details), clean(l.city), clean(l.district),
-                        l.zip_code, clean(l.property_type), l.is_private, clean(l.phone),
-                        l.epc, l.ges, l.is_new, l.is_exclusive, l.has_3d_visit,
-                        l.creation_date, l.update_date, clean(l.headline), clean(l.photos),
+                        item.listing_id, item.url, clean(item.title), clean(item.price), item.surface, item.rooms,
+                        clean(item.location), clean(item.image_url), clean(item.description),
+                        clean(item.agency), item.source,
+                        item.legacy_id, item.price_value, clean(item.price_details),
+                        clean(item.city), clean(item.district),
+                        item.zip_code, clean(item.property_type), item.is_private, clean(item.phone),
+                        item.epc, item.ges, item.is_new, item.is_exclusive, item.has_3d_visit,
+                        item.creation_date, item.update_date, clean(item.headline), clean(item.photos),
                     )
-                    for l in listings
+                    for item in listings
                 ]
 
                 execute_values(cur, """
@@ -79,7 +79,7 @@ class ListingRepository(BaseRepository):
                 # notified=FALSE explicitly on every new link, regardless of the
                 # column's DEFAULT TRUE (which exists only to backfill pre-existing
                 # rows as "already notified" when the column was introduced).
-                link_data = [(search_id, l.listing_id, False) for l in listings]
+                link_data = [(search_id, item.listing_id, False) for item in listings]
                 inserted = execute_values(cur, """
                     INSERT INTO search_listings (search_id, listing_id, notified)
                     VALUES %s
@@ -90,8 +90,8 @@ class ListingRepository(BaseRepository):
                 conn.commit()
 
             newly_linked_ids = {row[0] for row in inserted}
-            new_for_search = [l for l in listings if l.listing_id in newly_linked_ids]
-            already_linked = [l for l in listings if l.listing_id not in newly_linked_ids]
+            new_for_search = [item for item in listings if item.listing_id in newly_linked_ids]
+            already_linked = [item for item in listings if item.listing_id not in newly_linked_ids]
             return new_for_search, already_linked
         except Exception:
             conn.rollback()
@@ -140,7 +140,10 @@ class ListingRepository(BaseRepository):
         clauses = []
         if filters.get("q"):
             val = f"%{filters['q']}%"
-            clauses.append(f"({prefix}title ILIKE %s OR {prefix}location ILIKE %s OR {prefix}agency ILIKE %s OR {prefix}description ILIKE %s)")
+            clauses.append(
+                f"({prefix}title ILIKE %s OR {prefix}location ILIKE %s"
+                f" OR {prefix}agency ILIKE %s OR {prefix}description ILIKE %s)"
+            )
             params.extend([val, val, val, val])
         if filters.get("price_min") is not None:
             clauses.append(f"{prefix}price_value >= %s")
@@ -203,7 +206,9 @@ class ListingRepository(BaseRepository):
             "price_asc": "l.price_value ASC NULLS LAST",
             "price_desc": "l.price_value DESC NULLS LAST",
             "surface_asc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) ASC NULLS LAST",
-            "surface_desc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST",
+            "surface_desc": (
+                "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST"
+            ),
             "date_desc": "l.creation_date DESC NULLS LAST",
             "date_asc": "l.creation_date ASC NULLS LAST",
         }
@@ -246,7 +251,10 @@ WHERE sl.search_id = %s"""
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
-                query = "SELECT COUNT(*) AS cnt FROM search_listings sl JOIN listings l ON l.listing_id = sl.listing_id WHERE sl.search_id = %s"
+                query = (
+                    "SELECT COUNT(*) AS cnt FROM search_listings sl"
+                    " JOIN listings l ON l.listing_id = sl.listing_id WHERE sl.search_id = %s"
+                )
                 params = [search_id]
 
                 filter_clauses = self._build_filter_clauses(effective_filters, params)
@@ -400,7 +408,7 @@ WHERE sl.search_id = %s""",
         finally:
             self._release_conn(conn)
 
-    def get_listing_detail(self, listing_id: str) -> Optional[dict]:
+    def get_listing_detail(self, listing_id: str) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:

@@ -1,3 +1,17 @@
 -r requirements.txt
+
+# ---- Runner et couverture ----
 pytest>=8.0.0
 pytest-cov>=5.0.0
+# Parallélisation locale : `pytest -n auto`. Les tests d'intégration restent
+# sérialisés (--dist loadfile) car ils TRUNCATE les tables partagées.
+pytest-xdist>=3.5.0
+
+# ---- Outillage de test ----
+# Fige le temps : plus aucun test ne dépend de l'horloge réelle.
+freezegun>=1.5.0
+# Intercepte requests/Session au niveau transport — aucun appel réseau réel.
+requests-mock>=1.12.0
+
+# ---- Lint ----
+ruff>=0.6.0

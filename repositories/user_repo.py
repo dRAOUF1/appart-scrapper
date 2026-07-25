@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import secrets
-from typing import Optional
 
 import psycopg2
 import psycopg2.extras
@@ -30,13 +29,13 @@ class UserRepository(BaseRepository):
                     "username": username,
                     "api_token": api_token,
                 }
-        except psycopg2.IntegrityError:
+        except psycopg2.IntegrityError as e:
             conn.rollback()
-            raise ValueError(f"Le nom d'utilisateur '{username}' est déjà pris")
+            raise ValueError(f"Le nom d'utilisateur '{username}' est déjà pris") from e
         finally:
             self._release_conn(conn)
 
-    def get_user_by_token(self, token: str) -> Optional[dict]:
+    def get_user_by_token(self, token: str) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
@@ -49,7 +48,7 @@ class UserRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_user_by_username(self, username: str) -> Optional[dict]:
+    def get_user_by_username(self, username: str) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
@@ -80,7 +79,7 @@ class UserRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_user_detail(self, user_id: int) -> Optional[dict]:
+    def get_user_detail(self, user_id: int) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:

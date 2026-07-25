@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from repositories.base import BaseRepository
 
@@ -41,7 +40,11 @@ class SearchRepository(BaseRepository):
             d["sources"] = [d.get("source", "seloger")]
         return d
 
-    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True, sources: list[str] | None = None) -> dict:
+    def create_search(
+        self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger",
+        criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True,
+        sources: list[str] | None = None,
+    ) -> dict:
         criteria_json = json.dumps(criteria or {})
         sources = sources or [source]
         sources_json = json.dumps(sources)
@@ -49,7 +52,9 @@ class SearchRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria, scrape_interval, is_active, sources) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria,"
+                    " scrape_interval, is_active, sources)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                     (user_id, label, ntfy_topic, source, criteria_json, scrape_interval, is_active, sources_json),
                 )
                 row = cur.fetchone()
@@ -82,7 +87,12 @@ class SearchRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None, sources: list[str] | None = None) -> bool:
+    def update_search(
+        self, search_id: int, user_id: int, label: str | None = None,
+        ntfy_topic: str | None = None, criteria: dict | None = None,
+        scrape_interval: int | None = None, is_active: bool | None = None,
+        sources: list[str] | None = None,
+    ) -> bool:
         fields = []
         params = []
         if label is not None:
@@ -170,12 +180,14 @@ class SearchRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_search(self, search_id: int) -> Optional[dict]:
+    def get_search(self, search_id: int) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT id, user_id, label, ntfy_topic, source, sources, criteria, scrape_interval, last_scraped, created_at, is_active, blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
+                    "SELECT id, user_id, label, ntfy_topic, source, sources, criteria,"
+                    " scrape_interval, last_scraped, created_at, is_active,"
+                    " blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
                     (search_id,),
                 )
                 row = cur.fetchone()
@@ -253,7 +265,7 @@ class SearchRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_search_detail(self, search_id: int) -> Optional[dict]:
+    def get_search_detail(self, search_id: int) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:

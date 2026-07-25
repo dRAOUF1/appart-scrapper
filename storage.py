@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from loguru import logger
 
-from repositories.user_repo import UserRepository
-from repositories.search_repo import SearchRepository
+from repositories.admin_repo import AdminRepository
 from repositories.listing_repo import ListingRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
-from repositories.admin_repo import AdminRepository
-from repositories.settings_repo import SettingsRepository
+from repositories.search_repo import SearchRepository
 from repositories.seloger_geo_repo import SelogerGeoRepository
+from repositories.settings_repo import SettingsRepository
+from repositories.user_repo import UserRepository
 
 
 class Storage:

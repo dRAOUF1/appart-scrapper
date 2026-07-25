@@ -20,13 +20,13 @@ class BaseRepository:
     connection via g._db_conn for the request's lifetime.
     """
 
-    _pools: dict[str, "psycopg2.pool.ThreadedConnectionPool"] = {}
+    _pools: dict[str, psycopg2.pool.ThreadedConnectionPool] = {}
     _pools_lock = threading.Lock()
 
     def __init__(self, database_url: str):
         self.database_url = database_url
 
-    def _get_pool(self) -> "psycopg2.pool.ThreadedConnectionPool":
+    def _get_pool(self) -> psycopg2.pool.ThreadedConnectionPool:
         pool = BaseRepository._pools.get(self.database_url)
         if pool is None:
             with BaseRepository._pools_lock:

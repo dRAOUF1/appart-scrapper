@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, request, jsonify, current_app, g, send_file
+from flask import Blueprint, current_app, g, jsonify, request, send_file
 from loguru import logger
 
-from parsers import list_sources, remember_manual_overrides
-from routes.auth import require_token
 from core.schemas import validate_criteria, validate_scrape_interval
 from core.web_utils import to_int
+from parsers import list_sources, remember_manual_overrides
+from routes.auth import require_token
 
 api_bp = Blueprint("api", __name__)
 
@@ -192,13 +192,13 @@ def update_blacklist_mode(search_id: int):
     search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
-    
+
     data = request.get_json(silent=True) or {}
     mode = data.get("mode", "exclude")
-    
+
     if mode not in ("exclude", "no_notify"):
         return jsonify({"error": "Mode invalide. Options: exclude, no_notify"}), 400
-    
+
     current_app.storage.searches.update_blacklist_mode(search_id, mode)
     return jsonify({"ok": True, "blacklist_mode": mode}), 200
 
@@ -209,10 +209,10 @@ def update_blacklist_agencies(search_id: int):
     search = current_app.storage.searches.get_search(search_id)
     if not search or search["user_id"] != g.user["id"]:
         return jsonify({"error": "Recherche introuvable"}), 404
-    
+
     data = request.get_json(silent=True) or {}
     agencies = data.get("agencies", [])
-    
+
     current_app.storage.searches.update_blacklisted_agencies(search_id, agencies)
     return jsonify({"ok": True, "blacklisted_agencies": agencies}), 200
 

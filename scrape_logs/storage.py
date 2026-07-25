@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable
 
 from loguru import logger
 
@@ -76,7 +76,7 @@ def _read_counter() -> int:
     if not os.path.exists(COUNTER_FILE):
         return 0
     try:
-        with open(COUNTER_FILE, "r", encoding="utf-8") as f:
+        with open(COUNTER_FILE, encoding="utf-8") as f:
             payload = json.load(f)
             return int(payload.get("last_id", 0))
     except (OSError, ValueError, json.JSONDecodeError):
@@ -118,7 +118,7 @@ def read_entries(search_id: int) -> list[dict]:
         if not os.path.exists(path):
             return []
         entries = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -189,7 +189,7 @@ def read_raw_log(search_id: int, log_id: int) -> str:
     if not os.path.exists(path):
         return ""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
     except OSError:
         return ""

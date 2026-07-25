@@ -24,13 +24,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import requests
 import lzstring
+import requests
 from loguru import logger
 
 SEARCH_URL = "https://www.seloger.com/classified-search"
 
-MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+MOBILE_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
+    " (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+)
 
 _PROXY_CACHE: list[str] = []
 _PROXY_CACHE_TIME: float = 0
@@ -114,7 +117,10 @@ def _get_free_proxies(count: int = 5000, deadline_seconds: float = 20) -> list[s
             for future in as_completed(futures, timeout=deadline_seconds):
                 proxies.update(future.result())
         except TimeoutError:
-            logger.warning(f"  Délai de {deadline_seconds}s dépassé pour la récupération des proxies, on continue avec {len(proxies)} trouvés")
+            logger.warning(
+                f"  Délai de {deadline_seconds}s dépassé pour la récupération des proxies,"
+                f" on continue avec {len(proxies)} trouvés"
+            )
             for f in futures:
                 f.cancel()
 
@@ -134,7 +140,10 @@ def _try_with_proxies(url: str, max_proxies: int = 50, deadline_seconds: float =
     proxies can't stall the single-worker scrape queue for the whole system.
     """
     proxies = _get_free_proxies()
-    logger.info(f"  Testing up to {min(max_proxies, len(proxies))} proxies in parallel (from {len(proxies)} available)...")
+    logger.info(
+        f"  Testing up to {min(max_proxies, len(proxies))} proxies in parallel"
+        f" (from {len(proxies)} available)..."
+    )
 
     def test_proxy(proxy):
         try:
@@ -307,20 +316,20 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
 
             if resp.status_code == 403 or "__UFRN_FETCHER__" not in resp.text:
                 # IP bloquée — essayer avec proxies
-                logger.warning(f"    IP bloquée ou pas de données, tentative avec proxies gratuits...")
+                logger.warning("    IP bloquée ou pas de données, tentative avec proxies gratuits...")
                 resp = _try_with_proxies(url)
                 if resp is None:
-                    logger.warning(f"    Aucun proxy gratuit n'a fonctionné")
+                    logger.warning("    Aucun proxy gratuit n'a fonctionné")
                     continue
 
             if resp.status_code == 403:
-                logger.warning(f"    Bloqué (403) même avec proxy")
+                logger.warning("    Bloqué (403) même avec proxy")
                 continue
 
             resp.raise_for_status()
 
             if "__UFRN_FETCHER__" not in resp.text:
-                logger.warning(f"    Pas de données trouvées dans le HTML")
+                logger.warning("    Pas de données trouvées dans le HTML")
                 continue
 
             match = re.search(
@@ -328,7 +337,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 resp.text, re.DOTALL,
             )
             if not match:
-                logger.warning(f"    Format HTML inattendu")
+                logger.warning("    Format HTML inattendu")
                 continue
 
             raw = match.group(1)
@@ -344,7 +353,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 lzs = lzstring.LZString()
                 decompressed = lzs.decompressFromBase64(raw_data)
                 if not decompressed:
-                    logger.warning(f"    Échec décodage LZ-string")
+                    logger.warning("    Échec décodage LZ-string")
                     continue
                 data = json.loads(decompressed)
             else:
@@ -390,7 +399,10 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                     "district": location.get("district"),
                     "zipCode": location.get("zipCode"),
                     "url": item.get("url", ""),
-                    "photos": [{"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")} for img in gallery.get("images", [])],
+                    "photos": [
+                        {"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")}
+                        for img in gallery.get("images", [])
+                    ],
                     "agency": card_provider.get("title"),
                     "isPrivate": provider.get("isPrivateOwner", False),
                     "phone": provider.get("phoneNumbers", []),
@@ -414,7 +426,10 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
             logger.error(f"    Erreur: {e}")
             continue
 
-    raise ValueError("Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome. Attends 15-30 minutes et réessaie.")
+    raise ValueError(
+        "Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome."
+        " Attends 15-30 minutes et réessaie."
+    )
 
 
 def scrape(criteria: dict) -> list[dict]:
