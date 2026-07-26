@@ -80,6 +80,10 @@ ignore = [
 # Les tests figent volontairement des dates naïves et lèvent des exceptions
 # nues dans les fakes ; DTZ et B011 y sont du bruit.
 "tests/*" = ["DTZ", "B011", "ARG"]
+# Blobs HTML capturés sur laforet.com : les URLs d'annonces dépassent 120
+# caractères et ne peuvent pas être coupées sans changer ce que le test
+# exerce (les regex de liens travaillent sur la chaîne brute).
+"tests/unit/test_parser_laforet.py" = ["DTZ", "B011", "ARG", "E501"]
 # main.py charge .env dans create_app() : l'import de flask arrive après.
 "main.py" = ["E402"]
 # scripts/migrate.py charge .env avant d'importer storage, volontairement : le

@@ -161,6 +161,22 @@ def admin_client(app_without_csrf, admin_user):
 # garde. Surcharges par mot-clé, comme les factories.
 # ---------------------------------------------------------------------------
 
+def make_view_listing(**extras) -> dict:
+    """Annonce telle qu'une VUE la reçoit.
+
+    Les requêtes des repositories font `SELECT l.*, sl.found_at, s.label AS
+    search_label` : les vues reçoivent donc les colonnes de `listings` **plus**
+    des colonnes jointes que le dataclass `Listing` ne porte pas. Ce builder
+    accepte les deux, là où `make_listing_row()` refuse les clés inconnues.
+    """
+    from models.listing import Listing
+
+    known = {k: v for k, v in extras.items() if k in Listing.__dataclass_fields__}
+    row = make_listing_row(**known)
+    row.update(extras)
+    return row
+
+
 def make_admin_stats(**overrides) -> dict:
     """Retour de `AdminRepository.get_enhanced_admin_stats()`.
 
@@ -191,7 +207,7 @@ def make_dashboard_data(**overrides) -> dict:
     data = {
         "stats": {"searches": 2, "total_listings": 12, "new_today": 3},
         "searches": [make_search_row(listing_count=7)],
-        "recent": [make_listing_row(search_label="Paris 13e", found_at=datetime(2026, 7, 1, 9, 0))],
+        "recent": [make_view_listing(search_label="Paris 13e", found_at=datetime(2026, 7, 1, 9, 0))],
     }
     data.update(overrides)
     return data
@@ -233,15 +249,14 @@ def make_search_detail(**overrides) -> dict:
     detail = make_search_row()
     detail["username"] = "alice"
     detail["total_listings"] = 7
-    detail["recent_listings"] = [make_listing_row(found_at=datetime(2026, 7, 1, 9, 0))]
+    detail["recent_listings"] = [make_view_listing(found_at=datetime(2026, 7, 1, 9, 0))]
     detail.update(overrides)
     return detail
 
 
 def make_admin_listing_row(**overrides) -> dict:
     """Ligne de `get_all_listings()` : annonce + nombre de recherches liées."""
-    row = make_listing_row(first_seen=datetime(2026, 7, 1))
-    row["linked_searches"] = 2
+    row = make_view_listing(first_seen=datetime(2026, 7, 1), linked_searches=2)
     row.update(overrides)
     return row
 
@@ -249,8 +264,10 @@ def make_admin_listing_row(**overrides) -> dict:
 def make_listing_detail(**overrides) -> dict:
     """Retour de `ListingRepository.get_listing_detail()` : `linked_searches` est
     une LISTE ici, alors que c'est un COMPTEUR dans `get_all_listings()`."""
-    detail = make_listing_row(first_seen=datetime(2026, 7, 1))
-    detail["linked_searches"] = [{"id": 1, "label": "Paris 13e", "source": "seloger", "username": "alice"}]
+    detail = make_view_listing(
+        first_seen=datetime(2026, 7, 1),
+        linked_searches=[{"id": 1, "label": "Paris 13e", "source": "seloger", "username": "alice"}],
+    )
     detail.update(overrides)
     return detail
 

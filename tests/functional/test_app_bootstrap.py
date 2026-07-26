@@ -222,7 +222,6 @@ class TestJinjaFilters:
 class TestContextProcessor:
     def test_inject_admin_exposes_admin_username_from_the_environment(self, app):
         with app.test_request_context("/"):
-            injected = app.jinja_env.globals  # noqa: F841 — lisibilité
             context = {}
             for processor in app.template_context_processors[None]:
                 context.update(processor())
