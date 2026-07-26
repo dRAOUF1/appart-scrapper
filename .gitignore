@@ -2,6 +2,7 @@ venv/*
 browser_profile_uc/*
 **/__pycache__/*
 .env
+.env.dev
 seloger_scraper.log
 .opencodelogs/
 
