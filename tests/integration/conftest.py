@@ -86,18 +86,18 @@ def clean_db(storage):
 
 @pytest.fixture(autouse=True)
 def clean_geo_cache(clean_db, storage):
-    """Vide aussi le cache géo SeLoger avant chaque test.
+    """Vide aussi les caches géo (SeLoger, bienici) avant chaque test.
 
-    `seloger_place_ids` n'est pas dans `_TABLES` (elle n'a ni FK ni lien avec
-    les données utilisateur). L'ancienne suite compensait par des nettoyages
-    manuels en fin de test et une dépendance d'ordre assumée en commentaire :
-    une fixture dédiée règle le problème une fois pour toutes, sans toucher à
-    la logique de `clean_db`.
+    Ni `seloger_place_ids` ni `bienici_zone_ids` ne sont dans `_TABLES` (elles
+    n'ont ni FK ni lien avec les données utilisateur). L'ancienne suite
+    compensait par des nettoyages manuels en fin de test et une dépendance
+    d'ordre assumée en commentaire : une fixture dédiée règle le problème une
+    fois pour toutes, sans toucher à la logique de `clean_db`.
     """
     conn = storage._get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("TRUNCATE seloger_place_ids")
+            cur.execute("TRUNCATE seloger_place_ids, bienici_zone_ids")
         conn.commit()
     finally:
         storage._release_conn(conn)

@@ -276,8 +276,8 @@ def test_one_source_out_of_several_is_enough_semantics_of_any():
 @pytest.mark.parametrize(
     "sources",
     [
-        pytest.param(["bienici"], id="une-seule-source-inconnue"),
-        pytest.param(["bienici", "leboncoin"], id="plusieurs-sources-inconnues"),
+        pytest.param(["leboncoin"], id="une-seule-source-inconnue"),
+        pytest.param(["leboncoin", "pap"], id="plusieurs-sources-inconnues"),
         pytest.param([""], id="slug-vide"),
     ],
 )
@@ -290,7 +290,7 @@ def test_an_unknown_source_is_skipped_instead_of_raising(sources):
 
 def test_an_unknown_source_does_not_hide_a_valid_one():
     """Le `continue` doit passer à la source suivante, pas abandonner la boucle."""
-    search = _search(criteria=make_criteria(), sources=["bienici", "seloger"])
+    search = _search(criteria=make_criteria(), sources=["leboncoin", "seloger"])
 
     assert search.has_valid_criteria() is True
 
@@ -300,8 +300,8 @@ def test_an_unknown_source_does_not_hide_a_valid_one():
     [
         pytest.param([], "seloger", True, id="liste-vide-repli-sur-le-champ-source"),
         pytest.param(None, "seloger", True, id="none-repli-sur-le-champ-source"),
-        pytest.param([], "bienici", False, id="repli-sur-une-source-inconnue"),
-        pytest.param(["laforet"], "bienici", True, id="la-liste-prime-sur-le-champ-source"),
+        pytest.param([], "leboncoin", False, id="repli-sur-une-source-inconnue"),
+        pytest.param(["laforet"], "leboncoin", True, id="la-liste-prime-sur-le-champ-source"),
     ],
 )
 def test_the_legacy_single_source_field_is_the_fallback_when_sources_is_empty(sources, source, expected):

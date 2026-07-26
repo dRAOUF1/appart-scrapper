@@ -170,6 +170,13 @@ def _round_trip_whole_schema(url: str) -> None:
     assert cached["place_id"] == "AD06FR34"
     assert cached["resolved_at"] is not None
 
+    # bienici_zone_ids
+    storage.bienici_geo.set_cached("dept:33", ["-7405"])
+    cached = storage.bienici_geo.get_cached("dept:33")
+    assert cached["area_key"] == "dept:33"
+    assert cached["zone_ids"] == ["-7405"]
+    assert cached["resolved_at"] is not None
+
 
 # ---------------------------------------------------------------------------
 # Base vierge, et idempotence
@@ -177,7 +184,7 @@ def _round_trip_whole_schema(url: str) -> None:
 
 _EXPECTED_TABLES = {
     "users", "searches", "listings", "search_listings",
-    "admin_logs", "app_settings", "seloger_place_ids",
+    "admin_logs", "app_settings", "seloger_place_ids", "bienici_zone_ids",
 }
 
 

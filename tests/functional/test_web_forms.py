@@ -343,9 +343,9 @@ class TestValidateSourcesCriteria:
     def test_an_unknown_source_is_reported_without_raising(self):
         """Une source disparue du registre (renommée, retirée) ne doit pas faire
         planter la page de création : elle est signalée comme invalide."""
-        results = _validate_sources_criteria(["bienici"], {})
+        results = _validate_sources_criteria(["leboncoin"], {})
 
-        assert results == [{"id": "bienici", "name": "bienici", "ok": False, "reason": "Source inconnue"}]
+        assert results == [{"id": "leboncoin", "name": "leboncoin", "ok": False, "reason": "Source inconnue"}]
 
     def test_the_reason_comes_from_the_source_itself(self):
         """Pas de « critères invalides » générique : chaque source dit ce qui
