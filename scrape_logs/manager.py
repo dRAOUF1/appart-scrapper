@@ -53,14 +53,14 @@ class SearchLogManager:
         """Read the entire log file."""
         if not os.path.exists(self.log_file):
             return ""
-        with open(self.log_file, "r", encoding="utf-8", errors="replace") as f:
+        with open(self.log_file, encoding="utf-8", errors="replace") as f:
             return f.read()
 
     def read_tail(self, offset: int = 0) -> tuple[str, int]:
         """Read new log lines since offset. Returns (new_text, new_offset)."""
         if not os.path.exists(self.log_file):
             return "", 0
-        with open(self.log_file, "r", encoding="utf-8", errors="replace") as f:
+        with open(self.log_file, encoding="utf-8", errors="replace") as f:
             f.seek(offset)
             new_text = f.read()
             return new_text, f.tell()

@@ -12,10 +12,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from core.criteria import (
-    PROPERTY_TYPES,
     PROPERTY_TYPE_LABELS,
-    TRANSACTIONS,
+    PROPERTY_TYPES,
     TRANSACTION_LABELS,
+    TRANSACTIONS,
     normalize_locations,
 )
 from models.listing import Listing
@@ -40,10 +40,10 @@ def get_locations(criteria: dict) -> list[dict]:
 class ParserRegistry:
     """Auto-registry of all parser subclasses."""
 
-    _parsers: dict[str, type["BaseParser"]] = {}
+    _parsers: dict[str, type[BaseParser]] = {}
 
     @classmethod
-    def register(cls, parser_cls: type["BaseParser"]) -> type["BaseParser"]:
+    def register(cls, parser_cls: type[BaseParser]) -> type[BaseParser]:
         """Register a parser class by its SOURCE_ID."""
         source_id = parser_cls.SOURCE_ID
         if source_id:
@@ -51,7 +51,7 @@ class ParserRegistry:
         return parser_cls
 
     @classmethod
-    def get(cls, source: str, storage=None) -> "BaseParser":
+    def get(cls, source: str, storage=None) -> BaseParser:
         """Instantiate and return a parser by source slug.
 
         `storage` est passé aux sources qui ont besoin de la base (ex. SeLoger
@@ -164,7 +164,7 @@ class BaseParser(ABC):
         Ne doit jamais lever : ce n'est qu'une optimisation, elle ne doit pas
         faire échouer la création de la recherche.
         """
-        return None
+        return
 
     def to_native(self, criteria: dict) -> dict:
         """Traduit des critères canoniques vers le format de cette source.

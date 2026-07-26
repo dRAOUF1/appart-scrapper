@@ -1,0 +1,108 @@
+# Fichier de configuration d'outillage uniquement — le projet n'est pas packagé
+# (pas de [project] ni [build-system] : on installe via requirements*.txt).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["venv", "graphify-out", "*.egg", ".git"]
+# --strict-markers : un marker mal orthographié devient une erreur, pas un no-op
+# silencieux. --strict-config : une clé inconnue ici échoue au démarrage.
+addopts = "--strict-markers --strict-config -ra"
+markers = [
+    "unit: test unitaire — pur ou avec doubles (appliqué d'office à tests/unit/)",
+    "functional: app Flask réelle, Storage doublé (appliqué d'office à tests/functional/)",
+    "integration: nécessite un vrai Postgres (TEST_DATABASE_URL) — voir tests/integration/conftest.py",
+    "real_sleep: n'annule pas time.sleep (tests de concurrence uniquement)",
+]
+# Tout warning est une erreur : c'est ce qui rend une suite digne de confiance.
+# Chaque exception ci-dessous est une dette identifiée, bornée et à résorber —
+# pas un tapis sous lequel on balaie.
+filterwarnings = [
+    "error",
+    # Dette tz : ~11 appels à datetime.utcnow() dans le code de prod (voir
+    # per-file-ignores DTZ dans [tool.ruff.lint]). Les corriger demande de
+    # vérifier TIMESTAMP vs TIMESTAMPTZ côté schéma — à traiter à part.
+    "ignore:datetime.datetime.utcnow\\(\\) is deprecated:DeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = [
+    "venv/*",
+    "tests/*",
+    "graphify-out/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = ["venv", "graphify-out", "remote_backup.sql"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "C4",   # flake8-comprehensions
+    "RET",  # flake8-return
+    "PT",   # flake8-pytest-style
+    "DTZ",  # flake8-datetimez — attrape les datetime naïfs
+]
+ignore = [
+    # `try/except: pass` → contextlib.suppress : réécriture du code de prod
+    # hors périmètre, et pas toujours plus lisible.
+    "SIM105",
+    # Les `with a: with b:` imbriqués sont volontaires (curseurs DB).
+    "SIM117",
+    # `assert x == []` sur des listes vides est explicite dans les tests.
+    "PT018",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Les tests figent volontairement des dates naïves et lèvent des exceptions
+# nues dans les fakes ; DTZ et B011 y sont du bruit.
+"tests/*" = ["DTZ", "B011", "ARG"]
+# Blobs HTML capturés sur laforet.com : les URLs d'annonces dépassent 120
+# caractères et ne peuvent pas être coupées sans changer ce que le test
+# exerce (les regex de liens travaillent sur la chaîne brute).
+"tests/unit/test_parser_laforet.py" = ["DTZ", "B011", "ARG", "E501"]
+# main.py charge .env dans create_app() : l'import de flask arrive après.
+"main.py" = ["E402"]
+# scripts/migrate.py charge .env avant d'importer storage, volontairement : le
+# script est un point d'entrée CLI, pas un module importé par l'app.
+"scripts/migrate.py" = ["E402"]
+# ---- Dette tz identifiée, à résorber ----------------------------------------
+# Ces modules utilisent encore datetime.utcnow() (naïf, déprécié en 3.12). Le
+# correctif exige de vérifier si les colonnes concernées sont TIMESTAMP ou
+# TIMESTAMPTZ : chantier à part. Cette liste ne doit que RÉTRÉCIR — un nouveau
+# fichier qui appelle utcnow() fera échouer le lint, et c'est voulu.
+"repositories/scrape_log_repo.py" = ["DTZ"]
+"routes/admin.py" = ["DTZ"]
+"routes/api.py" = ["DTZ"]
+"routes/web.py" = ["DTZ"]
+"scrape_logs/exporter.py" = ["DTZ"]
+"scrape_logs/storage.py" = ["DTZ"]
+"services/scrape_service.py" = ["DTZ"]
+"services/seloger_geocode.py" = ["DTZ"]
+"models/search.py" = ["DTZ"]
+"models/scrape_log.py" = ["DTZ"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "config", "core", "models", "notifier", "parsers", "repositories",
+    "routes", "scrape_logs", "scraper", "services", "storage",
+]

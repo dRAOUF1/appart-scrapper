@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
 from loguru import logger
+from pydantic import BaseModel, Field
 
 
 class NtfyConfig(BaseModel):
@@ -39,7 +39,7 @@ def load_config(config_path: str | Path = "config/config.yaml") -> AppConfig:
         logger.warning(f"Config introuvable ({config_path}), utilisation des défauts")
         raw = {}
     else:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
     # Override database_url with env var if present

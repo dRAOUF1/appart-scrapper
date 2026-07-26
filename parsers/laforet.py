@@ -55,11 +55,13 @@ from loguru import logger
 from core.criteria import APARTMENT, BUY, HOUSE, RENT, matches_locations
 from core.geocode import (
     CITY,
-    department_main_city,
     DEPARTMENT,
     REGION,
     WHOLE_CITY,
+    department_main_city,
     region_departments,
+)
+from core.geocode import (
     resolve_insee_code as _resolve_insee_code,
 )
 from models.listing import Listing
@@ -126,8 +128,7 @@ def _slugify(text: str) -> str:
     """Lowercase, strip accents, non-alnum -> '-' (e.g. 'Le Kremlin-Bicêtre' -> 'le-kremlin-bicetre')."""
     normalized = unicodedata.normalize("NFKD", text)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_text).strip("-").lower()
-    return slug
+    return re.sub(r"[^a-zA-Z0-9]+", "-", ascii_text).strip("-").lower()
 
 
 def _transaction(criteria: dict) -> str:

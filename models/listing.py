@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 
 
 @dataclass
@@ -43,5 +43,5 @@ class Listing:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Listing":
+    def from_dict(cls, data: dict) -> Listing:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})

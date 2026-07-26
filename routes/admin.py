@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, request, render_template, redirect, url_for, flash, current_app, g, send_file
+from flask import Blueprint, current_app, flash, g, redirect, render_template, request, send_file, url_for
 
-from routes.auth import require_admin
 from core.web_utils import to_int
+from routes.auth import require_admin
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -52,7 +52,9 @@ def admin_delete_user(user_id):
     user = storage.users.get_user_detail(user_id)
     if user:
         storage.users.delete_user(user_id)
-        storage.admin.log_admin_action("user_deleted", f"User '{user['username']}' (ID:{user_id}) deleted", g.user["username"])
+        storage.admin.log_admin_action(
+            "user_deleted", f"User '{user['username']}' (ID:{user_id}) deleted", g.user["username"]
+        )
         flash(f"Utilisateur '{user['username']}' supprimé", "success")
     return redirect(url_for("admin.admin_users"))
 
@@ -64,7 +66,9 @@ def admin_reset_token(user_id):
     user = storage.users.get_user_detail(user_id)
     if user:
         new_token = storage.users.reset_user_token(user_id)
-        storage.admin.log_admin_action("user_token_reset", f"Token reset for '{user['username']}' (ID:{user_id})", g.user["username"])
+        storage.admin.log_admin_action(
+            "user_token_reset", f"Token reset for '{user['username']}' (ID:{user_id})", g.user["username"]
+        )
         flash(f"Nouveau token pour '{user['username']}': {new_token}", "success")
     return redirect(url_for("admin.admin_user_detail", user_id=user_id))
 
@@ -78,7 +82,9 @@ def admin_create_user():
         return redirect(url_for("admin.admin_users"))
     try:
         user = current_app.storage.users.create_user(username)
-        current_app.storage.admin.log_admin_action("user_created", f"User '{username}' (ID:{user['id']}) created", g.user["username"])
+        current_app.storage.admin.log_admin_action(
+            "user_created", f"User '{username}' (ID:{user['id']}) created", g.user["username"]
+        )
         flash(f"Utilisateur '{username}' créé. Token: {user['api_token']}", "success")
     except ValueError as e:
         flash(str(e), "error")
@@ -113,7 +119,11 @@ def admin_delete_search(search_id):
     search = storage.searches.get_search(search_id)
     if search:
         storage.searches.delete_search(search_id)
-        storage.admin.log_admin_action("search_deleted", f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}", g.user["username"])
+        storage.admin.log_admin_action(
+            "search_deleted",
+            f"Search '{search['label']}' (ID:{search_id}) deleted by {g.user['username']}",
+            g.user["username"],
+        )
         flash(f"Recherche '{search['label']}' supprimée", "success")
     return redirect(url_for("admin.admin_searches"))
 
@@ -142,7 +152,9 @@ def admin_listings():
     search_term = request.args.get("search", "")
     source_filter = request.args.get("source", "")
     storage = current_app.storage
-    listings = storage.listings.get_all_listings(limit=per_page, offset=offset, search_term=search_term, source_filter=source_filter)
+    listings = storage.listings.get_all_listings(
+        limit=per_page, offset=offset, search_term=search_term, source_filter=source_filter
+    )
     total = storage.listings.count_all_listings(search_term=search_term, source_filter=source_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
     orphan_count = storage.listings.get_orphan_listings_count()
@@ -341,6 +353,8 @@ def admin_cleanup():
     days = to_int(request.form.get("days", 4), 4)
     storage = current_app.storage
     deleted = storage.listings.delete_old_listings(days=days)
-    storage.admin.log_admin_action("cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"])
+    storage.admin.log_admin_action(
+        "cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"]
+    )
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
     return redirect(url_for("admin.admin"))

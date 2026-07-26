@@ -63,7 +63,7 @@ def validate_criteria(data) -> dict:
     try:
         model = SearchCriteria.model_validate(data)
     except ValidationError as e:
-        raise ValueError(f"Critères invalides: {e.errors()[0]['msg']}")
+        raise ValueError(f"Critères invalides: {e.errors()[0]['msg']}") from e
     return normalize_criteria(model.model_dump(exclude_none=True))
 
 
@@ -71,8 +71,8 @@ def validate_scrape_interval(value, minimum: int = 1, maximum: int = 1440) -> in
     """Validate scrape_interval (minutes). Raises ValueError on bad input."""
     try:
         interval = int(value)
-    except (TypeError, ValueError):
-        raise ValueError("scrape_interval doit être un entier")
+    except (TypeError, ValueError) as e:
+        raise ValueError("scrape_interval doit être un entier") from e
     if interval < minimum or interval > maximum:
         raise ValueError(f"scrape_interval doit être entre {minimum} et {maximum} minutes")
     return interval

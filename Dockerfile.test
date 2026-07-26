@@ -10,8 +10,12 @@ WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
-# Full source tree, including tests/ (unlike the prod Dockerfile's explicit
-# file-by-file COPY list, which deliberately excludes it).
+# Arbre complet, tests/ inclus — contrairement au Dockerfile de production, qui
+# liste ses COPY fichier par fichier et exclut délibérément les tests.
+#
+# docker-compose.test.yml monte ensuite le répertoire courant sur /app, ce qui
+# recouvre cette copie : elle sert à ce que l'image reste utilisable seule
+# (`docker run` sans volume), pas au chemin compose.
 COPY . .
 
 CMD ["pytest", "tests/", "-v", "--tb=short"]
