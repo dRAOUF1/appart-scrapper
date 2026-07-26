@@ -3,9 +3,7 @@
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# tests/_legacy/ garde l'ancienne suite en lecture pendant la refonte, sans
-# être collectée. Le répertoire doit disparaître à la fin.
-norecursedirs = ["_legacy", "venv", "graphify-out", "*.egg", ".git"]
+norecursedirs = ["venv", "graphify-out", "*.egg", ".git"]
 # --strict-markers : un marker mal orthographié devient une erreur, pas un no-op
 # silencieux. --strict-config : une clé inconnue ici échoue au démarrage.
 addopts = "--strict-markers --strict-config -ra"
@@ -49,9 +47,7 @@ exclude_also = [
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-# tests/_legacy garde l'ancienne suite en lecture le temps de la refonte ; elle
-# n'est ni collectée ni lintée, et doit disparaître.
-exclude = ["venv", "graphify-out", "remote_backup.sql", "tests/_legacy"]
+exclude = ["venv", "graphify-out", "remote_backup.sql"]
 
 [tool.ruff.lint]
 select = [

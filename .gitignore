@@ -11,3 +11,9 @@ logs/
 *.sql
 # Sortie de l'outil graphify (artefacts locaux).
 graphify-out/
+
+# Artefacts de couverture (pytest-cov / coverage.py).
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

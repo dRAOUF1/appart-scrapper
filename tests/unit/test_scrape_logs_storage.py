@@ -708,7 +708,10 @@ class TestCleanupOldLogs:
         for search_id in (1, 2):
             storage.append_entry(search_id, make_scrape_log_entry(id=search_id, completed_at=old))
             storage.write_raw_log(search_id, search_id, "ancien")
+        # Deux intrus : un nom au suffixe non numérique et le répertoire
+        # `exports/`, qui cohabite avec les `search_<id>/`.
         os.makedirs(os.path.join(storage.SCRAPE_LOGS_DIR, "search_pas_un_id"), exist_ok=True)
+        os.makedirs(storage.EXPORTS_DIR, exist_ok=True)
 
         assert storage.cleanup_old_logs(retention_days=5) == 2
 
