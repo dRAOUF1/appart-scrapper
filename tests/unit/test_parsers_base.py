@@ -34,7 +34,7 @@ from tests.helpers.factories import (
 from tests.helpers.fakes import fake_storage
 
 # Les seules sources réellement enregistrées par parsers/__init__.py.
-REAL_SOURCES = {"seloger", "laforet"}
+REAL_SOURCES = {"seloger", "laforet", "bienici"}
 
 
 def make_parser_class(source_id: str = "", **attributes) -> type[BaseParser]:
@@ -145,7 +145,7 @@ class TestRegistryGet:
 
     def test_unknown_source_message_mentions_the_real_sources(self):
         with pytest.raises(ValueError, match=r"Sources disponibles : ") as excinfo:
-            ParserRegistry.get("bienici")
+            ParserRegistry.get("leboncoin")
         message = str(excinfo.value)
         assert "laforet" in message
         assert "seloger" in message
@@ -212,12 +212,16 @@ class TestListSources:
         assert laforet["supported_property_types"] == ["apartment", "house"]
         assert laforet["supported_transactions"] == ["rent", "buy"]
 
-    def test_only_seloger_declares_a_manual_override_field(self):
-        """SeLoger ne peut pas dériver son placeId opaque d'un code INSEE : c'est
-        la seule source à proposer une saisie manuelle de repli."""
+    def test_only_sources_with_an_opaque_place_id_declare_a_manual_override_field(self):
+        """SeLoger et bienici ne peuvent pas dériver leur identifiant de lieu
+        opaque (placeId / zoneId) d'un code INSEE : ce sont les seules sources
+        à proposer une saisie manuelle de repli. Laforêt n'en a pas besoin, son
+        périmètre se dérive directement du code INSEE."""
         by_id = {s["id"]: s for s in ParserRegistry.list_sources()}
         assert by_id["seloger"]["manual_override_label"]
         assert by_id["seloger"]["manual_override_help"]
+        assert by_id["bienici"]["manual_override_label"]
+        assert by_id["bienici"]["manual_override_help"]
         assert by_id["laforet"]["manual_override_label"] == ""
 
     def test_only_laforet_declares_a_url_note(self):
@@ -516,7 +520,7 @@ class TestPackageHelpers:
 
     def test_get_parser_propagates_the_unknown_source_error(self):
         with pytest.raises(ValueError, match="Sources disponibles"):
-            parsers.get_parser("bienici")
+            parsers.get_parser("leboncoin")
 
     def test_list_sources_is_the_registry_listing(self):
         assert parsers.list_sources() == ParserRegistry.list_sources()
@@ -574,7 +578,7 @@ class TestPackageHelpers:
         """Ce que le reste de l'application importe depuis `parsers`."""
         assert set(parsers.__all__) == {
             "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
-            "SeLogerParser", "LaforetParser",
+            "SeLogerParser", "LaforetParser", "BienIciParser",
         }
 
 

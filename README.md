@@ -187,7 +187,7 @@ que ce vocabulaire — voir `core/criteria.py`.
 | `priceMin` / `priceMax` | entiers, en euros |
 | `surfaceMin` / `surfaceMax` | entiers, en m² |
 | `rooms` / `bedrooms` | `[int]` — `5` signifie « 5 et plus » |
-| `sourceOverrides` | `{"<source>": {...}}` — la seule échappatoire : ce que l'utilisateur a saisi à la main pour une source précise (aujourd'hui le Place ID SeLoger, en repli) |
+| `sourceOverrides` | `{"<source>": {...}}` — la seule échappatoire : ce que l'utilisateur a saisi à la main pour une source précise (le Place ID SeLoger ou le(s) zoneId bienici, en repli) |
 
 Les recherches créées avant l'unification **ne sont pas migrées** : elles sont
 normalisées à la lecture (`SearchRepository._load_criteria`), donc l'ancien
@@ -212,10 +212,12 @@ existantes continuent de fonctionner.
 
 Chaque source couvre n'importe lequel de ces niveaux **en une seule requête**,
 avec son propre identifiant : `filter[departments][]` pour Laforêt, un placeId
-`AD04`/`AD06`/`AD08` pour SeLoger. Un périmètre n'est donc jamais développé en
-liste de communes — ce qui serait de toute façon impossible, Laforêt plafonnant
-vers 100 communes par requête (HTTP 414) et SeLoger vers 50 (HTTP 403), quand
-une région en compte plus de mille.
+`AD04`/`AD06`/`AD08` pour SeLoger, un ou plusieurs zoneId pour bienici (une
+région s'y obtient en combinant les zoneIds de ses départements, faute d'un
+identifiant région natif côté bienici). Un périmètre n'est donc jamais
+développé en liste de communes — ce qui serait de toute façon impossible,
+Laforêt plafonnant vers 100 communes par requête (HTTP 414) et SeLoger vers 50
+(HTTP 403), quand une région en compte plus de mille.
 
 Le contrôle que les annonces sont bien dans le périmètre est fait côté serveur
 par `core.criteria.matches_locations` (les sources élargissent parfois d'elles-mêmes :
@@ -240,8 +242,8 @@ automatiquement à partir de ce qu'elle déclare.
 ├── notifier.py      # Notifications ntfy
 ├── repositories/    # CRUD par domaine (users, searches, listings, ...)
 ├── models/          # Dataclasses (Listing, Search, ...)
-├── parsers/         # Parsers par source (SeLoger, Laforêt), enregistrés via BaseParser
-├── scraper/         # Scraping SeLoger (page classified-search)
+├── parsers/         # Parsers par source (SeLoger, Laforêt, bienici), enregistrés via BaseParser
+├── scraper/         # Scraping bas niveau SeLoger (page classified-search) et bienici (API JSON)
 ├── services/        # Orchestration du scraping + résolution des lieux par source
 ├── routes/          # Blueprints Flask (api, web, admin, auth)
 ├── core/            # Vocabulaire des critères (criteria), géocodage (geocode), helpers

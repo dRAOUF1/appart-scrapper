@@ -18,12 +18,12 @@ That's it — the new source is immediately available via get_parser("my_source"
 """
 
 from parsers.base import BaseParser, ParserRegistry
+from parsers.bienici import BienIciParser
 from parsers.laforet import LaforetParser
 from parsers.seloger import SeLogerParser
 
 # Register all parsers by importing them (class decorator handles registration)
 # To add a new source, import it here:
-# from parsers.bienici import BienIciParser
 # from parsers.leboncoin import LeBonCoinParser
 
 
@@ -58,5 +58,5 @@ def list_sources() -> list[dict]:
 
 __all__ = [
     "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
-    "SeLogerParser", "LaforetParser",
+    "SeLogerParser", "LaforetParser", "BienIciParser",
 ]

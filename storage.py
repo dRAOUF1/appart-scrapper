@@ -16,6 +16,7 @@ from __future__ import annotations
 from loguru import logger
 
 from repositories.admin_repo import AdminRepository
+from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.listing_repo import ListingRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
@@ -36,6 +37,7 @@ class Storage:
         self.admin = AdminRepository(database_url)
         self.settings = SettingsRepository(database_url)
         self.seloger_geo = SelogerGeoRepository(database_url)
+        self.bienici_geo = BienIciGeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -224,6 +226,18 @@ class Storage:
                             ALTER TABLE seloger_place_ids RENAME COLUMN insee_code TO area_key;
                         END IF;
                     END $$;
+                """)
+                # Même clé de périmètre (`area_key`) que seloger_place_ids —
+                # voir services.bienici_geocode.area_cache_key. `zone_ids`
+                # est un tableau JSON (contrairement au place_id unique de
+                # SeLoger, un périmètre bienici peut avoir plusieurs zoneIds,
+                # ex. une région = union de ses départements).
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bienici_zone_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        zone_ids    TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
                 """)
                 phase_start = _log_phase("create_tables")
 
