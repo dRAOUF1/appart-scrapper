@@ -262,14 +262,15 @@ def test_a_location_with_an_insee_code_is_valid_for_every_source():
 
 
 def test_one_source_out_of_several_is_enough_semantics_of_any():
-    """Sémantique `any` : une localisation sans code INSEE est inexploitable par
-    SeLoger (qui a besoin d'un placeId) mais suffit à Laforêt. La recherche
-    reste donc lançable — c'est ce que le pipeline attend, il saute simplement
-    la source qui ne peut pas."""
-    criteria = {"locations": [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]}
+    """Sémantique `any` : sans aucune localisation, un placeId SeLoger collé à
+    la main suffit à lui seul (repli qui court-circuite la résolution
+    automatique), mais Laforêt — qui n'a pas d'équivalent — reste inexploitable.
+    La recherche reste donc lançable — c'est ce que le pipeline attend, il
+    saute simplement la source qui ne peut pas."""
+    criteria = {"sourceOverrides": {"seloger": {"placeIds": ["AD08FR31096"]}}}
 
-    assert _search(criteria=criteria, sources=["seloger"]).has_valid_criteria() is False
-    assert _search(criteria=criteria, sources=["laforet"]).has_valid_criteria() is True
+    assert _search(criteria=criteria, sources=["seloger"]).has_valid_criteria() is True
+    assert _search(criteria=criteria, sources=["laforet"]).has_valid_criteria() is False
     assert _search(criteria=criteria, sources=["seloger", "laforet"]).has_valid_criteria() is True
 
 

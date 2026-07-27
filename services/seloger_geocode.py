@@ -146,16 +146,30 @@ def area_cache_key(location: dict) -> str | None:
     périmètres différents selon le niveau (le département 75 et la région 75
     — Nouvelle-Aquitaine — existent tous les deux).
 
-    Le niveau commune garde le code INSEE nu comme clé : c'est la convention
-    d'avant l'introduction des périmètres larges, et la conserver évite
-    d'invalider les résolutions déjà en cache.
+    Le niveau commune garde le code INSEE nu comme clé quand il est là :
+    c'est la convention d'avant l'introduction des périmètres larges, et la
+    conserver évite d'invalider les résolutions déjà en cache. Il n'est
+    toutefois pas strictement nécessaire : `_find_city_place_id` résout déjà
+    par le seul code postal (voir sa docstring), et `_find_wide_area_place_id`
+    (ville entière) ne cherche que par nom. Une localisation sans code INSEE
+    — tapée à la main (voir routes.web._location_from_free_text), ou héritée
+    d'une recherche créée avant l'autocomplete unifié — a donc quand même une
+    clé de repli, au lieu d'échouer `has_valid_criteria` pour une information
+    dont la résolution n'a en réalité pas besoin.
     """
     kind = location.get("kind", CITY)
     if kind == CITY:
-        return location.get("inseeCode") or None
+        insee = location.get("inseeCode")
+        if insee:
+            return insee
+        postal_code = location.get("postalCode")
+        return f"postal:{postal_code}" if postal_code else None
     if kind == WHOLE_CITY:
         insee = location.get("inseeCode")
-        return f"city:{insee}" if insee else None
+        if insee:
+            return f"city:{insee}"
+        city = location.get("city")
+        return f"city_name:{city.strip().casefold()}" if city else None
     code = location.get("code")
     if not code:
         return None

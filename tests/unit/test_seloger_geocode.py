@@ -307,20 +307,28 @@ class TestAreaCacheKey:
     @pytest.mark.parametrize(
         ("location", "case"),
         [
-            ({"kind": CITY, "city": "X", "postalCode": "99999"}, "commune sans code INSEE"),
-            ({"kind": CITY, "inseeCode": ""}, "code INSEE vide"),
-            ({"kind": CITY, "inseeCode": None}, "code INSEE nul"),
-            ({"kind": WHOLE_CITY, "city": "Poitiers"}, "ville entière sans code INSEE"),
+            ({"kind": CITY, "inseeCode": ""}, "ni code INSEE ni code postal"),
+            ({"kind": CITY, "inseeCode": None}, "ni code INSEE ni code postal (nul)"),
+            ({"kind": WHOLE_CITY}, "ville entière sans code INSEE ni nom de ville"),
             ({"kind": REGION, "name": "Nulle part"}, "région sans code"),
             ({"kind": DEPARTMENT, "name": "Gironde", "code": ""}, "département à code vide"),
         ],
-        ids=["city_no_insee", "empty_insee", "null_insee", "whole_city_no_insee", "region_no_code", "dept_empty_code"],
+        ids=["empty_insee_no_postal", "null_insee_no_postal", "whole_city_no_insee_no_city", "region_no_code", "dept_empty_code"],
     )
     def test_an_unidentifiable_area_has_no_key(self, location, case):
-        """Une localisation saisie à la main (sans autocomplete) n'a pas de code
-        INSEE : il n'y a rien pour indexer le cache, et c'est ce `None` qui
-        arrête `resolve_place_id` avant tout appel réseau."""
+        """Sans AUCUNE information exploitable (ni code INSEE, ni code postal
+        / nom de ville), rien n'indexe le cache — c'est ce `None` qui arrête
+        `resolve_place_id` avant tout appel réseau."""
         assert geo.area_cache_key(location) is None, case
+
+    def test_a_city_without_insee_falls_back_to_its_postal_code(self):
+        """# BUG corrigé : une commune tapée à la main (sans code INSEE) a
+        quand même une clé, dérivée du code postal — `_find_city_place_id`
+        résout déjà par ce seul code postal, la clé n'a pas besoin de plus."""
+        assert geo.area_cache_key({"kind": CITY, "city": "X", "postalCode": "99999"}) == "postal:99999"
+
+    def test_a_whole_city_without_insee_falls_back_to_its_name(self):
+        assert geo.area_cache_key({"kind": WHOLE_CITY, "city": "Poitiers"}) == "city_name:poitiers"
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +498,12 @@ class TestResolvePlaceIdCacheTruthTable:
     def test_an_unidentifiable_area_warns_and_never_touches_the_cache(
         self, repo, monkeypatch, log_messages
     ):
+        """Une commune avec un code postal (même farfelu, "99999") a une clé
+        de repli désormais (voir area_cache_key) : ce n'est plus le cas
+        « non identifiable ». Il ne reste que l'absence totale d'information
+        exploitable (ni ville, ni code postal, ni code INSEE)."""
         calls = self.spy_resolution(monkeypatch)
-        location = {"kind": CITY, "city": "Saisie manuelle", "postalCode": "99999"}
+        location = {"kind": CITY}
 
         assert geo.resolve_place_id(location, repo=repo) is None
 
@@ -499,6 +511,21 @@ class TestResolvePlaceIdCacheTruthTable:
         repo.get_cached.assert_not_called()
         repo.set_cached.assert_not_called()
         assert any("Périmètre non identifiable" in m for m in log_messages)
+
+    @freeze_time(FROZEN)
+    def test_a_hand_typed_postal_code_now_resolves_through_its_fallback_key(self, repo, monkeypatch):
+        """# BUG corrigé : une localisation tapée à la main (sans code INSEE)
+        échouait systématiquement ici faute de clé de cache, alors que
+        `_find_city_place_id` résout déjà par le seul code postal."""
+        calls = self.spy_resolution(monkeypatch, result="AD09FR40")
+        repo.get_cached.return_value = None
+        location = {"kind": CITY, "city": "Saisie manuelle", "postalCode": "99999"}
+
+        assert geo.resolve_place_id(location, repo=repo) == "AD09FR40"
+
+        assert calls == [location]
+        repo.get_cached.assert_called_once_with("postal:99999")
+        repo.set_cached.assert_called_once_with("postal:99999", "AD09FR40")
 
     @freeze_time(FROZEN)
     def test_a_cached_place_id_is_returned_immediately(self, repo, monkeypatch):
@@ -712,10 +739,20 @@ class TestRememberManualPlaceId:
 
         repo.set_cached.assert_not_called(), case
 
-    def test_a_location_without_an_insee_code_has_nothing_to_key_on(self, repo):
-        """Localisation tapée à la main sans passer par l'autocomplete : pas de
-        code INSEE, donc pas de clé. No-op silencieux, pas une erreur."""
+    def test_a_location_without_an_insee_code_is_still_banked_under_its_postal_key(self, repo):
+        """# BUG corrigé : un Place ID collé à la main pour une localisation
+        sans code INSEE (tapée à la main) n'était jamais mémorisé faute de
+        clé, alors que `area_cache_key` en calcule désormais une de repli
+        (`postal:<code>`) — voir services.seloger_geocode.area_cache_key."""
+        repo.get_cached.return_value = None
         criteria = self.criteria_with(["AD09FR40"], [{"city": "Paris", "postalCode": "75015"}])
+
+        geo.remember_manual_place_id(criteria, repo=repo)
+
+        repo.set_cached.assert_called_once_with("postal:75015", "AD09FR40")
+
+    def test_a_location_with_no_key_at_all_has_nothing_to_key_on(self, repo):
+        criteria = self.criteria_with(["AD09FR40"], [{"kind": CITY}])
 
         geo.remember_manual_place_id(criteria, repo=repo)
 

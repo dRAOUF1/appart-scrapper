@@ -598,12 +598,19 @@ class TestToNative:
             native = parser.to_native({"locations": [NOWHERE]})
         assert "zoneIdsByTypes" not in native
 
-    def test_a_location_typed_by_hand_triggers_no_lookup(self):
+    def test_a_location_typed_by_hand_still_resolves_by_postal_code(self):
+        """# BUG corrigé : une localisation sans code INSEE (tapée à la main,
+        ou héritée d'une recherche créée avant l'autocomplete unifié) était
+        traitée comme non résolvable et ne déclenchait AUCUNE recherche,
+        alors que `_find_city_zone_ids` résout déjà par le seul code postal
+        (voir services.bienici_geocode.area_cache_key). Elle doit désormais
+        déclencher la même résolution qu'une localisation choisie dans les
+        suggestions."""
         parser = resolving_parser()
-        with patch("services.bienici_geocode._resolve_uncached") as mock_lookup:
+        with patch("services.bienici_geocode._resolve_uncached", return_value=["-7444"]) as mock_lookup:
             native = parser.to_native({"locations": [TYPED_BY_HAND]})
-        assert "zoneIdsByTypes" not in native
-        mock_lookup.assert_not_called()
+        assert native["zoneIdsByTypes"] == {"zoneIds": ["-7444"]}
+        mock_lookup.assert_called_once_with(TYPED_BY_HAND)
 
     def test_the_market_filter_is_always_present(self):
         """Seules les annonces actives sont recherchées : un tracker de
@@ -920,8 +927,13 @@ class TestHasValidCriteria:
             assert BienIciParser().has_valid_criteria({"locations": [PARIS_15]}) is True
         mock_lookup.assert_not_called()
 
-    def test_a_hand_typed_location_without_insee_code_is_invalid(self):
-        assert BienIciParser().has_valid_criteria({"locations": [TYPED_BY_HAND]}) is False
+    def test_a_hand_typed_location_without_insee_code_is_still_valid(self):
+        """# BUG corrigé : `area_cache_key` résout maintenant une commune par
+        son seul code postal (voir services.bienici_geocode), donc une
+        localisation tapée à la main — sans code INSEE, mais avec ville +
+        code postal — reste utilisable, au lieu d'échouer ici pour une
+        information dont la résolution du zoneId n'a en réalité pas besoin."""
+        assert BienIciParser().has_valid_criteria({"locations": [TYPED_BY_HAND]}) is True
 
     @pytest.mark.parametrize("criteria", [{}, {"locations": []}])
     def test_no_location_is_invalid(self, criteria):
@@ -936,9 +948,12 @@ class TestCannotSearchReason:
         reason = BienIciParser().cannot_search_reason({})
         assert reason == "aucune localisation exploitable (ville + code postal requis)"
 
-    def test_a_location_without_insee_code_suggests_the_fallback(self):
-        reason = BienIciParser().cannot_search_reason({"locations": [TYPED_BY_HAND]})
-        assert "zoneId bienici" in reason
+    def test_a_location_without_insee_code_is_usable_not_rejected(self):
+        """# BUG corrigé : ce message ("pas de code INSEE") s'affichait pour
+        toute localisation tapée à la main ou héritée d'une recherche créée
+        avant l'autocomplete unifié, alors que ville + code postal suffisent
+        à résoudre le zoneId (voir services.bienici_geocode.area_cache_key)."""
+        assert BienIciParser().cannot_search_reason({"locations": [TYPED_BY_HAND]}) is None
 
     def test_bienici_supports_every_property_type_and_transaction(self):
         """Les quatre types de bien et les deux transactions : rien à refuser."""

@@ -754,14 +754,18 @@ class TestToNative:
             native = parser.to_native({"locations": [NOWHERE]})
         assert "placeIds" not in native
 
-    def test_a_location_typed_by_hand_triggers_no_lookup(self):
-        """Sans code INSEE, rien ne permet d'identifier le périmètre : pas de
-        placeId, et surtout aucun appel réseau à SeLoger pour rien."""
+    def test_a_location_typed_by_hand_still_resolves_by_postal_code(self):
+        """# BUG corrigé : sans code INSEE, la localisation était traitée
+        comme non identifiable et ne déclenchait AUCUN appel réseau, alors
+        que `_find_city_place_id` résout déjà par le seul code postal (voir
+        services.seloger_geocode.area_cache_key). Elle doit désormais
+        déclencher la même résolution qu'une localisation choisie dans les
+        suggestions."""
         parser = resolving_parser()
-        with patch("services.seloger_geocode._resolve_uncached") as mock_lookup:
+        with patch("services.seloger_geocode._resolve_uncached", return_value="AD09FR40") as mock_lookup:
             native = parser.to_native({"locations": [TYPED_BY_HAND]})
-        assert "placeIds" not in native
-        mock_lookup.assert_not_called()
+        assert native["placeIds"] == ["AD09FR40"]
+        mock_lookup.assert_called_once_with(TYPED_BY_HAND)
 
     def test_levels_can_be_mixed_in_one_search(self):
         parser = resolving_parser()
@@ -1046,9 +1050,12 @@ class TestHasValidCriteria:
             ({"locations": [PARIS_15, LYON_7]}, True),
             # Un seul périmètre identifiable suffit (`any`).
             ({"locations": [TYPED_BY_HAND, PARIS_15]}, True),
-            # Ville tapée à la main : pas de code INSEE, donc rien à résoudre.
-            ({"locations": [TYPED_BY_HAND]}, False),
-            ({"city": "Paris", "postalCode": "75015"}, False),
+            # Ville tapée à la main, ou vieux format à plat (recherche créée
+            # avant l'autocomplete unifié) : pas de code INSEE, mais
+            # ville + code postal suffisent (voir area_cache_key) — # BUG
+            # corrigé : ces deux cas rendaient auparavant False.
+            ({"locations": [TYPED_BY_HAND]}, True),
+            ({"city": "Paris", "postalCode": "75015"}, True),
             # Périmètre large sans son code : inexploitable.
             ({"locations": [{"kind": "department", "name": "Gironde"}]}, False),
             ({"locations": []}, False),
@@ -1097,14 +1104,12 @@ class TestCannotSearchReason:
         assert SeLogerParser().cannot_search_reason({"locations": [PARIS_15]}) is None
         assert SeLogerParser().cannot_search_reason(manual(["AD08FR31096"])) is None
 
-    def test_a_location_without_an_insee_code_gets_a_specific_message(self):
-        """Le message doit orienter vers la solution (choisir dans les
-        suggestions, ou coller un Place ID) plutôt que dire « invalide »."""
-        reason = SeLogerParser().cannot_search_reason({"locations": [TYPED_BY_HAND]})
-        assert reason == (
-            "la localisation n'a pas de code INSEE (choisissez-la dans "
-            "la liste de suggestions, ou renseignez un Place ID SeLoger)"
-        )
+    def test_a_location_without_an_insee_code_is_usable_not_rejected(self):
+        """# BUG corrigé : ce message ("pas de code INSEE") s'affichait pour
+        toute localisation tapée à la main ou héritée d'une recherche créée
+        avant l'autocomplete unifié, alors que ville + code postal suffisent
+        à résoudre le placeId (voir services.seloger_geocode.area_cache_key)."""
+        assert SeLogerParser().cannot_search_reason({"locations": [TYPED_BY_HAND]}) is None
 
     @pytest.mark.parametrize(
         "criteria",

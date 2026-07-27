@@ -139,13 +139,29 @@ def area_cache_key(location: dict) -> str | None:
     """La clé de cache identifiant le périmètre, tous niveaux confondus —
     même convention exacte que services.seloger_geocode.area_cache_key : les
     deux sources partagent le même vocabulaire de périmètres canoniques, pas
-    de raison que leurs clés de cache diffèrent."""
+    de raison que leurs clés de cache diffèrent.
+
+    Le code INSEE reste préféré quand il est là (clé stable, convention
+    d'avant les périmètres larges), mais n'est pas strictement nécessaire :
+    `_find_city_zone_ids`/`_find_whole_city_zone_ids` résolvent déjà depuis
+    le seul code postal/nom de ville. Une localisation sans code INSEE —
+    tapée à la main (voir routes.web._location_from_free_text), ou héritée
+    d'une recherche créée avant l'autocomplete unifié — a donc quand même
+    une clé de repli, au lieu d'échouer `has_valid_criteria` pour une
+    information dont la résolution n'a en réalité pas besoin."""
     kind = location.get("kind", CITY)
     if kind == CITY:
-        return location.get("inseeCode") or None
+        insee = location.get("inseeCode")
+        if insee:
+            return insee
+        postal_code = location.get("postalCode")
+        return f"postal:{postal_code}" if postal_code else None
     if kind == WHOLE_CITY:
         insee = location.get("inseeCode")
-        return f"city:{insee}" if insee else None
+        if insee:
+            return f"city:{insee}"
+        city = location.get("city")
+        return f"city_name:{city.strip().casefold()}" if city else None
     code = location.get("code")
     if not code:
         return None
