@@ -868,6 +868,30 @@ class TestBuildSearchUrl:
     def test_build_search_urls_is_empty_not_a_list_holding_none(self):
         assert BienIciParser().build_search_urls({"locations": [make_department_location(code="")]}) == []
 
+    def test_several_locations_each_get_their_own_url(self):
+        """# BUG corrigé : le chemin bienici (/recherche/{transaction}/{anchor}/
+        {type}) n'accepte qu'un seul lieu nommé à la fois, contrairement au
+        `filter[cities][]` de Laforet — impossible de fusionner plusieurs
+        villes dans une seule URL. Avant ce test, `build_search_urls` ne
+        renvoyait que l'URL de la première localisation (voir
+        build_search_url), les autres étaient invisibles dans le lien
+        affiché alors que le scrape lui-même les couvrait bien toutes
+        (voir `_zone_ids`)."""
+        urls = BienIciParser().build_search_urls({"locations": [PARIS_15, LYON_7]})
+
+        assert len(urls) == 2
+        assert "paris-75015" in urls[0]
+        assert "lyon-69007" in urls[1]
+
+    def test_an_unresolvable_location_among_several_is_skipped_not_the_whole_list(self):
+        urls = BienIciParser().build_search_urls({
+            "locations": [PARIS_15, make_department_location(code=""), LYON_7]
+        })
+
+        assert len(urls) == 2
+        assert "paris-75015" in urls[0]
+        assert "lyon-69007" in urls[1]
+
 
 # ---------------------------------------------------------------------------
 # has_valid_criteria / cannot_search_reason

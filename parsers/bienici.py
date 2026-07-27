@@ -310,19 +310,21 @@ class BienIciParser(BaseParser):
         return params
 
     def build_search_url(self, criteria: dict) -> str | None:
-        """L'URL de recherche bienici reconstruite à titre indicatif, ou None.
+        """Première URL — voir build_search_urls() pour toutes les localisations."""
+        urls = self.build_search_urls(criteria)
+        return urls[0] if urls else None
 
-        Contrairement à `to_native()`, ancrée sur la PREMIÈRE localisation
-        canonique reconstructible (voir `_url_anchor`), plutôt que sur les
-        zoneIds : ceux-ci sont opaques et ne portent aucun nom de périmètre
-        lisible, alors que le chemin de bienici en a besoin."""
-        anchor = next(
-            (a for loc in get_locations(criteria) if (a := self._url_anchor(loc)) is not None),
-            None,
-        )
-        if anchor is None:
-            return None
+    def build_search_urls(self, criteria: dict) -> list[str]:
+        """Une URL par localisation reconstructible, ou [] si aucune ne l'est.
 
+        Contrairement à `to_native()` (un seul appel API avec tous les
+        zoneIds), le chemin bienici (/recherche/{transaction}/{anchor}/{type})
+        n'accepte qu'un seul périmètre nommé à la fois (voir `_url_anchor`) :
+        impossible de fusionner plusieurs villes dans une même URL comme le
+        fait Laforet avec `filter[cities][]`. Avant ce correctif, une seule
+        URL (ancrée sur la première localisation reconstructible) était
+        renvoyée : une recherche à plusieurs villes affichait toujours le
+        lien de la première, les autres étant invisibles."""
         transaction = _TRANSACTION_SLUGS.get(criteria.get("transaction"), "location")
         property_types = criteria.get("propertyTypes") or []
         type_slug = _TYPE_SLUGS.get(property_types[0], "appartement") if property_types else "appartement"
@@ -337,9 +339,13 @@ class BienIciParser(BaseParser):
 
         query = urlencode(self._url_filters(criteria))
 
-        return (
-            f"{BASE_URL}/recherche/{transaction}/{anchor}/{type_slug}{rooms_segment}?{query}"
-        )
+        urls = []
+        for location in get_locations(criteria):
+            anchor = self._url_anchor(location)
+            if anchor is None:
+                continue
+            urls.append(f"{BASE_URL}/recherche/{transaction}/{anchor}/{type_slug}{rooms_segment}?{query}")
+        return urls
 
     # ------------------------------------------------------------------
     # Scraping
