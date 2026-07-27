@@ -759,11 +759,24 @@ class TestBuildSearchUrl:
         url = BienIciParser().build_search_url({"locations": [location]})
         assert "saint-etienne-du-rouvray-76800" in url
 
-    def test_a_whole_city_anchors_on_its_lowest_postal_code(self):
-        """Comme Laforêt (_path_anchor) : une ville entière n'a pas de code
-        postal unique, on prend le plus petit trié pour un chemin stable."""
+    def test_a_whole_city_anchors_on_the_generic_department_postal_code(self):
+        """# BUG corrigé : le plus petit code postal trié (75001, un
+        arrondissement précis) était utilisé pour « toute la ville », ce qui
+        montrait un lien « Paris 1er » quand l'utilisateur avait choisi
+        « Paris » (ville entière). Vérifié en direct sur un lien réel de
+        recherche bienici multi-localisation : le code générique du
+        département (paris-75000) est ce que bienici utilise pour désigner
+        une ville entière, jamais le premier arrondissement."""
         url = BienIciParser().build_search_url({"locations": [PARIS_WHOLE]})
-        assert "paris-75001" in url
+        assert "paris-75000" in url
+        assert "75001" not in url
+
+    def test_a_whole_city_with_a_three_digit_department_code_pads_correctly(self):
+        """Un DOM (ex. La Réunion, département 974) a un code à 3 chiffres,
+        pas 2 : le code générique reste sur 5 chiffres (97400, pas 9740)."""
+        location = make_whole_city_location("Saint-Denis", ("97400", "97490"), "97411")
+        url = BienIciParser().build_search_url({"locations": [location]})
+        assert "saint-denis-97400" in url
 
     def test_a_department_uses_its_name_and_code_with_no_network_call(self):
         """Vérifié en direct : bienici.com/recherche/achat/gironde-33 — le
@@ -868,29 +881,30 @@ class TestBuildSearchUrl:
     def test_build_search_urls_is_empty_not_a_list_holding_none(self):
         assert BienIciParser().build_search_urls({"locations": [make_department_location(code="")]}) == []
 
-    def test_several_locations_each_get_their_own_url(self):
-        """# BUG corrigé : le chemin bienici (/recherche/{transaction}/{anchor}/
-        {type}) n'accepte qu'un seul lieu nommé à la fois, contrairement au
-        `filter[cities][]` de Laforet — impossible de fusionner plusieurs
-        villes dans une seule URL. Avant ce test, `build_search_urls` ne
-        renvoyait que l'URL de la première localisation (voir
-        build_search_url), les autres étaient invisibles dans le lien
-        affiché alors que le scrape lui-même les couvrait bien toutes
-        (voir `_zone_ids`)."""
-        urls = BienIciParser().build_search_urls({"locations": [PARIS_15, LYON_7]})
+    def test_several_locations_are_comma_joined_in_a_single_anchor(self):
+        """# BUG corrigé : `build_search_url` n'ancrait le lien que sur la
+        première localisation reconstructible, les autres étaient invisibles
+        alors que le scrape lui-même (zoneIds combinés, voir `_zone_ids`) les
+        couvrait bien toutes. Vérifié en direct sur un lien réel de
+        recherche bienici à deux communes
+        (recherche/location/montrouge-92120,paris-75000/appartement) :
+        bienici accepte plusieurs périmètres nommés joints par une virgule
+        dans la même ancre, à la manière du `locations=` de SeLoger plutôt
+        que du `filter[cities][]` répété de Laforet."""
+        url = BienIciParser().build_search_url({"locations": [PARIS_15, LYON_7]})
 
-        assert len(urls) == 2
-        assert "paris-75015" in urls[0]
-        assert "lyon-69007" in urls[1]
+        assert "/location/paris-75015,lyon-69007/appartement" in url
 
-    def test_an_unresolvable_location_among_several_is_skipped_not_the_whole_list(self):
-        urls = BienIciParser().build_search_urls({
+    def test_a_location_repeated_twice_is_not_duplicated_in_the_anchor(self):
+        url = BienIciParser().build_search_url({"locations": [PARIS_15, dict(PARIS_15)]})
+        assert "/location/paris-75015/appartement" in url
+
+    def test_an_unresolvable_location_among_several_is_skipped_not_the_whole_url(self):
+        url = BienIciParser().build_search_url({
             "locations": [PARIS_15, make_department_location(code=""), LYON_7]
         })
 
-        assert len(urls) == 2
-        assert "paris-75015" in urls[0]
-        assert "lyon-69007" in urls[1]
+        assert "/location/paris-75015,lyon-69007/appartement" in url
 
 
 # ---------------------------------------------------------------------------

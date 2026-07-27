@@ -47,6 +47,22 @@ _TRANSACTION_SLUGS = {"rent": "location", "buy": "achat"}
 _TYPE_SLUGS = {"apartment": "appartement", "house": "maisonvilla", "parking": "parking", "land": "terrain"}
 
 
+def _whole_city_postal_code(postal_codes: list[str]) -> str | None:
+    """Le code postal générique d'une ville entière, pour l'ancre d'URL.
+
+    bienici identifie « toute la ville » par le code du département suivi de
+    zéros (`paris-75000`, confirmé en direct), jamais par le premier
+    arrondissement trié (`75001`) : ce dernier désigne un arrondissement
+    précis, pas la ville entière, et produisait un lien pour « Paris 1er »
+    quand l'utilisateur avait choisi « Paris » (toute la ville). Les DOM ont
+    un code département à 3 chiffres (`971`...`976`), le reste à 2."""
+    if not postal_codes:
+        return None
+    postal_code = postal_codes[0]
+    prefix_len = 3 if postal_code[:2] in ("97", "98") else 2
+    return postal_code[:prefix_len].ljust(5, "0")
+
+
 def _slugify(text: str) -> str:
     """Lowercase, strip accents, non-alnum -> '-' (même fonction que
     parsers.laforet._slugify, dupliquée ici plutôt que partagée : la seule
@@ -257,9 +273,10 @@ class BienIciParser(BaseParser):
 
         Vérifié en direct sur des URLs bienici.com réellement indexées :
 
-            commune     {slug(ville)}-{code postal}     paris-75000
-            département {slug(nom)}-{code département}  gironde-33
-            région      {slug(nom)}, SANS code           ile-de-france
+            commune      {slug(ville)}-{code postal}       montrouge-92120
+            ville entière {slug(ville)}-{code générique}    paris-75000
+            département  {slug(nom)}-{code département}     gironde-33
+            région       {slug(nom)}, SANS code             ile-de-france
 
         Le nom du département/région vient de l'autocomplete
         (core.geocode._department_suggestions/_region_suggestions) et
@@ -274,7 +291,8 @@ class BienIciParser(BaseParser):
         if kind == WHOLE_CITY:
             city = location.get("city")
             postal_codes = location.get("postalCodes") or []
-            return f"{_slugify(city)}-{sorted(postal_codes)[0]}" if city and postal_codes else None
+            code = _whole_city_postal_code(postal_codes)
+            return f"{_slugify(city)}-{code}" if city and code else None
         if kind == DEPARTMENT:
             name, code = location.get("name"), location.get("code")
             return f"{_slugify(name)}-{code}" if name and code else None
@@ -284,18 +302,17 @@ class BienIciParser(BaseParser):
         return None
 
     def _url_filters(self, criteria: dict) -> list[tuple[str, str]]:
-        """Les filtres prix/surface de l'URL, en query string.
+        """Les filtres prix/surface/tri de l'URL, en query string.
 
-        `prix-max`, `surface-min` et `tri` sont vérifiés en direct (repris
-        d'un referer réel de recherche bienici) ; `prix-min`/`surface-max`
-        sont extrapolés par symétrie de nommage, non vérifiés
-        individuellement mais cohérents avec la convention déjà confirmée.
-        `tri` trie par date de publication décroissante : cette source est
-        un tracker de nouveautés, le lien doit montrer ce que le scraper
-        lit. Pas de filtre chambres : aucune preuve qu'il existe côté URL,
-        contrairement aux pièces (voir le segment `{n}-pieces-et-plus` de
-        build_search_url)."""
-        params: list[tuple[str, str]] = [("tri", "publication-desc")]
+        Ordre et présence de chaque clé vérifiés en direct sur un lien réel
+        de recherche bienici (`?prix-min=650&prix-max=950&surface-min=18&
+        surface-max=40&tri=publication-desc`) : `tri` est en dernier, pas en
+        tête. `tri` trie par date de publication décroissante : cette
+        source est un tracker de nouveautés, le lien doit montrer ce que le
+        scraper lit. Pas de filtre chambres : aucune preuve qu'il existe
+        côté URL, contrairement aux pièces (voir le segment
+        `{n}-pieces-et-plus` de build_search_url)."""
+        params: list[tuple[str, str]] = []
 
         for query_key, canonical_key in (
             ("prix-min", "priceMin"),
@@ -307,24 +324,28 @@ class BienIciParser(BaseParser):
             if value is not None:
                 params.append((query_key, str(value)))
 
+        params.append(("tri", "publication-desc"))
         return params
 
     def build_search_url(self, criteria: dict) -> str | None:
-        """Première URL — voir build_search_urls() pour toutes les localisations."""
-        urls = self.build_search_urls(criteria)
-        return urls[0] if urls else None
+        """L'URL de recherche bienici reconstruite à titre indicatif, ou None.
 
-    def build_search_urls(self, criteria: dict) -> list[str]:
-        """Une URL par localisation reconstructible, ou [] si aucune ne l'est.
+        Toutes les localisations canoniques reconstructibles (voir
+        `_url_anchor`) sont jointes par des virgules dans le même segment de
+        chemin — vérifié en direct sur un lien réel couvrant deux communes
+        (`recherche/location/montrouge-92120,paris-75000/appartement`) :
+        contrairement à ce qu'un chemin `/recherche/{transaction}/{périmètre}
+        /{type}` unique pourrait laisser croire, bienici accepte plusieurs
+        périmètres nommés dans une seule ancre, à la manière du `locations=`
+        de SeLoger plutôt que du `filter[cities][]` répété de Laforet."""
+        anchors = []
+        for loc in get_locations(criteria):
+            anchor = self._url_anchor(loc)
+            if anchor is not None and anchor not in anchors:
+                anchors.append(anchor)
+        if not anchors:
+            return None
 
-        Contrairement à `to_native()` (un seul appel API avec tous les
-        zoneIds), le chemin bienici (/recherche/{transaction}/{anchor}/{type})
-        n'accepte qu'un seul périmètre nommé à la fois (voir `_url_anchor`) :
-        impossible de fusionner plusieurs villes dans une même URL comme le
-        fait Laforet avec `filter[cities][]`. Avant ce correctif, une seule
-        URL (ancrée sur la première localisation reconstructible) était
-        renvoyée : une recherche à plusieurs villes affichait toujours le
-        lien de la première, les autres étant invisibles."""
         transaction = _TRANSACTION_SLUGS.get(criteria.get("transaction"), "location")
         property_types = criteria.get("propertyTypes") or []
         type_slug = _TYPE_SLUGS.get(property_types[0], "appartement") if property_types else "appartement"
@@ -338,14 +359,9 @@ class BienIciParser(BaseParser):
         rooms_segment = f"/{min(rooms)}-pieces-et-plus" if rooms and min(rooms) >= 2 else ""
 
         query = urlencode(self._url_filters(criteria))
+        anchor = ",".join(anchors)
 
-        urls = []
-        for location in get_locations(criteria):
-            anchor = self._url_anchor(location)
-            if anchor is None:
-                continue
-            urls.append(f"{BASE_URL}/recherche/{transaction}/{anchor}/{type_slug}{rooms_segment}?{query}")
-        return urls
+        return f"{BASE_URL}/recherche/{transaction}/{anchor}/{type_slug}{rooms_segment}?{query}"
 
     # ------------------------------------------------------------------
     # Scraping
