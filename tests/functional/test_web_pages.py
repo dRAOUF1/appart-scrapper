@@ -467,34 +467,20 @@ class TestEditSearch:
         assert args.kwargs["label"] == "Nouveau libellé"
         assert args.kwargs["scrape_interval"] == 15
 
-    def test_an_invalid_edit_crashes_instead_of_showing_the_error(
+    def test_an_invalid_edit_shows_the_error_instead_of_crashing(
         self, web_client, storage, owned_search
     ):
-        """# BUG : la branche d'échec de validation rend `search_edit.html`
-        SANS lui passer `stats` (routes/web.py:418), alors que le template
-        l'utilise. Le rendu lève donc `UndefinedError` et l'utilisateur reçoit
-        une 500 — au lieu du message d'erreur qui venait d'être préparé juste
-        au-dessus.
+        """La branche d'échec de validation doit re-render `search_edit.html`
+        avec le message d'erreur, pas planter : elle passe `stats` au
+        template comme le fait déjà le chemin « heureux » (routes/web.py)."""
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Un libellé que je viens de taper",
+            "ntfy_topic": "topic",
+            "sources": "seloger",
+            # Pas de localisation : la validation échoue.
+        })
 
-        Autrement dit : toute tentative d'édition dont les critères sont
-        invalides pour une source produit une page d'erreur serveur. Le chemin
-        « heureux » et le chemin d'erreur du GET passent bien `stats`, ce qui
-        explique que ça n'ait pas été vu.
-
-        Ce test fige le comportement actuel. Le correctif est d'une ligne
-        (passer `stats` aussi dans cette branche), mais c'est un changement de
-        code de production, hors périmètre de la refonte des tests.
-        """
-        from jinja2.exceptions import UndefinedError
-
-        with pytest.raises(UndefinedError, match="stats"):
-            web_client.post("/searches/1/edit", data={
-                "label": "Un libellé que je viens de taper",
-                "ntfy_topic": "topic",
-                "sources": "seloger",
-                # Pas de localisation : la validation échoue.
-            })
-
+        assert resp.status_code == 200
         storage.searches.update_search.assert_not_called()
 
     def test_the_sources_fall_back_to_the_stored_ones(self, web_client, storage, user):

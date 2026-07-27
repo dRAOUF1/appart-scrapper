@@ -192,7 +192,11 @@ def build_search_url(criteria: dict, order: str | None = None) -> str:
     if criteria.get("estateTypes"):
         params["estateTypes"] = criteria["estateTypes"]
     if criteria.get("placeIds"):
-        params["locations"] = criteria["placeIds"]
+        # SeLoger attend les placeIds joints par des virgules dans une seule
+        # occurrence de `locations=` ; avec doseq=True et une liste, urlencode
+        # produit des paramètres répétés (locations=A&locations=B) que
+        # SeLoger ne traite pas comme prévu et où seul le premier est retenu.
+        params["locations"] = ",".join(criteria["placeIds"])
     if criteria.get("priceMin"):
         params["priceMin"] = criteria["priceMin"]
     if criteria.get("priceMax"):

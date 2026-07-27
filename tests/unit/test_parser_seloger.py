@@ -1020,9 +1020,11 @@ class TestBuildSearchUrl:
         assert "locations=AD08FR31096" in urls[0]
 
     def test_several_place_ids_are_all_in_the_url(self):
+        """Joints par une virgule dans une seule occurrence de `locations=` :
+        c'est le seul format que SeLoger honore pour toutes les villes
+        demandées (des occurrences répétées ne gardent que la première)."""
         url = SeLogerParser().build_search_url(manual(["AD08FR31096", "AD08FR36603"]))
-        assert "locations=AD08FR31096" in url
-        assert "locations=AD08FR36603" in url
+        assert "locations=AD08FR31096%2CAD08FR36603" in url
 
 
 # ---------------------------------------------------------------------------

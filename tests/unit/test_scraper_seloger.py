@@ -220,17 +220,20 @@ class TestBuildSearchUrl:
         c'est la seule clé dont le nom change à la traduction."""
         url = build_search_url({"placeIds": ["AD08FR31096", "AD08FR36603"]})
 
-        assert url == f"{SEARCH_URL}?locations=AD08FR31096&locations=AD08FR36603"
+        assert url == f"{SEARCH_URL}?locations=AD08FR31096%2CAD08FR36603"
         assert "placeIds" not in url
 
-    def test_lists_are_repeated_never_comma_joined(self):
-        """`doseq=True` : une liste devient N occurrences du paramètre. Un
-        `%2C` dans l'URL signifierait que la liste a été aplatie en une seule
-        valeur opaque, que SeLoger ne comprend pas."""
+    def test_place_ids_are_comma_joined_in_a_single_occurrence(self):
+        """Vérifié en direct contre seloger.com : avec des occurrences
+        répétées (`locations=A&locations=B`), le site ignore tout sauf la
+        première et renvoie 30/30 résultats d'une seule ville. Avec un unique
+        paramètre virgule (`locations=A,B`), les résultats couvrent bien
+        toutes les villes demandées. `doseq=True` sur une liste produirait la
+        forme répétée cassée — d'où le join manuel."""
         url = build_search_url({"placeIds": ["AD08FR31096", "AD08FR36603", "AD08FR36621"]})
 
-        assert url.count("locations=") == 3
-        assert "%2C" not in url and "," not in url
+        assert url.count("locations=") == 1
+        assert url == f"{SEARCH_URL}?locations=AD08FR31096%2CAD08FR36603%2CAD08FR36621"
 
     def test_order_is_added_only_when_provided(self):
         assert "order=" not in build_search_url({"priceMax": 900})
@@ -402,14 +405,20 @@ class TestParseSearchUrl:
 
     def test_a_full_real_url_round_trips_through_build(self):
         """L'aller-retour est ce qui garantit qu'une recherche relue produit la
-        même requête. `order` est le seul champ ajouté d'office."""
+        même requête. `order` est le seul champ ajouté d'office. `locations`
+        est reconstruit sous forme virgule (le seul format que SeLoger honore
+        pour toutes les villes, voir test_place_ids_are_comma_joined...),
+        même si l'URL d'origine utilisait des occurrences répétées."""
         original = f"{SEARCH_URL}?locations=AD08FR31096&locations=AD08FR36603&priceMax=1500&rooms=2&rooms=3"
 
         criteria = parse_search_url(original)
         rebuilt = build_search_url(criteria, order=criteria["order"])
 
         assert parse_search_url(rebuilt) == criteria
-        assert rebuilt == f"{original}&order=DateDesc"
+        assert rebuilt == (
+            f"{SEARCH_URL}?locations=AD08FR31096%2CAD08FR36603"
+            "&priceMax=1500&rooms=2&rooms=3&order=DateDesc"
+        )
 
 
 class TestSplitCsvValues:
