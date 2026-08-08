@@ -9,7 +9,7 @@
 #
 # `make help` liste toutes les cibles.
 
-.PHONY: help dev dev-stop dev-reset prod
+.PHONY: help dev dev-stop dev-reset prod docker-build docker-push
 
 VENV_ACTIVATE := venv/bin/activate
 DEV_DB_CONTAINER := appart-dev-pg
@@ -18,11 +18,17 @@ DEV_DB_URL := postgresql://devuser:devpass@localhost:55433/appartdev
 DEV_ENV_FILE := .env.dev
 DEV_PORT := 5050
 
+DOCKER_USER ?= draouf1
+DOCKER_IMAGE := $(DOCKER_USER)/appart-scrapper
+DOCKER_TAG := latest
+
 help:
-	@echo "make dev        — instance locale (DB Docker dédiée, jamais la prod)"
-	@echo "make dev-stop   — arrête le conteneur Postgres de dev (garde les données)"
-	@echo "make dev-reset  — supprime aussi les données de dev (repart de zéro)"
-	@echo "make prod       — instance branchée sur .env (ATTENTION : la prod si .env pointe dessus)"
+	@echo "make dev          — instance locale (DB Docker dédiée, jamais la prod)"
+	@echo "make dev-stop     — arrête le conteneur Postgres de dev (garde les données)"
+	@echo "make dev-reset    — supprime aussi les données de dev (repart de zéro)"
+	@echo "make prod         — instance branchée sur .env (ATTENTION : la prod si .env pointe dessus)"
+	@echo "make docker-build — build de l'image de production : $(DOCKER_IMAGE):$(DOCKER_TAG)"
+	@echo "make docker-push  — login + build + push vers Docker Hub (DOCKER_USER et DOCKER_TAG surchargeables)"
 
 ## Instance locale : DB Postgres Docker dédiée, jamais la production.
 dev:
@@ -64,3 +70,14 @@ prod:
 	@echo "⚠️  Cette instance va scraper et notifier EN PRODUCTION (scheduler actif toutes les 30s) si l'URL ci-dessus est bien la prod."
 	@read -p "Continuer ? [oui/non] " ans; [ "$$ans" = "oui" ] || { echo "Annulé."; exit 1; }
 	@bash -c 'source $(VENV_ACTIVATE) && python main.py'
+
+## Build de l'image de production. Surchargeable :
+##   DOCKER_USER=moncompte DOCKER_TAG=v1.0.0 make docker-build
+docker-build:
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+
+## Login + build + push vers Docker Hub.
+## `docker login` est interactif (identifiant + mot de passe/token).
+docker-push: docker-build
+	docker login
+	docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
