@@ -20,6 +20,7 @@ import psycopg2.extensions
 from notifier import Notifier
 from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
+from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.listing_repo import ListingRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
@@ -37,6 +38,7 @@ _REPOSITORIES = {
     "settings": SettingsRepository,
     "seloger_geo": SelogerGeoRepository,
     "bienici_geo": BienIciGeoRepository,
+    "century21_geo": Century21GeoRepository,
 }
 
 
@@ -73,6 +75,7 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.settings.get_setting.return_value = ""
     storage.seloger_geo.get_cached.return_value = None
     storage.bienici_geo.get_cached.return_value = None
+    storage.century21_geo.get_cached.return_value = None
 
     for name, value in repo_overrides.items():
         setattr(storage, name, value)

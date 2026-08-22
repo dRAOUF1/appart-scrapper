@@ -17,6 +17,7 @@ from loguru import logger
 
 from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
+from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.listing_repo import ListingRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
@@ -38,6 +39,7 @@ class Storage:
         self.settings = SettingsRepository(database_url)
         self.seloger_geo = SelogerGeoRepository(database_url)
         self.bienici_geo = BienIciGeoRepository(database_url)
+        self.century21_geo = Century21GeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -236,6 +238,17 @@ class Storage:
                     CREATE TABLE IF NOT EXISTS bienici_zone_ids (
                         area_key    TEXT PRIMARY KEY,
                         zone_ids    TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Même clé de périmètre (`area_key`) que les caches SeLoger et
+                # bienici — voir services.century21_geocode.area_cache_key.
+                # `slug_id` est le slug d'URL Century 21 (v-paris, cp-75001),
+                # une valeur unique comme le place_id de SeLoger.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS century21_geo_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        slug_id     TEXT,
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)

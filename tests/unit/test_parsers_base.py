@@ -34,7 +34,7 @@ from tests.helpers.factories import (
 from tests.helpers.fakes import fake_storage
 
 # Les seules sources réellement enregistrées par parsers/__init__.py.
-REAL_SOURCES = {"seloger", "laforet", "bienici"}
+REAL_SOURCES = {"seloger", "laforet", "bienici", "century21"}
 
 
 def make_parser_class(source_id: str = "", **attributes) -> type[BaseParser]:
@@ -213,23 +213,29 @@ class TestListSources:
         assert laforet["supported_transactions"] == ["rent", "buy"]
 
     def test_only_sources_with_an_opaque_place_id_declare_a_manual_override_field(self):
-        """SeLoger et bienici ne peuvent pas dériver leur identifiant de lieu
-        opaque (placeId / zoneId) d'un code INSEE : ce sont les seules sources
-        à proposer une saisie manuelle de repli. Laforêt n'en a pas besoin, son
-        périmètre se dérive directement du code INSEE."""
+        """SeLoger, bienici et Century 21 ne peuvent pas dériver leur identifiant
+        de lieu opaque (placeId / zoneId / slug d'URL) d'un code INSEE : ce sont
+        les seules sources à proposer une saisie manuelle de repli. Laforêt n'en
+        a pas besoin, son périmètre se dérive directement du code INSEE."""
         by_id = {s["id"]: s for s in ParserRegistry.list_sources()}
         assert by_id["seloger"]["manual_override_label"]
         assert by_id["seloger"]["manual_override_help"]
         assert by_id["bienici"]["manual_override_label"]
         assert by_id["bienici"]["manual_override_help"]
+        assert by_id["century21"]["manual_override_label"]
+        assert by_id["century21"]["manual_override_help"]
         assert by_id["laforet"]["manual_override_label"] == ""
 
-    def test_only_laforet_declares_a_url_note(self):
-        """URL_NOTE explique dans l'UI pourquoi le lien Laforêt montre plus large
-        que la recherche (pas de surface maximale, pièces en minimum)."""
+    def test_only_laforet_and_century21_declare_a_url_note(self):
+        """URL_NOTE explique dans l'UI pourquoi le lien montré diffère de la
+        recherche : Laforêt montre plus large (pas de surface maximale, pièces en
+        minimum), Century 21 ne porte pas ses filtres prix/surface/pièces dans le
+        lien reconstruit (ils sont appliqués côté scraper)."""
         by_id = {s["id"]: s for s in ParserRegistry.list_sources()}
         assert by_id["laforet"]["url_note"]
+        assert by_id["century21"]["url_note"]
         assert by_id["seloger"]["url_note"] == ""
+        assert by_id["bienici"]["url_note"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +584,7 @@ class TestPackageHelpers:
         """Ce que le reste de l'application importe depuis `parsers`."""
         assert set(parsers.__all__) == {
             "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
-            "SeLogerParser", "LaforetParser", "BienIciParser",
+            "SeLogerParser", "LaforetParser", "BienIciParser", "Century21Parser",
         }
 
 

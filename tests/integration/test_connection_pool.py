@@ -44,15 +44,15 @@ def _scalar(conn, sql, params=None):
 
 class TestPoolSharing:
     def test_all_repositories_of_one_storage_share_the_same_pool_object(self, storage):
-        """Le pool est un attribut de CLASSE indexé par URL : les sept repos
+        """Le pool est un attribut de CLASSE indexé par URL : les neuf repos
         d'un `Storage` doivent tomber sur le même objet, sinon chaque repo
-        ouvrirait ses propres 20 connexions (140 au total)."""
+        ouvrirait ses propres 20 connexions (180 au total)."""
         pools = {
             id(repo._get_pool())
             for repo in (
                 storage.users, storage.searches, storage.listings,
                 storage.scrape_logs, storage.admin, storage.settings,
-                storage.seloger_geo,
+                storage.seloger_geo, storage.bienici_geo, storage.century21_geo,
             )
         }
 
