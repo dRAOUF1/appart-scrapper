@@ -278,7 +278,7 @@ def test_one_source_out_of_several_is_enough_semantics_of_any():
     "sources",
     [
         pytest.param(["leboncoin"], id="une-seule-source-inconnue"),
-        pytest.param(["leboncoin", "pap"], id="plusieurs-sources-inconnues"),
+        pytest.param(["leboncoin", "trevi"], id="plusieurs-sources-inconnues"),
         pytest.param([""], id="slug-vide"),
     ],
 )
