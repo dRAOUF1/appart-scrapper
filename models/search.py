@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
 
@@ -15,6 +15,7 @@ class Search:
     label: str
     ntfy_topic: str
     source: str = "seloger"
+    sources: list[str] = field(default_factory=list)
     criteria: dict = field(default_factory=dict)
     scrape_interval: int = 5
     last_scraped: datetime | None = None
@@ -35,11 +36,24 @@ class Search:
         return d
 
     def has_valid_criteria(self) -> bool:
-        return bool(
-            self.criteria
-            and isinstance(self.criteria, dict)
-            and self.criteria.get("placeIds")
-        )
+        """True if at least one of this search's sources can run with `criteria`.
+
+        Each source encodes location differently (opaque placeIds vs.
+        city/postal code, ...), so validity is delegated to the parsers
+        rather than checking a single hardcoded key here.
+        """
+        if not self.criteria or not isinstance(self.criteria, dict):
+            return False
+        from parsers import get_parser
+
+        for src in (self.sources or [self.source]):
+            try:
+                parser = get_parser(src)
+            except ValueError:
+                continue
+            if parser.has_valid_criteria(self.criteria):
+                return True
+        return False
 
     def should_scrape(self, now: datetime) -> bool:
         if not self.is_active:

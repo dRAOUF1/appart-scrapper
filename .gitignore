@@ -2,7 +2,19 @@ venv/*
 browser_profile_uc/*
 **/__pycache__/*
 .env
+.env.dev
 seloger_scraper.log
 .opencodelogs/
 
 logs/
+
+# Dumps de base : ne doivent jamais entrer dans le dépôt (données réelles).
+*.sql
+# Sortie de l'outil graphify (artefacts locaux).
+graphify-out/
+
+# Artefacts de couverture (pytest-cov / coverage.py).
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

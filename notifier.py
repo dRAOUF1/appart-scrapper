@@ -20,7 +20,10 @@ class Notifier:
         """Remove non-ASCII characters from header values (HTTP headers are latin-1)."""
         return value.encode("ascii", errors="replace").decode("ascii")
 
-    def send(self, topic: str, title: str, message: str, url: str = "", priority: str = "", tags: str = "house") -> bool:
+    def send(
+        self, topic: str, title: str, message: str,
+        url: str = "", priority: str = "", tags: str = "house",
+    ) -> bool:
         """
         Send a notification via ntfy to a specific topic.
 
@@ -55,12 +58,26 @@ class Notifier:
             if resp.status_code == 200:
                 logger.debug(f"Notification envoyee [{topic}]: {title}")
                 return True
-            else:
-                logger.warning(f"Erreur ntfy ({resp.status_code}): {resp.text}")
-                return False
+            logger.warning(f"Erreur ntfy ({resp.status_code}): {resp.text}")
+            return False
         except requests.RequestException as e:
             logger.error(f"Erreur reseau ntfy : {e}")
             return False
+
+    def _source_label(self, source: str) -> str:
+        """Display name for a listing's source (e.g. 'laforet' -> 'Laforêt').
+
+        Falls back to the raw source string for an unregistered source, or
+        empty if there's none at all — never hardcodes a single source name,
+        since notifications now come from more than just SeLoger.
+        """
+        if not source:
+            return ""
+        try:
+            from parsers import get_parser
+            return get_parser(source).SOURCE_NAME
+        except ValueError:
+            return source
 
     def notify_new_listing(self, topic: str, listing) -> bool:
         """Send a formatted notification for a new listing."""
@@ -79,11 +96,7 @@ class Notifier:
 
         message = "\n".join(parts) if parts else "Nouvelle annonce disponible"
 
-        # if listing.description:
-        #     message += f"\n\n{listing.description[:200]}"
-
-        # title = listing.title if listing.title else "Nouvelle annonce SeLoger"
-        title = "Nouvelle annonce SeLoger"
+        title = f"Nouvelle annonce {self._source_label(listing.source)}".rstrip()
 
         return self.send(
             topic=topic,
@@ -92,16 +105,6 @@ class Notifier:
             url=listing.url,
             priority="high",
             tags="house,new",
-        )
-
-    def notify_bot_detected(self, topic: str, search_url: str = "") -> bool:
-        """Send an alert when bot detection / CAPTCHA is triggered."""
-        return self.send(
-            topic=topic,
-            title="ALERTE - Bot detecte par SeLoger",
-            message=f"SeLoger a detecte le scraper (CAPTCHA/blocage).\nURL: {search_url[:100]}\n\nActions possibles:\n- Augmenter action_delay dans config.yaml\n- Desactiver le mode headless\n- Attendre quelques minutes",
-            priority="urgent",
-            tags="warning,robot",
         )
 
     def notify_summary(self, topic: str, new_count: int, total_scanned: int, search_url: str = "") -> bool:
@@ -124,7 +127,7 @@ class Notifier:
         """Send a test notification to verify configuration."""
         return self.send(
             topic=topic,
-            title="SeLoger Scraper - Test",
+            title="Appart Scraper - Test",
             message="Les notifications fonctionnent ! Le scraper est pret.",
             tags="white_check_mark",
             priority="low",

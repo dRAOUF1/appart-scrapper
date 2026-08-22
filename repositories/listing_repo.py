@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import psycopg2
 import psycopg2.extras
-from psycopg2.extras import execute_values
 from loguru import logger
+from psycopg2.extras import execute_values
 
 from repositories.base import BaseRepository
 
@@ -21,46 +19,6 @@ def _clean_string(s: str) -> str:
 
 class ListingRepository(BaseRepository):
     """Listing CRUD operations."""
-
-    def save_listing(self, listing) -> bool:
-        conn = self._get_conn_for_request()
-        try:
-            with conn.cursor() as cur:
-                def clean(v):
-                    return _clean_string(v) if isinstance(v, str) else v
-
-                cur.execute(
-                    """INSERT INTO listings
-                       (listing_id, url, title, price, surface, rooms,
-                        location, image_url, description, agency, source,
-                        legacy_id, price_value, price_details, city, district,
-                        zip_code, property_type, is_private, phone,
-                        epc, ges, is_new, is_exclusive, has_3d_visit,
-                        creation_date, update_date, headline, photos)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                               %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                               %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (
-                        listing.listing_id, listing.url, clean(listing.title),
-                        clean(listing.price), listing.surface, listing.rooms,
-                        clean(listing.location), clean(listing.image_url),
-                        clean(listing.description), clean(listing.agency), listing.source,
-                        listing.legacy_id, listing.price_value, clean(listing.price_details),
-                        clean(listing.city), clean(listing.district), listing.zip_code,
-                        clean(listing.property_type), listing.is_private, clean(listing.phone),
-                        listing.epc, listing.ges, listing.is_new,
-                        listing.is_exclusive, listing.has_3d_visit,
-                        listing.creation_date, listing.update_date,
-                        clean(listing.headline), clean(listing.photos),
-                    ),
-                )
-                conn.commit()
-                return True
-        except psycopg2.IntegrityError:
-            conn.rollback()
-            return False
-        finally:
-            self._release_conn(conn)
 
     def link_listing_to_search(self, search_id: int, listing_id: str) -> bool:
         conn = self._get_conn_for_request()
@@ -84,8 +42,6 @@ class ListingRepository(BaseRepository):
         Returns:
             (new_listings, already_linked)
         """
-        from datetime import datetime, timedelta
-
         if not listings:
             return [], []
 
@@ -97,14 +53,16 @@ class ListingRepository(BaseRepository):
 
                 listing_data = [
                     (
-                        l.listing_id, l.url, clean(l.title), clean(l.price), l.surface, l.rooms,
-                        clean(l.location), clean(l.image_url), clean(l.description), clean(l.agency), l.source,
-                        l.legacy_id, l.price_value, clean(l.price_details), clean(l.city), clean(l.district),
-                        l.zip_code, clean(l.property_type), l.is_private, clean(l.phone),
-                        l.epc, l.ges, l.is_new, l.is_exclusive, l.has_3d_visit,
-                        l.creation_date, l.update_date, clean(l.headline), clean(l.photos),
+                        item.listing_id, item.url, clean(item.title), clean(item.price), item.surface, item.rooms,
+                        clean(item.location), clean(item.image_url), clean(item.description),
+                        clean(item.agency), item.source,
+                        item.legacy_id, item.price_value, clean(item.price_details),
+                        clean(item.city), clean(item.district),
+                        item.zip_code, clean(item.property_type), item.is_private, clean(item.phone),
+                        item.epc, item.ges, item.is_new, item.is_exclusive, item.has_3d_visit,
+                        item.creation_date, item.update_date, clean(item.headline), clean(item.photos),
                     )
-                    for l in listings
+                    for item in listings
                 ]
 
                 execute_values(cur, """
@@ -118,24 +76,22 @@ class ListingRepository(BaseRepository):
                     ON CONFLICT (listing_id) DO NOTHING
                 """, listing_data, page_size=100)
 
-                link_data = [(search_id, l.listing_id) for l in listings]
-                execute_values(cur, """
-                    INSERT INTO search_listings (search_id, listing_id)
+                # notified=FALSE explicitly on every new link, regardless of the
+                # column's DEFAULT TRUE (which exists only to backfill pre-existing
+                # rows as "already notified" when the column was introduced).
+                link_data = [(search_id, item.listing_id, False) for item in listings]
+                inserted = execute_values(cur, """
+                    INSERT INTO search_listings (search_id, listing_id, notified)
                     VALUES %s
                     ON CONFLICT DO NOTHING
-                """, link_data, page_size=100)
+                    RETURNING listing_id
+                """, link_data, page_size=100, fetch=True)
 
                 conn.commit()
 
-                threshold = datetime.utcnow() - timedelta(seconds=30)
-                cur.execute(
-                    "SELECT listing_id FROM search_listings WHERE search_id = %s AND found_at >= %s",
-                    (search_id, threshold),
-                )
-                linked_ids = {row[0] for row in cur.fetchall()}
-
-            new_for_search = [l for l in listings if l.listing_id in linked_ids]
-            already_linked = [l for l in listings if l.listing_id not in linked_ids]
+            newly_linked_ids = {row[0] for row in inserted}
+            new_for_search = [item for item in listings if item.listing_id in newly_linked_ids]
+            already_linked = [item for item in listings if item.listing_id not in newly_linked_ids]
             return new_for_search, already_linked
         except Exception:
             conn.rollback()
@@ -143,22 +99,142 @@ class ListingRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0, blacklisted_agencies: list[str] | None = None) -> list[dict]:
+    def get_unnotified_listings_for_search(self, search_id: int) -> list:
+        """Listings linked to a search but not yet successfully notified.
+
+        Includes this run's new listings plus any left over from a previous
+        scrape that crashed or failed to deliver the notification, so nothing
+        is silently lost.
+        """
+        from models.listing import Listing
+
+        conn = self._get_conn_for_request()
+        try:
+            with self._dict_cursor(conn) as cur:
+                cur.execute("""
+                    SELECT l.* FROM search_listings sl
+                    JOIN listings l ON l.listing_id = sl.listing_id
+                    WHERE sl.search_id = %s AND sl.notified = FALSE
+                """, (search_id,))
+                return [Listing.from_dict(dict(row)) for row in cur.fetchall()]
+        finally:
+            self._release_conn(conn)
+
+    def mark_listings_notified(self, search_id: int, listing_ids: list[str]) -> None:
+        """Mark listings as successfully notified for this search."""
+        if not listing_ids:
+            return
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE search_listings SET notified = TRUE "
+                    "WHERE search_id = %s AND listing_id = ANY(%s)",
+                    (search_id, listing_ids),
+                )
+                conn.commit()
+        finally:
+            self._release_conn(conn)
+
+    def _build_filter_clauses(self, filters: dict, params: list, prefix: str = "l.") -> str:
+        clauses = []
+        if filters.get("q"):
+            val = f"%{filters['q']}%"
+            clauses.append(
+                f"({prefix}title ILIKE %s OR {prefix}location ILIKE %s"
+                f" OR {prefix}agency ILIKE %s OR {prefix}description ILIKE %s)"
+            )
+            params.extend([val, val, val, val])
+        if filters.get("price_min") is not None:
+            clauses.append(f"{prefix}price_value >= %s")
+            params.append(filters["price_min"])
+        if filters.get("price_max") is not None:
+            clauses.append(f"{prefix}price_value <= %s")
+            params.append(filters["price_max"])
+        if filters.get("surface_min") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) >= %s")
+            params.append(filters["surface_min"])
+        if filters.get("surface_max") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) <= %s")
+            params.append(filters["surface_max"])
+        if filters.get("rooms_min") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}rooms, '[^0-9.]', '', 'g'), '') AS NUMERIC) >= %s")
+            params.append(filters["rooms_min"])
+        if filters.get("rooms_max") is not None:
+            clauses.append(f"CAST(NULLIF(REGEXP_REPLACE({prefix}rooms, '[^0-9.]', '', 'g'), '') AS NUMERIC) <= %s")
+            params.append(filters["rooms_max"])
+        if filters.get("city"):
+            clauses.append(f"{prefix}city ILIKE %s")
+            params.append(f"%{filters['city']}%")
+        if filters.get("district"):
+            clauses.append(f"{prefix}district ILIKE %s")
+            params.append(f"%{filters['district']}%")
+        if filters.get("zip_code"):
+            clauses.append(f"{prefix}zip_code = %s")
+            params.append(filters["zip_code"])
+        if filters.get("property_type"):
+            clauses.append(f"{prefix}property_type = %s")
+            params.append(filters["property_type"])
+        if filters.get("agency"):
+            clauses.append(f"{prefix}agency = %s")
+            params.append(filters["agency"])
+        if filters.get("epc"):
+            clauses.append(f"{prefix}epc = %s")
+            params.append(filters["epc"])
+        if filters.get("ges"):
+            clauses.append(f"{prefix}ges = %s")
+            params.append(filters["ges"])
+        if filters.get("is_private") is not None:
+            clauses.append(f"{prefix}is_private = %s")
+            params.append(filters["is_private"])
+        if filters.get("is_new") is not None:
+            clauses.append(f"{prefix}is_new = %s")
+            params.append(filters["is_new"])
+        if filters.get("date_min"):
+            clauses.append(f"{prefix}creation_date >= %s")
+            params.append(filters["date_min"])
+        if filters.get("blacklisted_agencies"):
+            placeholders = ",".join(["%s"] * len(filters["blacklisted_agencies"]))
+            clauses.append(f"{prefix}agency NOT IN ({placeholders})")
+            params.extend(filters["blacklisted_agencies"])
+        return " AND ".join(clauses)
+
+    def _build_order_clause(self, sort: str = "found_at_desc") -> str:
+        sort_map = {
+            "found_at_desc": "sl.found_at DESC",
+            "found_at_asc": "sl.found_at ASC",
+            "price_asc": "l.price_value ASC NULLS LAST",
+            "price_desc": "l.price_value DESC NULLS LAST",
+            "surface_asc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) ASC NULLS LAST",
+            "surface_desc": (
+                "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST"
+            ),
+            "date_desc": "l.creation_date DESC NULLS LAST",
+            "date_asc": "l.creation_date ASC NULLS LAST",
+        }
+        return sort_map.get(sort, "sl.found_at DESC")
+
+    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0,
+                                blacklisted_agencies: list[str] | None = None,
+                                filters: dict | None = None, sort: str = "found_at_desc") -> list[dict]:
+        effective_filters = dict(filters) if filters else {}
+        if blacklisted_agencies:
+            effective_filters["blacklisted_agencies"] = blacklisted_agencies
+
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
                 query = """SELECT l.*, sl.found_at
-                       FROM listings l
-                       JOIN search_listings sl ON sl.listing_id = l.listing_id
-                       WHERE sl.search_id = %s"""
+FROM listings l
+JOIN search_listings sl ON sl.listing_id = l.listing_id
+WHERE sl.search_id = %s"""
                 params = [search_id]
 
-                if blacklisted_agencies:
-                    placeholders = ",".join(["%s"] * len(blacklisted_agencies))
-                    query += f" AND l.agency NOT IN ({placeholders})"
+                filter_clauses = self._build_filter_clauses(effective_filters, params)
+                if filter_clauses:
+                    query += " AND " + filter_clauses
 
-                query += " ORDER BY sl.found_at DESC LIMIT %s OFFSET %s"
-                params.extend(blacklisted_agencies if blacklisted_agencies else [])
+                query += f" ORDER BY {self._build_order_clause(sort)} LIMIT %s OFFSET %s"
                 params.extend([limit, offset])
 
                 cur.execute(query, params)
@@ -166,20 +242,60 @@ class ListingRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None) -> int:
+    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None,
+                                  filters: dict | None = None) -> int:
+        effective_filters = dict(filters) if filters else {}
+        if blacklisted_agencies:
+            effective_filters["blacklisted_agencies"] = blacklisted_agencies
+
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
-                query = "SELECT COUNT(*) AS cnt FROM search_listings sl JOIN listings l ON l.listing_id = sl.listing_id WHERE sl.search_id = %s"
+                query = (
+                    "SELECT COUNT(*) AS cnt FROM search_listings sl"
+                    " JOIN listings l ON l.listing_id = sl.listing_id WHERE sl.search_id = %s"
+                )
                 params = [search_id]
 
-                if blacklisted_agencies:
-                    placeholders = ",".join(["%s"] * len(blacklisted_agencies))
-                    query += f" AND l.agency NOT IN ({placeholders})"
-                    params.extend(blacklisted_agencies)
+                filter_clauses = self._build_filter_clauses(effective_filters, params)
+                if filter_clauses:
+                    query += " AND " + filter_clauses
 
                 cur.execute(query, params)
                 return cur.fetchone()[0]
+        finally:
+            self._release_conn(conn)
+
+    def get_filter_options(self, search_id: int) -> dict:
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                result = {}
+                for col in ("city", "district", "zip_code", "property_type", "agency", "epc", "ges"):
+                    cur.execute(
+                        f"""SELECT DISTINCT l.{col}
+FROM listings l
+JOIN search_listings sl ON sl.listing_id = l.listing_id
+WHERE sl.search_id = %s AND l.{col} IS NOT NULL AND l.{col} != ''
+ORDER BY l.{col}""",
+                        (search_id,),
+                    )
+                    result[col] = [row[0] for row in cur.fetchall()]
+                cur.execute(
+                    """SELECT COUNT(*) FILTER (WHERE l.is_private = TRUE),
+COUNT(*) FILTER (WHERE l.is_private = FALSE),
+COUNT(*) FILTER (WHERE l.is_new = TRUE),
+COUNT(*) FILTER (WHERE l.is_new = FALSE)
+FROM listings l JOIN search_listings sl ON sl.listing_id = l.listing_id
+WHERE sl.search_id = %s""",
+                    (search_id,),
+                )
+                row = cur.fetchone()
+                result["has_private"] = row[0] > 0
+                result["has_non_private"] = row[1] > 0
+                result["has_new"] = row[2] > 0
+                result["has_not_new"] = row[3] > 0
+                return result
         finally:
             self._release_conn(conn)
 
@@ -188,8 +304,8 @@ class ListingRepository(BaseRepository):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM listings WHERE first_seen < NOW() - INTERVAL '%s days'",
-                    (str(days),),
+                    "DELETE FROM listings WHERE first_seen < NOW() - make_interval(days => %s)",
+                    (days,),
                 )
                 conn.commit()
                 deleted = cur.rowcount
@@ -292,7 +408,7 @@ class ListingRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_listing_detail(self, listing_id: str) -> Optional[dict]:
+    def get_listing_detail(self, listing_id: str) -> dict | None:
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:

@@ -3,139 +3,266 @@
 
 {% block content %}
 <div class="page-header">
-    <div>
-        <a href="{{ url_for('web.searches') }}" class="back-link">← Recherches</a>
-        <h1>{{ search.label }}</h1>
-        <div class="meta-info">
-            <span>{{ total }} annonce{{ 's' if total != 1 else '' }}</span>
-            <span>·</span>
-            <span class="badge badge-source">{{ search.source }}</span>
-            <span>·</span>
-            <code>{{ search.ntfy_topic }}</code>
-        </div>
+  <div>
+    <a href="{{ url_for('web.searches') }}" class="back-link">← Recherches</a>
+    <h1>{{ search.label }}</h1>
+    <div class="meta-info">
+      <span>{{ total }} annonce{{ 's' if total != 1 else '' }}</span>
+      <span>·</span>
+      <span class="badge badge-source">{{ search.source }}</span>
+      <span>·</span>
+      <code>{{ search.ntfy_topic }}</code>
     </div>
+  </div>
 </div>
 
 <!-- Filter bar -->
-<div class="filter-bar card">
-    <div class="filter-row">
-        <div class="filter-group">
-            <label>🔎 Recherche</label>
-            <input type="text" id="filter-text" placeholder="Titre, lieu, agence…" oninput="applyFilters()">
-        </div>
-        <div class="filter-group">
-            <label>💶 Prix max (€)</label>
-            <input type="number" id="filter-price" placeholder="ex: 900" oninput="applyFilters()">
-        </div>
-        <div class="filter-group">
-            <label>📐 Surface min (m²)</label>
-            <input type="number" id="filter-surface" placeholder="ex: 30" oninput="applyFilters()">
-        </div>
-        <div class="filter-group">
-            <label>🚪 Pièces min</label>
-            <input type="number" id="filter-rooms" placeholder="ex: 2" min="1" max="10" oninput="applyFilters()">
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="resetFilters()">Réinitialiser</button>
+<form class="filter-bar card" method="GET" action="{{ url_for('web.listings', search_id=search.id) }}" id="filter-form">
+  <div class="filter-main-row">
+    <div class="filter-group fg-search">
+      <label>🔎 Recherche</label>
+      <input type="text" name="q" value="{{ active_filters.get('q', '') }}" placeholder="Titre, lieu, agence, description…">
     </div>
-    <div id="filter-count" class="filter-count text-muted"></div>
-</div>
+    <div class="filter-group fg-price">
+      <label>💶 Prix</label>
+      <div class="filter-range">
+        <input type="number" name="price_min" value="{{ active_filters.get('price_min', '') }}" placeholder="Min" min="0">
+        <span class="range-sep">—</span>
+        <input type="number" name="price_max" value="{{ active_filters.get('price_max', '') }}" placeholder="Max" min="0">
+      </div>
+    </div>
+    <div class="filter-group fg-surface">
+      <label>📐 Surface (m²)</label>
+      <div class="filter-range">
+        <input type="number" name="surface_min" value="{{ active_filters.get('surface_min', '') }}" placeholder="Min" min="0">
+        <span class="range-sep">—</span>
+        <input type="number" name="surface_max" value="{{ active_filters.get('surface_max', '') }}" placeholder="Max" min="0">
+      </div>
+    </div>
+    <div class="filter-group fg-rooms">
+      <label>🚪 Pièces</label>
+      <div class="filter-range">
+        <input type="number" name="rooms_min" value="{{ active_filters.get('rooms_min', '') }}" placeholder="Min" min="0" max="20">
+        <span class="range-sep">—</span>
+        <input type="number" name="rooms_max" value="{{ active_filters.get('rooms_max', '') }}" placeholder="Max" min="0" max="20">
+      </div>
+    </div>
+    <div class="filter-group fg-sort">
+      <label>↕️ Tri</label>
+      <select name="sort">
+        <option value="found_at_desc" {{ 'selected' if sort == 'found_at_desc' else '' }}>Plus récentes</option>
+        <option value="found_at_asc" {{ 'selected' if sort == 'found_at_asc' else '' }}>Plus anciennes</option>
+        <option value="price_asc" {{ 'selected' if sort == 'price_asc' else '' }}>Prix croissant</option>
+        <option value="price_desc" {{ 'selected' if sort == 'price_desc' else '' }}>Prix décroissant</option>
+        <option value="surface_asc" {{ 'selected' if sort == 'surface_asc' else '' }}>Surface croissante</option>
+        <option value="surface_desc" {{ 'selected' if sort == 'surface_desc' else '' }}>Surface décroissante</option>
+        <option value="date_desc" {{ 'selected' if sort == 'date_desc' else '' }}>Date publication ↓</option>
+        <option value="date_asc" {{ 'selected' if sort == 'date_asc' else '' }}>Date publication ↑</option>
+      </select>
+    </div>
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Filtrer</button>
+      <a href="{{ url_for('web.listings', search_id=search.id) }}" class="btn btn-ghost btn-sm">Réinitialiser</a>
+    </div>
+  </div>
+
+  <!-- Advanced filters toggle -->
+  <button type="button" class="advanced-toggle" id="advanced-toggle" onclick="toggleAdvanced()">
+    <span id="advanced-arrow">▶</span> Recherche avancée
+  </button>
+
+  <div class="filter-advanced" id="filter-advanced" style="display:none;">
+    <div class="filter-advanced-grid">
+      <div class="filter-group">
+        <label>📍 Ville</label>
+        <select name="city">
+          <option value="">— Toutes —</option>
+          {% for v in filter_options.get('city', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('city') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>🏘️ Quartier</label>
+        <select name="district">
+          <option value="">— Tous —</option>
+          {% for v in filter_options.get('district', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('district') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>📮 Code postal</label>
+        <select name="zip_code">
+          <option value="">— Tous —</option>
+          {% for v in filter_options.get('zip_code', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('zip_code') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>🏗️ Type de bien</label>
+        <select name="property_type">
+          <option value="">— Tous —</option>
+          {% for v in filter_options.get('property_type', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('property_type') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>🏢 Agence</label>
+        <select name="agency">
+          <option value="">— Toutes —</option>
+          {% for v in filter_options.get('agency', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('agency') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>⚡ DPE</label>
+        <select name="epc">
+          <option value="">— Tous —</option>
+          {% for v in filter_options.get('epc', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('epc') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>🌿 GES</label>
+        <select name="ges">
+          <option value="">— Tous —</option>
+          {% for v in filter_options.get('ges', []) %}
+          <option value="{{ v }}" {{ 'selected' if active_filters.get('ges') == v else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>👤 Particulier</label>
+        <select name="is_private">
+          <option value="">— Tous —</option>
+          {% if filter_options.get('has_private') %}
+          <option value="true" {{ 'selected' if active_filters.get('is_private') == 'true' else '' }}>Oui</option>
+          {% endif %}
+          {% if filter_options.get('has_non_private') %}
+          <option value="false" {{ 'selected' if active_filters.get('is_private') == 'false' else '' }}>Non (agence)</option>
+          {% endif %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>🆕 Neuf</label>
+        <select name="is_new">
+          <option value="">— Tous —</option>
+          {% if filter_options.get('has_new') %}
+          <option value="true" {{ 'selected' if active_filters.get('is_new') == 'true' else '' }}>Oui</option>
+          {% endif %}
+          {% if filter_options.get('has_not_new') %}
+          <option value="false" {{ 'selected' if active_filters.get('is_new') == 'false' else '' }}>Non</option>
+          {% endif %}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>📅 Publiée après</label>
+        <input type="date" name="date_min" value="{{ active_filters.get('date_min', '') }}">
+      </div>
+    </div>
+  </div>
+</form>
 
 <!-- Agency Blacklist -->
 {% if available_agencies %}
 <details class="card" style="margin-bottom: 1rem;">
-    <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">
-        🚫 Blacklist agences ({{ search.blacklisted_agencies|length }})
-    </summary>
-    <form method="POST" action="{{ url_for('web.update_blacklist_mode', search_id=search.id) }}" style="margin-top: 0.75rem;">
-        <div class="form-group">
-            <label style="font-size: 0.85rem; color: var(--text-secondary);">Mode de blacklist</label>
-            <select name="mode" style="width: 100%; padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
-                <option value="exclude" {% if blacklist_mode == 'exclude' %}selected{% endif %}>🚫 Exclure (pas dans les résultats, pas de notif)</option>
-                <option value="no_notify" {% if blacklist_mode == 'no_notify' %}selected{% endif %}>🔕 Ne pas notifier (visible mais pas de notification)</option>
-            </select>
-        </div>
-        <button type="submit" class="btn btn-ghost btn-sm" style="margin-top: 0.5rem;">Changer le mode</button>
-    </form>
-    <form method="POST" action="{{ url_for('web.update_blacklist_agencies', search_id=search.id) }}" style="margin-top: 0.75rem;">
-        <div class="agency-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 0.75rem;">
-            {% for agency in available_agencies %}
-            <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: var(--radius-sm); transition: var(--transition-fast);">
-                <input type="checkbox" name="agencies" value="{{ agency }}" {% if search.blacklisted_agencies and agency in search.blacklisted_agencies %}checked{% endif %} style="width: auto;">
-                <span style="font-size: 0.85rem;">{{ agency }}</span>
-            </label>
-            {% endfor %}
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">Mettre à jour la blacklist</button>
-    </form>
+  <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; padding: 0.5rem 0;">
+    🚫 Blacklist agences ({{ search.blacklisted_agencies|length }})
+  </summary>
+  <form method="POST" action="{{ url_for('web.update_blacklist_mode', search_id=search.id) }}" style="margin-top: 0.75rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-group">
+      <label style="font-size: 0.85rem; color: var(--text-secondary);">Mode de blacklist</label>
+      <select name="mode" style="width: 100%; padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-primary);">
+        <option value="exclude" {% if blacklist_mode == 'exclude' %}selected{% endif %}>🚫 Exclure (pas dans les résultats, pas de notif)</option>
+        <option value="no_notify" {% if blacklist_mode == 'no_notify' %}selected{% endif %}>🔕 Ne pas notifier (visible mais pas de notification)</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-ghost btn-sm" style="margin-top: 0.5rem;">Changer le mode</button>
+  </form>
+  <form method="POST" action="{{ url_for('web.update_blacklist_agencies', search_id=search.id) }}" style="margin-top: 0.75rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="agency-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 0.75rem;">
+      {% for agency in available_agencies %}
+      <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; cursor: pointer; border-radius: var(--radius-sm); transition: var(--transition-fast);">
+        <input type="checkbox" name="agencies" value="{{ agency }}" {% if search.blacklisted_agencies and agency in search.blacklisted_agencies %}checked{% endif %} style="width: auto;">
+        <span style="font-size: 0.85rem;">{{ agency }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">Mettre à jour la blacklist</button>
+  </form>
 </details>
 {% endif %}
 
 {% if listings %}
 <div class="listing-grid" id="listing-grid">
-    {% for li in listings %}
-    <div class="listing-card" data-title="{{ li.title|lower }}" data-location="{{ li.location|lower }}"
-         data-agency="{{ li.agency|lower }}"
-         data-price="{{ li.price | replace('€','') | replace('/mois','') | replace(' ','') | replace('\u00a0','') }}"
-         data-surface="{{ li.surface | replace('m²','') | replace('m2','') | replace(' ','') }}"
-         data-rooms="{{ li.rooms | replace('pièces','') | replace('pièce','') | replace(' ','') }}">
-        {% if li.image_url %}
-        <div class="listing-img" style="background-image: url('{{ li.image_url }}'); background-size: cover; background-position: center; border-radius: var(--radius-sm);"></div>
-        {% else %}
-        <div class="listing-img listing-img-placeholder">🏠</div>
-        {% endif %}
-        <div class="listing-body">
-            <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
-            <div class="listing-title">{{ li.title[:100] if li.title else 'Annonce' }}</div>
-            <div class="listing-details">
-                {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
-                {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
-                {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
-            </div>
-            {% if li.description %}
-            <p class="listing-description">{{ li.description[:200] }}</p>
-            {% endif %}
-            {% if li.agency %}
-            <div class="listing-agency">🏢 {{ li.agency }}</div>
-            {% endif %}
-            <div class="listing-meta">
-                <span class="text-muted text-sm">
-                    {% if li.creation_date|parse_iso_date %}
-                    Publiée le {{ (li.creation_date|parse_iso_date|fr_time).strftime('%d/%m/%Y') }}
-                    {% elif li.found_at %}
-                    Détectée le {{ (li.found_at|fr_time).strftime('%d/%m/%Y %H:%M') }}
-                    {% endif %}
-                </span>
-                <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
-            </div>
-        </div>
+  {% for li in listings %}
+  <div class="listing-card">
+    {% if li.image_url %}
+    <div class="listing-img" style="background-image: url('{{ li.image_url }}'); background-size: cover; background-position: center; border-radius: var(--radius-sm);"></div>
+    {% else %}
+    <div class="listing-img listing-img-placeholder">🏠</div>
+    {% endif %}
+    <div class="listing-body">
+      <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
+      <div class="listing-title">{{ li.title[:100] if li.title else 'Annonce' }}</div>
+      <div class="listing-details">
+        {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
+        {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
+        {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
+      </div>
+      {% if li.description %}
+      <p class="listing-description">{{ li.description[:200] }}</p>
+      {% endif %}
+      {% if li.agency %}
+      <div class="listing-agency">🏢 {{ li.agency }}</div>
+      {% endif %}
+      <div class="listing-meta">
+        <span class="text-muted text-sm">
+          {% if li.creation_date|parse_iso_date %}
+          Publiée le {{ (li.creation_date|parse_iso_date|fr_time).strftime('%d/%m/%Y') }}
+          {% elif li.found_at %}
+          Détectée le {{ (li.found_at|fr_time).strftime('%d/%m/%Y %H:%M') }}
+          {% endif %}
+        </span>
+        <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
+      </div>
     </div>
-    {% endfor %}
+  </div>
+  {% endfor %}
 </div>
 
 <div id="no-results" class="empty-state" style="display:none">
-    <div class="empty-icon">🔍</div>
-    <h3>Aucun résultat</h3>
-    <p>Essayez d'ajuster vos filtres.</p>
+  <div class="empty-icon">🔍</div>
+  <h3>Aucun résultat</h3>
+  <p>Essayez d'ajuster vos filtres.</p>
 </div>
 
 <!-- Pagination -->
 {% if total_pages > 1 %}
 <div class="pagination">
-    {% if page > 1 %}
-    <a href="?page={{ page - 1 }}" class="btn btn-sm btn-ghost">← Précédent</a>
-    {% endif %}
-    <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
-    {% if page < total_pages %} <a href="?page={{ page + 1 }}" class="btn btn-sm btn-ghost">Suivant →</a>
-    {% endif %}
+  {% if page > 1 %}
+  <a href="{{ url_for('web.listings', search_id=search.id) }}?{{ query_string|safe }}&page={{ page - 1 }}" class="btn btn-sm btn-ghost">← Précédent</a>
+  {% endif %}
+  <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a href="{{ url_for('web.listings', search_id=search.id) }}?{{ query_string|safe }}&page={{ page + 1 }}" class="btn btn-sm btn-ghost">Suivant →</a>
+  {% endif %}
 </div>
 {% endif %}
 
 {% else %}
 <div class="empty-state">
-    <div class="empty-icon">📭</div>
-    <h3>Aucune annonce</h3>
-    <p>Envoyez des pages HTML à votre lien POST pour remplir cette recherche.</p>
-    <a href="{{ url_for('web.searches') }}" class="btn btn-primary">Voir le lien POST</a>
+  <div class="empty-icon">📭</div>
+  <h3>Aucune annonce</h3>
+  <p>Envoyez des pages HTML à votre lien POST pour remplir cette recherche.</p>
+  <a href="{{ url_for('web.searches') }}" class="btn btn-primary">Voir le lien POST</a>
 </div>
 {% endif %}
 
@@ -143,43 +270,26 @@
 
 {% block scripts %}
 <script>
-    function applyFilters() {
-        const text = document.getElementById('filter-text').value.toLowerCase();
-        const maxPrice = parseFloat(document.getElementById('filter-price').value) || Infinity;
-        const minSurf = parseFloat(document.getElementById('filter-surface').value) || 0;
-        const minRooms = parseFloat(document.getElementById('filter-rooms').value) || 0;
+function toggleAdvanced() {
+  const el = document.getElementById('filter-advanced');
+  const arrow = document.getElementById('advanced-arrow');
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    arrow.textContent = '▼';
+  } else {
+    el.style.display = 'none';
+    arrow.textContent = '▶';
+  }
+}
 
-        const cards = document.querySelectorAll('#listing-grid .listing-card');
-        let visible = 0;
-
-        cards.forEach(card => {
-            const title = card.dataset.title || '';
-            const location = card.dataset.location || '';
-            const agency = card.dataset.agency || '';
-            const price = parseFloat(card.dataset.price) || Infinity;
-            const surface = parseFloat(card.dataset.surface) || 0;
-            const rooms = parseFloat(card.dataset.rooms) || 0;
-
-            const matchText = !text || title.includes(text) || location.includes(text) || agency.includes(text);
-            const matchPrice = price <= maxPrice;
-            const matchSurf = surface >= minSurf;
-            const matchRooms = rooms >= minRooms;
-
-            const show = matchText && matchPrice && matchSurf && matchRooms;
-            card.style.display = show ? '' : 'none';
-            if (show) visible++;
-        });
-
-        document.getElementById('no-results').style.display = visible === 0 ? 'flex' : 'none';
-        document.getElementById('filter-count').textContent =
-            visible < cards.length ? `${visible} / ${cards.length} annonces affichées` : '';
-    }
-
-    function resetFilters() {
-        ['filter-text', 'filter-price', 'filter-surface', 'filter-rooms'].forEach(id => {
-            document.getElementById(id).value = '';
-        });
-        applyFilters();
-    }
+(function() {
+  const advParams = ['city','district','zip_code','property_type','agency','epc','ges','is_private','is_new','date_min'];
+  const params = new URLSearchParams(window.location.search);
+  const hasAdv = advParams.some(p => params.has(p) && params.get(p) !== '');
+  if (hasAdv) {
+    document.getElementById('filter-advanced').style.display = 'block';
+    document.getElementById('advanced-arrow').textContent = '▼';
+  }
+})();
 </script>
 {% endblock %}

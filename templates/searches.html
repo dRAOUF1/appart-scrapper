@@ -4,46 +4,81 @@
 {% block content %}
 <div class="page-header">
     <h1>Mes Recherches</h1>
-    <p class="text-muted">Collez l'URL d'une recherche SeLoger et le serveur scrape automatiquement.</p>
+    <p class="text-muted">Renseigne une ville et les sources à surveiller — le serveur scrape automatiquement.</p>
 </div>
 
 <!-- Create search form -->
-<div class="card">
-    <h2>➕ Nouvelle recherche</h2>
+{% set _flash_categories = get_flashed_messages(with_categories=true) | map(attribute=0) | list %}
+<details class="card create-search-card" {% if not searches or 'error' in _flash_categories %}open{% endif %}>
+    <summary>➕ Nouvelle recherche</summary>
     <form method="POST">
-        <div class="form-grid">
-            <div class="form-group">
-                <label for="label">Label</label>
-                <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
-            </div>
-            <div class="form-group">
-                <label for="ntfy_topic">Topic ntfy</label>
-                <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
-                <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
-            </div>
-            <div class="form-group">
-                <label for="scrape_interval">Intervalle (min)</label>
-                <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="form-section">
+            <div class="form-section-label">Informations générales</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="label">Label</label>
+                    <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
+                </div>
+                <div class="form-group">
+                    <label for="ntfy_topic">Topic ntfy</label>
+                    <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
+                    <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
+                </div>
+                <div class="form-group">
+                    <label for="scrape_interval">Intervalle (min)</label>
+                    <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
+                </div>
             </div>
         </div>
 
-        <div class="form-group" style="margin-top: 1rem;">
-            <label for="search_url">URL de recherche SeLoger <span style="color: var(--red)">*</span></label>
-            <input type="url" id="search_url" name="search_url"
-                placeholder="https://www.seloger.com/classified-search?distributionTypes=Rent&estateTypes=Apartment&locations=AD08FR31096&priceMin=600&priceMax=850"
-                required>
-            <small class="form-help">
-                Allez sur <a href="https://www.seloger.com" target="_blank">SeLoger</a>, faites votre recherche, copiez l'URL.
+        <div class="form-section">
+            <div class="form-section-label">📍 Localisation</div>
+            <div class="location-list" data-location-list>
+                <div class="location-row" data-location-row>
+                    <div class="location-autocomplete">
+                        <input type="text" name="location_city" placeholder="Ville, département ou région"
+                            aria-label="Localisation" autocomplete="off" data-location-input>
+                        <ul class="location-suggestions" data-location-suggestions hidden></ul>
+                    </div>
+                    <input type="hidden" name="location_payload" value="" data-location-payload>
+                    <button type="button" class="location-remove-btn" aria-label="Retirer cette localisation">✕</button>
+                </div>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une localisation</button>
+            <small class="form-help" style="display: block; margin-top: 0.5rem;">
+                Tape une ville, un département (« Gironde ») ou une région (« Île-de-France ») et
+                choisis dans les suggestions — le code postal est repris automatiquement.
+                « Paris » propose aussi la ville entière, tous arrondissements d'un coup.
+                Tu peux ajouter plusieurs localisations dans la même recherche.
             </small>
         </div>
 
-        <details style="margin-top: 1rem;">
-            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem 0;">⚙️ Ou remplir manuellement</summary>
-            <div class="form-grid" style="margin-top: 0.75rem;">
-                <div class="form-group">
-                    <label for="place_ids">Place IDs</label>
-                    <input type="text" id="place_ids" name="place_ids" placeholder="Ex: AD08FR31096">
-                </div>
+        <div class="form-section">
+            <div class="form-section-label">Sources</div>
+            <div class="source-picker">
+                {% for src in sources %}
+                <label class="source-card">
+                    <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
+                        {% if src.id == 'seloger' %}checked{% endif %}>
+                    <span class="source-card-body">
+                        <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
+                        <span class="source-card-name">{{ src.name }}</span>
+                        <span class="source-card-check">✓</span>
+                    </span>
+                </label>
+                {% endfor %}
+            </div>
+            <small class="form-help">
+                Une même recherche peut être scrapée sur plusieurs sources à la fois. Les critères
+                ci-dessous sont définis une seule fois : chaque source les traduit à son format.
+            </small>
+        </div>
+
+        <div class="form-section">
+            <div class="form-section-label">Filtres (optionnels)</div>
+            <div class="form-grid">
                 <div class="form-group">
                     <label for="price_min">Prix min (€)</label>
                     <input type="number" id="price_min" name="price_min" placeholder="600">
@@ -53,31 +88,86 @@
                     <input type="number" id="price_max" name="price_max" placeholder="850">
                 </div>
                 <div class="form-group">
-                    <label for="space_min">Surface min (m²)</label>
-                    <input type="number" id="space_min" name="space_min" placeholder="19">
+                    <label for="surface_min">Surface min (m²)</label>
+                    <input type="number" id="surface_min" name="surface_min" placeholder="19">
                 </div>
                 <div class="form-group">
-                    <label for="distribution">Transaction</label>
-                    <select id="distribution" name="distribution">
-                        <option value="Rent">Location</option>
-                        <option value="Sale">Achat</option>
-                    </select>
+                    <label for="surface_max">Surface max (m²)</label>
+                    <input type="number" id="surface_max" name="surface_max" placeholder="80">
                 </div>
                 <div class="form-group">
-                    <label for="estate_type">Type de bien</label>
-                    <select id="estate_type" name="estate_type">
-                        <option value="Apartment">Appartement</option>
-                        <option value="House">Maison</option>
-                        <option value="Parking">Parking</option>
-                        <option value="Land">Terrain</option>
+                    <label for="transaction">Transaction</label>
+                    <select id="transaction" name="transaction">
+                        <option value="rent">Location</option>
+                        <option value="buy">Achat</option>
                     </select>
                 </div>
             </div>
-        </details>
+            <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                    <label>Type de bien</label>
+                    <div class="pill-toggle-group">
+                        {% for value, label in [('apartment', 'Appartement'), ('house', 'Maison'), ('parking', 'Parking'), ('land', 'Terrain')] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="property_types" value="{{ value }}"
+                                data-property-type="{{ value }}"
+                                {% if value == 'apartment' %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <small class="form-help" data-property-type-warning hidden></small>
+                </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                    <label>Pièces</label>
+                    <div class="pill-toggle-group">
+                        {% for n in [1, 2, 3, 4, 5] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="rooms" value="{{ n }}">
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Chambres</label>
+                    <div class="pill-toggle-group">
+                        {% for n in [1, 2, 3, 4, 5] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="bedrooms" value="{{ n }}">
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
 
-        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1rem;">Créer la recherche</button>
+        {% set _override_sources = sources | selectattr('manual_override_label') | list %}
+        {% if _override_sources %}
+        <details class="form-section" style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem;">
+                ⚙️ Options avancées — identifiants de lieu par source
+            </summary>
+            <small class="form-help" style="display: block; margin: 0.75rem 0;">
+                Normalement inutile : chaque source retrouve le lieu seule à partir de la ville
+                choisie plus haut. Ces champs ne servent que si une source ne trouve rien.
+            </small>
+            {% for src in _override_sources %}
+            <div class="form-group" style="margin-top: 0.75rem;">
+                <label for="override_{{ src.id }}">{{ src.name }} — {{ src.manual_override_label }}</label>
+                <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}" placeholder="Ex: AD08FR31096">
+                <small class="form-help">{{ src.manual_override_help }}</small>
+            </div>
+            {% endfor %}
+        </details>
+        {% endif %}
+
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top: 1.5rem;">Créer la recherche</button>
     </form>
-</div>
+</details>
 
 <!-- Existing searches -->
 {% if searches %}
@@ -91,7 +181,9 @@
             <div class="search-card-title">
                 <h3>{{ s.label }}</h3>
                 <div class="search-card-badges">
-                    <span class="badge badge-source">{{ s.source }}</span>
+                    {% for src in (s.sources or [s.source]) %}
+                    <span class="badge badge-source">{{ src }}</span>
+                    {% endfor %}
                     <span class="badge">{{ s.listing_count }} annonce{{ 's' if s.listing_count != 1 else '' }}</span>
                     <span class="badge badge-accent">⏱ {{ s.scrape_interval or 5 }}min</span>
                     {% if s.is_active %}
@@ -125,23 +217,43 @@
         <!-- Criteria tags -->
         {% if s.criteria %}
         <div class="search-criteria-tags">
-            {% if s.criteria.placeIds %}
-                {% for pid in s.criteria.placeIds %}
-                <span class="criteria-tag">📍 {{ pid }}</span>
-                {% endfor %}
-            {% endif %}
-            {% if s.criteria.priceMin or s.criteria.priceMax %}
-                <span class="criteria-tag">💰
-                    {% if s.criteria.priceMin %}{{ s.criteria.priceMin }}{% else %}0{% endif %} -
-                    {% if s.criteria.priceMax %}{{ s.criteria.priceMax }}{% else %}∞{% endif %}€
-                </span>
-            {% endif %}
-            {% if s.criteria.spaceMin %}
-                <span class="criteria-tag">📐 ≥{{ s.criteria.spaceMin }}m²</span>
-            {% endif %}
-            {% if s.criteria.distributionTypes %}
-                <span class="criteria-tag">{{ '🏠 Location' if s.criteria.distributionTypes[0] == 'Rent' else '🔑 Achat' }}</span>
-            {% endif %}
+          {% if s.criteria.placeIds %}
+          {% for pid in s.criteria.placeIds %}
+          <span class="criteria-tag">📍 {{ pid }}</span>
+          {% endfor %}
+          {% endif %}
+          {% for loc in s.criteria.locations or [] %}
+          <span class="criteria-tag">📍 {{ location_label(loc) }}</span>
+          {% endfor %}
+          {% if s.criteria.priceMin or s.criteria.priceMax %}
+          <span class="criteria-tag">💰
+            {% if s.criteria.priceMin %}{{ s.criteria.priceMin }}{% else %}0{% endif %} -
+            {% if s.criteria.priceMax %}{{ s.criteria.priceMax }}{% else %}∞{% endif %}€
+          </span>
+          {% endif %}
+          {% if s.criteria.surfaceMin or s.criteria.surfaceMax %}
+          <span class="criteria-tag">📐
+            {% if s.criteria.surfaceMin %}≥{{ s.criteria.surfaceMin }}{% endif %}
+            {% if s.criteria.surfaceMax %}≤{{ s.criteria.surfaceMax }}{% endif %}m²
+          </span>
+          {% endif %}
+          {% if s.criteria.rooms %}
+          <span class="criteria-tag">🚪 {{ s.criteria.rooms | join(', ') }} pièces</span>
+          {% endif %}
+          {% if s.criteria.bedrooms %}
+          <span class="criteria-tag">🛏️ {{ s.criteria.bedrooms | join(', ') }} ch.</span>
+          {% endif %}
+          {% if s.criteria.transaction %}
+          <span class="criteria-tag">{{ '🔑 Achat' if s.criteria.transaction == 'buy' else '🏠 Location' }}</span>
+          {% endif %}
+          {% if s.criteria.propertyTypes %}
+          {% set _type_labels = {'apartment': 'Appartement', 'house': 'Maison', 'parking': 'Parking', 'land': 'Terrain'} %}
+          <span class="criteria-tag">🏗️
+            {%- for t in s.criteria.propertyTypes %}
+            {{ _type_labels.get(t, t) }}{{ ', ' if not loop.last else '' }}
+            {%- endfor %}
+          </span>
+          {% endif %}
         </div>
         {% endif %}
 
@@ -154,6 +266,7 @@
         <!-- Actions -->
         <div class="search-card-actions">
             <form method="POST" action="{{ url_for('web.toggle_search_active_web', search_id=s.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-btn {% if s.is_active %}action-pause{% else %}action-scrape{% endif %}" title="{% if s.is_active %}Désactiver{% else %}Activer{% endif %}">
                     {% if s.is_active %}
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
@@ -170,6 +283,7 @@
             </a>
             <form method="POST" action="{{ url_for('web.scrape_search_web', search_id=s.id) }}"
                 onsubmit="return confirm('Lancer le scraping maintenant ?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-btn action-scrape" title="Scrapper maintenant">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                     <span>Scrapper</span>
@@ -189,6 +303,7 @@
             </a>
             <form method="POST" action="{{ url_for('web.delete_search_web', search_id=s.id) }}"
                 onsubmit="return confirm('Supprimer « {{ s.label }} » ?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-btn action-delete" title="Supprimer">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2 2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     <span>Supprimer</span>
@@ -210,6 +325,12 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+// Capacités déclarées par chaque parser (SUPPORTED_*), consommées par
+// static/search_form.js pour prévenir qu'un critère ne sera pas honoré.
+window.SOURCE_CAPABILITIES = {{ sources | tojson }};
+</script>
+<script src="{{ url_for('web.static', filename='search_form.js') }}"></script>
 <script>
 function copyText(elementId) {
 const text = document.getElementById(elementId).textContent;
@@ -234,29 +355,45 @@ throw new Error('Erreur lors de la récupération de l\'URL');
 }
 
 const data = await response.json();
+const sources = data.sources && data.sources.length ? data.sources : [data];
+
+const sections = sources.map(s => {
+    const urls = s.urls && s.urls.length ? s.urls : (s.url ? [s.url] : []);
+    const urlBlocks = urls.map(url => `
+<div class="url-preview">${escapeHtml(url)}</div>
+<div class="url-actions">
+<a href="${escapeHtml(url)}" target="_blank" class="btn btn-primary">
+Ouvrir dans un nouvel onglet ↗
+</a>
+<button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(url).replace(/'/g, "\\'")}')">
+Copier l'URL
+</button>
+</div>
+`).join('<div style="height: 0.5rem;"></div>');
+
+    return `
+<div style="margin-bottom: 1rem;">
+<h4 style="margin-bottom: 0.4rem;">${escapeHtml(s.source_name || s.source)}${urls.length > 1 ? ` (${urls.length} localisations)` : ''}</h4>
+${urls.length ? `
+${urlBlocks}
+${s.note ? `<p class="text-muted" style="font-size: 0.85rem; margin-top: 0.5rem;">ℹ️ ${escapeHtml(s.note)}</p>` : ''}
+` : `
+<p class="text-muted">URL non disponible pour cette source${s.error ? ' (' + escapeHtml(s.error) + ')' : ''}</p>
+`}
+</div>
+`;
+}).join('');
 
 const modal = document.createElement('div');
 modal.className = 'modal';
 modal.innerHTML = `
 <div class="modal-content">
 <div class="modal-header">
-<h3>🔗 URL de recherche - ${data.source_name || data.source}</h3>
+<h3>🔗 URLs de recherche</h3>
 <button class="modal-close" onclick="closeModal(this)">×</button>
 </div>
 <div class="modal-body">
-${data.url ? `
-<div class="url-preview">${escapeHtml(data.url)}</div>
-<div class="url-actions">
-<a href="${escapeHtml(data.url)}" target="_blank" class="btn btn-primary">
-Ouvrir dans un nouvel onglet ↗
-</a>
-<button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(data.url).replace(/'/g, "\\'")}')">
-Copier l'URL
-</button>
-</div>
-` : `
-<p class="text-muted">URL non disponible pour cette source</p>
-`}
+${sections}
 </div>
 </div>
 `;

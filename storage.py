@@ -1,52 +1,62 @@
 """PostgreSQL storage for multi-user listing tracking.
 
-This module provides a backward-compatible facade over the new repository layer.
-All DB operations are delegated to dedicated repositories:
-  - UserRepository
-  - SearchRepository
-  - ListingRepository
-  - ScrapeLogRepository
-  - AdminRepository
-  - SettingsRepository
+Owns the DB connections and schema, and exposes the repositories:
+  - users (UserRepository)
+  - searches (SearchRepository)
+  - listings (ListingRepository)
+  - scrape_logs (ScrapeLogRepository)
+  - admin (AdminRepository)
+  - settings (SettingsRepository)
 
-The Listing class is kept here for backward compatibility with parsers/scraper.
+Call methods on the relevant repository directly, e.g. storage.searches.get_search(id).
 """
 
 from __future__ import annotations
 
-import threading
-from typing import Optional
-
 from loguru import logger
 
-from repositories.user_repo import UserRepository
-from repositories.search_repo import SearchRepository
+from repositories.admin_repo import AdminRepository
+from repositories.bienici_geo_repo import BienIciGeoRepository
+from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.listing_repo import ListingRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
-from repositories.admin_repo import AdminRepository
+from repositories.search_repo import SearchRepository
+from repositories.seloger_geo_repo import SelogerGeoRepository
 from repositories.settings_repo import SettingsRepository
-
-# Re-export Listing for backward compatibility with parsers/scraper
-from storage_legacy import Listing  # noqa: F401 — kept for import compatibility
+from repositories.user_repo import UserRepository
 
 
 class Storage:
-    """PostgreSQL storage facade — delegates to repositories.
-
-    Maintains 100% backward compatibility with the old monolithic API
-    while the actual work is done by specialized repositories.
-    """
+    """Owns DB connections/schema and gives access to the repositories."""
 
     def __init__(self, database_url: str):
         self.database_url = database_url
-        self._local = threading.local()
         self.users = UserRepository(database_url)
         self.searches = SearchRepository(database_url)
         self.listings = ListingRepository(database_url)
         self.scrape_logs = ScrapeLogRepository(database_url)
         self.admin = AdminRepository(database_url)
         self.settings = SettingsRepository(database_url)
+        self.seloger_geo = SelogerGeoRepository(database_url)
+        self.bienici_geo = BienIciGeoRepository(database_url)
+        self.century21_geo = Century21GeoRepository(database_url)
         self._init_db()
+
+    @classmethod
+    def run_migrations(cls, database_url: str) -> None:
+        """Apply the DDL migrations against database_url.
+
+        Safe to run against a fresh OR an already-populated database: every
+        statement is idempotent (CREATE ... IF NOT EXISTS / ADD COLUMN ...
+        IF NOT EXISTS). Bypasses __init__'s _init_db() check (which requires
+        tables to already exist) since this IS how they get created/updated.
+        Used by scripts/migrate.py — run this after every deploy that
+        changes the schema.
+        """
+        instance = cls.__new__(cls)
+        instance.database_url = database_url
+        instance.users = UserRepository(database_url)
+        instance._run_ddl_migrations()
 
     # ------------------------------------------------------------------
     # Connection management (shared by all repos via inheritance)
@@ -60,6 +70,9 @@ class Storage:
 
     def _release_conn(self, conn):
         return self.users._release_conn(conn)
+
+    def release_to_pool(self, conn):
+        return self.users.release_to_pool(conn)
 
     def _get_ddl_conn(self):
         return self.users._get_ddl_conn()
@@ -123,6 +136,7 @@ class Storage:
                         criteria        JSONB DEFAULT '{}',
                         scrape_interval INTEGER DEFAULT 5,
                         last_scraped    TIMESTAMP,
+                        is_active       BOOLEAN DEFAULT TRUE,
                         created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -165,22 +179,8 @@ class Storage:
                         search_id   INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
                         listing_id  TEXT NOT NULL REFERENCES listings(listing_id) ON DELETE CASCADE,
                         found_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        notified    BOOLEAN DEFAULT TRUE,
                         PRIMARY KEY (search_id, listing_id)
-                    );
-                """)
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS scrape_logs (
-                        id              SERIAL PRIMARY KEY,
-                        search_id       INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
-                        started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        completed_at    TIMESTAMP,
-                        status          TEXT NOT NULL,
-                        listings_found  INTEGER DEFAULT 0,
-                        new_listings    INTEGER DEFAULT 0,
-                        error_message   TEXT,
-                        details         JSONB DEFAULT '{}',
-                        duration_sec    FLOAT,
-                        raw_logs        TEXT
                     );
                 """)
                 cur.execute("""
@@ -198,9 +198,59 @@ class Storage:
                         value TEXT NOT NULL
                     );
                 """)
+                # L'API BFF SeLoger a été retirée (elle renvoie 400 depuis
+                # que son schéma a changé — voir scraper/seloger.py) : le
+                # réglage qui permettait de l'activer/désactiver n'a plus
+                # d'objet. Supprimé ici pour que les bases déjà déployées ne
+                # gardent pas un réglage mort.
+                cur.execute("DELETE FROM app_settings WHERE key = 'use_bff_api';")
+                # `area_key` identifie un périmètre à n'importe quel niveau —
+                # un code INSEE de commune, "city:<insee>", "dept:<code>" ou
+                # "region:<code>" (voir services.seloger_geocode.area_cache_key).
                 cur.execute("""
-                    INSERT INTO app_settings (key, value) VALUES ('use_bff_api', 'true')
-                    ON CONFLICT (key) DO NOTHING;
+                    CREATE TABLE IF NOT EXISTS seloger_place_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        place_id    TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # La colonne s'appelait insee_code quand seules les communes
+                # étaient gérées : renommage idempotent pour les bases déjà
+                # créées avec l'ancien nom (les codes INSEE nus restent des
+                # clés valides, rien à réécrire).
+                cur.execute("""
+                    DO $$ BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'seloger_place_ids'
+                              AND column_name = 'insee_code'
+                        ) THEN
+                            ALTER TABLE seloger_place_ids RENAME COLUMN insee_code TO area_key;
+                        END IF;
+                    END $$;
+                """)
+                # Même clé de périmètre (`area_key`) que seloger_place_ids —
+                # voir services.bienici_geocode.area_cache_key. `zone_ids`
+                # est un tableau JSON (contrairement au place_id unique de
+                # SeLoger, un périmètre bienici peut avoir plusieurs zoneIds,
+                # ex. une région = union de ses départements).
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bienici_zone_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        zone_ids    TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Même clé de périmètre (`area_key`) que les caches SeLoger et
+                # bienici — voir services.century21_geocode.area_cache_key.
+                # `slug_id` est le slug d'URL Century 21 (v-paris, cp-75001),
+                # une valeur unique comme le place_id de SeLoger.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS century21_geo_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        slug_id     TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
                 """)
                 phase_start = _log_phase("create_tables")
 
@@ -239,28 +289,32 @@ class Storage:
                         ON searches(source);
                 """)
                 cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_listings_source
-                        ON listings(source);
+                CREATE INDEX IF NOT EXISTS idx_listings_source
+                ON listings(source);
                 """)
                 cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_admin_logs_created
-                        ON admin_logs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_listings_price_value
+                ON listings(price_value);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listings_property_type
+                ON listings(property_type);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listings_city
+                ON listings(city);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_listings_creation_date
+                ON listings(creation_date);
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_admin_logs_created
+                ON admin_logs(created_at);
                 """)
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_admin_logs_action
                         ON admin_logs(action);
-                """)
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_search
-                        ON scrape_logs(search_id);
-                """)
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_started
-                        ON scrape_logs(started_at DESC);
-                """)
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_scrape_logs_status
-                        ON scrape_logs(status);
                 """)
                 phase_start = _log_phase("indexes")
 
@@ -294,11 +348,19 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP,
                         ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
                         ADD COLUMN IF NOT EXISTS blacklisted_agencies TEXT[] DEFAULT '{}',
-                        ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude';
+                        ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude',
+                        ADD COLUMN IF NOT EXISTS sources JSONB DEFAULT NULL;
+                """)
+                # Backfill : une recherche créée avant l'ajout du multi-source
+                # n'a que `source` — on la reflète dans `sources` pour que le
+                # pipeline de scraping (qui lit `sources`) la traite pareil.
+                cur.execute("""
+                    UPDATE searches SET sources = to_jsonb(ARRAY[source])
+                    WHERE sources IS NULL;
                 """)
                 cur.execute("""
-                    ALTER TABLE scrape_logs
-                        ADD COLUMN IF NOT EXISTS raw_logs TEXT;
+                    ALTER TABLE search_listings
+                        ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE;
                 """)
                 phase_start = _log_phase("alter_other")
 
@@ -307,182 +369,6 @@ class Storage:
             total_elapsed = time.monotonic() - total_start
             logger.info(f"Tables PostgreSQL initialisées en {total_elapsed:.2f}s")
         finally:
-            self._release_conn(conn)
+            # Connexion DDL brute (hors pool) : toujours fermée directement.
+            self._close_conn(conn)
 
-    # ------------------------------------------------------------------
-    # Facade methods — delegate to repositories
-    # ------------------------------------------------------------------
-
-    # Users
-    def create_user(self, username: str) -> dict:
-        return self.users.create_user(username)
-
-    def get_user_by_token(self, token: str) -> Optional[dict]:
-        return self.users.get_user_by_token(token)
-
-    def get_user_by_username(self, username: str) -> Optional[dict]:
-        return self.users.get_user_by_username(username)
-
-    def get_all_users(self) -> list[dict]:
-        return self.users.get_all_users()
-
-    def get_user_detail(self, user_id: int) -> Optional[dict]:
-        return self.users.get_user_detail(user_id)
-
-    def delete_user(self, user_id: int) -> bool:
-        return self.users.delete_user(user_id)
-
-    def reset_user_token(self, user_id: int) -> str:
-        return self.users.reset_user_token(user_id)
-
-    def get_user_stats(self, user_id: int) -> dict:
-        return self.users.get_user_stats(user_id)
-
-    def get_dashboard_data(self, user_id: int) -> dict:
-        return self.users.get_dashboard_data(user_id)
-
-    # Searches
-    def create_search(self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger", criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True) -> dict:
-        return self.searches.create_search(user_id, label, ntfy_topic, source, criteria, scrape_interval, is_active)
-
-    def update_search_criteria(self, search_id: int, criteria: dict) -> bool:
-        return self.searches.update_search_criteria(search_id, criteria)
-
-    def update_search(self, search_id: int, user_id: int, label: str | None = None, ntfy_topic: str | None = None, criteria: dict | None = None, scrape_interval: int | None = None, is_active: bool | None = None) -> bool:
-        return self.searches.update_search(search_id, user_id, label, ntfy_topic, criteria, scrape_interval, is_active)
-
-    def update_scrape_interval(self, search_id: int, interval_minutes: int) -> bool:
-        return self.searches.update_scrape_interval(search_id, interval_minutes)
-
-    def update_last_scraped(self, search_id: int) -> bool:
-        return self.searches.update_last_scraped(search_id)
-
-    def get_user_searches(self, user_id: int) -> list[dict]:
-        return self.searches.get_user_searches(user_id)
-
-    def get_search(self, search_id: int) -> Optional[dict]:
-        return self.searches.get_search(search_id)
-
-    def delete_search(self, search_id: int) -> bool:
-        return self.searches.delete_search(search_id)
-
-    def toggle_search_active(self, search_id: int) -> bool | None:
-        return self.searches.toggle_search_active(search_id)
-
-    def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
-        return self.searches.get_all_searches(user_filter, source_filter)
-
-    def get_search_detail(self, search_id: int) -> Optional[dict]:
-        return self.searches.get_search_detail(search_id)
-
-    # Listings
-    def save_listing(self, listing) -> bool:
-        return self.listings.save_listing(listing)
-
-    def link_listing_to_search(self, search_id: int, listing_id: str) -> bool:
-        return self.listings.link_listing_to_search(search_id, listing_id)
-
-    def save_and_link(self, listings: list, search_id: int) -> tuple:
-        return self.listings.save_and_link(listings, search_id)
-
-    def get_listings_for_search(self, search_id: int, limit: int = 50, offset: int = 0, blacklisted_agencies: list[str] | None = None) -> list[dict]:
-        return self.listings.get_listings_for_search(search_id, limit, offset, blacklisted_agencies)
-
-    def count_listings_for_search(self, search_id: int, blacklisted_agencies: list[str] | None = None) -> int:
-        return self.listings.count_listings_for_search(search_id, blacklisted_agencies)
-
-    def delete_old_listings(self, days: int = 4) -> int:
-        return self.listings.delete_old_listings(days)
-
-    def delete_listing(self, listing_id: str) -> bool:
-        return self.listings.delete_listing(listing_id)
-
-    def get_orphan_listings_count(self) -> int:
-        return self.listings.get_orphan_listings_count()
-
-    def delete_orphan_listings(self) -> int:
-        return self.listings.delete_orphan_listings()
-
-    def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
-        return self.listings.get_all_listings(limit, offset, search_term, source_filter)
-
-    def count_all_listings(self, search_term="", source_filter="") -> int:
-        return self.listings.count_all_listings(search_term, source_filter)
-
-    def get_listing_detail(self, listing_id: str) -> Optional[dict]:
-        return self.listings.get_listing_detail(listing_id)
-
-    def get_unique_agencies_for_user(self, user_id: int) -> list[str]:
-        return self.listings.get_unique_agencies_for_user(user_id)
-
-    def update_blacklisted_agencies(self, search_id: int, agencies: list[str]) -> bool:
-        return self.searches.update_blacklisted_agencies(search_id, agencies)
-
-    def update_blacklist_mode(self, search_id: int, mode: str) -> bool:
-        return self.searches.update_blacklist_mode(search_id, mode)
-
-    # Scrape Logs
-    def create_scrape_log(self, search_id: int, status: str, listings_found: int = 0, new_listings: int = 0, error_message: str = "", details: dict | None = None, started_at=None) -> int:
-        return self.scrape_logs.create_scrape_log(search_id, status, listings_found, new_listings, error_message, details, started_at)
-
-    def get_scrape_logs(self, search_id: int, limit: int = 50, offset: int = 0, status_filter: str = "") -> list[dict]:
-        return self.scrape_logs.get_scrape_logs(search_id, limit, offset, status_filter)
-
-    def count_scrape_logs(self, search_id: int, status_filter: str = "") -> int:
-        return self.scrape_logs.count_scrape_logs(search_id, status_filter)
-
-    def get_scrape_stats(self, search_id: int) -> dict:
-        return self.scrape_logs.get_scrape_stats(search_id)
-
-    def update_scrape_log_raw(self, log_id: int, raw_logs: str) -> bool:
-        return self.scrape_logs.update_scrape_log_raw(log_id, raw_logs)
-
-    def get_scrape_log_raw(self, log_id: int, user_id: int | None = None) -> dict | None:
-        return self.scrape_logs.get_scrape_log_raw(log_id, user_id)
-
-    def get_latest_scrape_log_id(self, search_id: int) -> int | None:
-        return self.scrape_logs.get_latest_scrape_log_id(search_id)
-
-    # Settings
-    def get_setting(self, key: str, default: str = "") -> str:
-        return self.settings.get_setting(key, default)
-
-    def set_setting(self, key: str, value: str) -> bool:
-        return self.settings.set_setting(key, value)
-
-    # Admin
-    def get_admin_stats(self) -> dict:
-        return self.admin.get_admin_stats()
-
-    def get_enhanced_admin_stats(self) -> dict:
-        return self.admin.get_enhanced_admin_stats()
-
-    def log_admin_action(self, action: str, details: str = "", performed_by: str = "") -> None:
-        self.admin.log_admin_action(action, details, performed_by)
-
-    def get_admin_logs(self, limit=50, offset=0, action_filter="", date_from="", date_to="") -> list[dict]:
-        return self.admin.get_admin_logs(limit, offset, action_filter, date_from, date_to)
-
-    def count_admin_logs(self, action_filter="", date_from="", date_to="") -> int:
-        return self.admin.count_admin_logs(action_filter, date_from, date_to)
-
-    def purge_old_logs(self, days: int = 30) -> int:
-        return self.admin.purge_old_logs(days)
-
-    def get_db_stats(self) -> dict:
-        return self.admin.get_db_stats()
-
-    def get_table_details(self, table_name: str) -> dict:
-        return self.admin.get_table_details(table_name)
-
-    def execute_query(self, sql: str) -> tuple:
-        return self.admin.execute_query(sql)
-
-    def get_active_connections(self) -> list[dict]:
-        return self.admin.get_active_connections()
-
-    def truncate_table(self, table_name: str) -> bool:
-        return self.admin.truncate_table(table_name)
-
-    def close(self) -> None:
-        pass

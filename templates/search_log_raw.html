@@ -11,7 +11,7 @@
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
         <div>
             <span class="badge {% if log_entry.status == 'success' %}badge-active{% elif log_entry.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
-                {% if log_entry.status == 'success' %}✅{% elif log_entry.status == 'error' %}❌{% else %}⚠️{% endif %}
+                {% if log_entry.status == 'success' %}✅{% elif log_entry.status == 'empty' %}ℹ️{% elif log_entry.status == 'error' %}❌{% else %}⚠️{% endif %}
                 {{ log_entry.status }}
             </span>
             <span class="text-muted" style="margin-left: 0.75rem;">

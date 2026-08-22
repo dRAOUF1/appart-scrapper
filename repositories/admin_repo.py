@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from loguru import logger
 
 from repositories.base import BaseRepository
@@ -182,8 +181,8 @@ class AdminRepository(BaseRepository):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM admin_logs WHERE created_at < NOW() - INTERVAL '%s days'",
-                    (str(days),),
+                    "DELETE FROM admin_logs WHERE created_at < NOW() - make_interval(days => %s)",
+                    (days,),
                 )
                 conn.commit()
                 deleted = cur.rowcount
@@ -275,19 +274,26 @@ class AdminRepository(BaseRepository):
             self._release_conn(conn)
 
     def execute_query(self, sql: str) -> tuple:
-        """Execute a SQL query. Returns (rows, row_count, error)."""
-        from typing import Optional
+        """Execute a read-only SQL query. Returns (rows, row_count, error).
+
+        Runs inside a READ ONLY transaction that is always rolled back, so
+        this endpoint cannot be used to mutate data (INSERT/UPDATE/DELETE/DDL
+        are rejected by Postgres before they can take effect).
+        """
         conn = self._get_conn_for_request()
         try:
+            conn.rollback()
             with self._dict_cursor(conn) as cur:
+                cur.execute("SET TRANSACTION READ ONLY")
                 cur.execute(sql)
-                conn.commit()
                 if cur.description:
                     rows = cur.fetchall()
                     row_count = cur.rowcount
-                    return [dict(r) for r in rows], row_count, None
+                    result = [dict(r) for r in rows], row_count, None
                 else:
-                    return [], cur.rowcount, None
+                    result = [], cur.rowcount, None
+            conn.rollback()
+            return result
         except Exception as e:
             conn.rollback()
             return [], 0, str(e)
@@ -310,7 +316,10 @@ class AdminRepository(BaseRepository):
             self._release_conn(conn)
 
     def truncate_table(self, table_name: str) -> bool:
-        ALLOWED_TABLES = {"users", "searches", "listings", "search_listings", "scrape_logs", "admin_logs", "app_settings"}
+        ALLOWED_TABLES = {
+            "users", "searches", "listings", "search_listings",
+            "scrape_logs", "admin_logs", "app_settings",
+        }
         if table_name not in ALLOWED_TABLES:
             logger.error(f"Truncate refused: table '{table_name}' non autorisée")
             return False

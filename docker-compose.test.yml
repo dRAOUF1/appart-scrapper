@@ -1,4 +1,6 @@
-version: '3.8'
+# Suite complète (unitaires + intégration) contre un Postgres jetable.
+#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+# La clé `version:` est obsolète depuis Compose v2 et volontairement absente.
 
 services:
   postgres:
@@ -7,22 +9,29 @@ services:
       POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpass
       POSTGRES_DB: testdb
-    ports:
-      - "5432:5432"
+    # Aucun port publié sur l'hôte : seul le service `app` a besoin d'y accéder,
+    # et publier 5432 entrait en collision avec un Postgres local.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U testuser"]
+      test: ["CMD-SHELL", "pg_isready -U testuser -d testdb"]
       interval: 2s
       timeout: 5s
-      retries: 10
+      retries: 15
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.test
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://testuser:testpass@postgres:5432/testdb
+      # Jamais DATABASE_URL : la fixture d'intégration TRUNCATE toutes les
+      # tables et refuse tout host non local. Voir tests/integration/conftest.py.
+      TEST_DATABASE_URL: postgresql://testuser:testpass@postgres:5432/testdb
       SECRET_KEY: test-secret-key
+      ADMIN_USERNAME: test-admin
+    # Le code est monté depuis l'hôte : on teste l'arbre de travail courant, pas
+    # une copie figée dans l'image (d'où le COPY minimal du Dockerfile.test).
     volumes:
       - .:/app
-    command: python -m pytest tests/ -v --tb=short
+    command: pytest tests/ -v --tb=short

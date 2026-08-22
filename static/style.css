@@ -553,9 +553,415 @@ code {
 }
 
 .form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.form-group select.multi-select {
+  min-height: 80px;
+  padding: 0.5rem 1rem;
+}
+
+.form-group select.multi-select option {
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+}
+
+.form-group select.multi-select option:checked {
+  background: var(--accent);
+  color: #fff;
+}
+
+.form-group-toggle {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  transition: var(--transition-fast);
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: var(--transition-fast);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+  background: #fff;
+}
+
+/* ============================================================
+   Location List — repeatable ville/code-postal rows (a search
+   can cover several cities/postal codes at once)
+   ============================================================ */
+
+.location-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.location-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.location-row input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.7rem 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: var(--transition-fast);
+}
+
+.location-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.location-row input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.location-remove-btn {
+    flex-shrink: 0;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--glass-border);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: var(--transition-fast);
+}
+
+.location-remove-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(255, 69, 58, 0.1);
+}
+
+.location-remove-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.add-location-btn {
+    margin-top: 0.75rem;
+}
+
+/* Autocomplete de ville : la liste flotte au-dessus du reste du formulaire,
+   ancrée sur le champ (le wrapper porte le position: relative). */
+.location-autocomplete {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+}
+
+.location-suggestions {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    margin: 0;
+    padding: 0.25rem;
+    list-style: none;
+    max-height: 15rem;
+    overflow-y: auto;
+    background: var(--bg-elevated, #1c1c1e);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.location-suggestions[hidden] {
+    display: none;
+}
+
+.location-suggestion {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.location-suggestion:hover {
+    background: var(--accent-glow);
+    color: var(--accent);
+}
+
+/* Le niveau du périmètre (région, département, ville entière, code postal) :
+   « Gironde » peut être un département comme une commune, il faut pouvoir
+   distinguer les deux d'un coup d'œil. */
+.location-suggestion-kind {
+    flex-shrink: 0;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--glass-border);
+    color: var(--text-tertiary);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* ============================================================
+   Form Sections — labeled groups within a longer form
+   ============================================================ */
+
+.form-section {
+    margin-top: 1.75rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--glass-border);
+}
+
+.form-section:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.form-section-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    margin-bottom: 1rem;
+}
+
+/* Collapsible "+ Nouvelle recherche" card, native <details> — no JS needed */
+.create-search-card > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.create-search-card > summary::-webkit-details-marker {
+    display: none;
+}
+
+.create-search-card > summary::after {
+    content: '›';
+    margin-left: auto;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: var(--text-tertiary);
+    transform: rotate(90deg);
+    transition: var(--transition-fast);
+}
+
+.create-search-card[open] > summary::after {
+    transform: rotate(-90deg);
+}
+
+.create-search-card form {
+    margin-top: 1.5rem;
+}
+
+/* ============================================================
+   Source Picker — one glass tile per source, click to toggle.
+   Mirrors the app's own model: each source is its own choice,
+   and some need an extra field the others don't (see .source-extra-panel).
+   ============================================================ */
+
+.source-picker {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.75rem;
+}
+
+.source-card {
+    position: relative;
+    display: block;
+    cursor: pointer;
+}
+
+.source-card input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.source-card-body {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+}
+
+.source-card:hover .source-card-body {
+    border-color: var(--glass-border-hover);
+    background: rgba(0, 0, 0, 0.35);
+}
+
+.source-card input:checked ~ .source-card-body {
+    border-color: var(--accent);
+    background: rgba(10, 132, 255, 0.12);
+    box-shadow: inset 0 0 0 1px var(--accent-glow);
+}
+
+.source-card input:focus-visible ~ .source-card-body {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.source-card-icon {
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.source-card-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    flex: 1;
+}
+
+.source-card-check {
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    border: 1.5px solid var(--glass-border-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    color: transparent;
+    flex-shrink: 0;
+    transition: var(--transition-fast);
+}
+
+.source-card input:checked ~ .source-card-body .source-card-check {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.source-extra-panel {
+    grid-column: 1 / -1;
+    padding: 0.9rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--glass-border);
+    border-left: 2px solid var(--accent);
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   Pill Toggle Group — chip-style multi-select (rooms, bedrooms)
+   replacing native <select multiple> (no ctrl/cmd-click needed)
+   ============================================================ */
+
+.pill-toggle-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.pill-toggle {
+    position: relative;
+    cursor: pointer;
+}
+
+.pill-toggle input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.pill-toggle-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.9rem;
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: var(--transition-fast);
+}
+
+.pill-toggle:hover .pill-toggle-label {
+    border-color: var(--glass-border-hover);
+    color: var(--text-primary);
+}
+
+.pill-toggle input:checked ~ .pill-toggle-label {
+    background: rgba(10, 132, 255, 0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.pill-toggle input:focus-visible ~ .pill-toggle-label {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 /* ============================================================
@@ -950,58 +1356,138 @@ code {
 }
 
 /* ============================================================
-   Filter Bar
-   ============================================================ */
+Filter Bar
+============================================================ */
 
 .filter-bar {
-    margin-bottom: 1.5rem;
+  margin-bottom: 1.5rem;
 }
 
-.filter-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr auto;
-    gap: 1rem;
-    align-items: end;
+.filter-main-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1fr auto;
+  gap: 1rem;
+  align-items: end;
 }
 
 .filter-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .filter-group label {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
-.filter-group input {
-    padding: 0.55rem 0.9rem;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 0.85rem;
-    transition: var(--transition-fast);
-    width: 100%;
+.filter-group input,
+.filter-group select {
+  padding: 0.55rem 0.9rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.85rem;
+  transition: var(--transition-fast);
+  width: 100%;
 }
 
-.filter-group input:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-glow);
+.filter-group select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='rgba(255,255,255,0.5)' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
 }
 
-.filter-group input::placeholder { 
-    color: var(--text-tertiary); 
+.filter-group select option {
+  background: #1a1a2e;
+  color: var(--text-primary);
+}
+
+.filter-group input:focus,
+.filter-group select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.filter-group input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.filter-range {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.filter-range input {
+  flex: 1;
+  min-width: 0;
+}
+
+.range-sep {
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  flex-shrink: 0;
+}
+
+.advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.4rem 0.75rem;
+  background: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  font-family: inherit;
+}
+
+.advanced-toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--glass-border-hover);
+  color: var(--text-primary);
+}
+
+.active-badge {
+  color: var(--accent);
+  font-size: 0.7rem;
+}
+
+.filter-advanced {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.filter-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
 }
 
 .filter-count {
-    font-size: 0.8rem;
-    margin-top: 0.75rem;
-    min-height: 1.2em;
+  font-size: 0.8rem;
+  margin-top: 0.75rem;
+  min-height: 1.2em;
 }
 
 /* ============================================================
@@ -1626,17 +2112,26 @@ code {
    ============================================================ */
 
 @media (max-width: 1024px) {
-    .nav-content {
-        padding: 0 1.5rem;
-    }
-    
-    .container {
-        padding: 1.5rem 1.5rem 3rem;
-    }
-    
-    .filter-row {
-        grid-template-columns: 1fr 1fr;
-    }
+  .nav-content {
+    padding: 0 1.5rem;
+  }
+
+  .container {
+    padding: 1.5rem 1.5rem 3rem;
+  }
+
+  .filter-main-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fg-search {
+    grid-column: 1 / -1;
+  }
+
+  .filter-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1673,9 +2168,25 @@ code {
         grid-template-columns: repeat(2, 1fr); 
     }
     
-    .filter-row { 
-        grid-template-columns: 1fr; 
-    }
+  .filter-main-row {
+    grid-template-columns: 1fr;
+  }
+
+  .fg-search,
+  .fg-price,
+  .fg-surface,
+  .fg-rooms,
+  .fg-sort {
+    grid-column: 1 / -1;
+  }
+
+  .filter-range {
+    flex-direction: row;
+  }
+
+  .filter-advanced-grid {
+    grid-template-columns: 1fr 1fr;
+  }
     
     .search-grid { 
         grid-template-columns: 1fr; 
