@@ -425,7 +425,9 @@ def edit_search(search_id: int):
         if not all(r["ok"] for r in validation):
             flash(_validation_error_message(validation), "error")
             stats = storage.scrape_logs.get_scrape_stats(search_id)
-            return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)
+            return render_template(
+                "search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow
+            )
 
         if label and ntfy_topic:
             storage.searches.update_search(

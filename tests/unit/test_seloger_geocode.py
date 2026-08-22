@@ -313,7 +313,10 @@ class TestAreaCacheKey:
             ({"kind": REGION, "name": "Nulle part"}, "région sans code"),
             ({"kind": DEPARTMENT, "name": "Gironde", "code": ""}, "département à code vide"),
         ],
-        ids=["empty_insee_no_postal", "null_insee_no_postal", "whole_city_no_insee_no_city", "region_no_code", "dept_empty_code"],
+        ids=[
+            "empty_insee_no_postal", "null_insee_no_postal",
+            "whole_city_no_insee_no_city", "region_no_code", "dept_empty_code",
+        ],
     )
     def test_an_unidentifiable_area_has_no_key(self, location, case):
         """Sans AUCUNE information exploitable (ni code INSEE, ni code postal
