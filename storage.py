@@ -19,6 +19,7 @@ from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.listing_repo import ListingRepository
+from repositories.pap_geo_repo import PapGeoRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
 from repositories.seloger_geo_repo import SelogerGeoRepository
@@ -40,6 +41,7 @@ class Storage:
         self.seloger_geo = SelogerGeoRepository(database_url)
         self.bienici_geo = BienIciGeoRepository(database_url)
         self.century21_geo = Century21GeoRepository(database_url)
+        self.pap_geo = PapGeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -249,6 +251,18 @@ class Storage:
                     CREATE TABLE IF NOT EXISTS century21_geo_ids (
                         area_key    TEXT PRIMARY KEY,
                         slug_id     TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Même clé de périmètre (`area_key`) que les caches SeLoger,
+                # bienici et century21 — voir services.pap_geocode.area_cache_key.
+                # `geo_id` est l'identifiant numérique opaque de pap.fr (« 439 »
+                # pour Paris), stocké en TEXT comme le slug_id de Century 21 :
+                # une valeur unique par périmètre.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS pap_geo_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        geo_id      TEXT,
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
