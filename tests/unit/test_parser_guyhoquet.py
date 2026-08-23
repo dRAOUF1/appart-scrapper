@@ -513,7 +513,9 @@ class TestDictToListingNestedFormat:
         assert listing.is_exclusive is False
         assert listing.has_3d_visit is True
         assert listing.legacy_id == "1894191"
-        assert listing.creation_date == "2026-08-22 18:08:17"
+        # Issue #12 : created_at naïf (séparateur espace) → supposé UTC,
+        # normalisé en ISO-8601 UTC canonique.
+        assert listing.creation_date == "2026-08-22T18:08:17+00:00"
         assert listing.update_date == "2026-08-22 19:11:38"
 
     def test_the_nested_price_and_address_win_over_flat_fields(self):
@@ -632,7 +634,7 @@ class TestDictToListingEdgeCases:
 
         listing = _dict_to_listing(marker)
 
-        assert listing.creation_date == ""
+        assert listing.creation_date == "unknown"
         assert listing.update_date == ""
         assert listing.epc == ""
         assert listing.ges == ""

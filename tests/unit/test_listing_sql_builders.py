@@ -86,7 +86,21 @@ FILTER_CASES = [
     pytest.param({"is_private": False}, ["l.is_private = %s"], [False], id="is_private_false"),
     pytest.param({"is_new": True}, ["l.is_new = %s"], [True], id="is_new_true"),
     pytest.param({"is_new": False}, ["l.is_new = %s"], [False], id="is_new_false"),
-    pytest.param({"date_min": "2026-01-01"}, ["l.creation_date >= %s"], ["2026-01-01"], id="date_min"),
+    # Issue #12 : ni « unknown » ni un vide hérité ne sont des dates — exclus
+    # explicitement ; la borne « AAAA-MM-JJ » est validée puis étendue en
+    # début de journée ISO-8601 UTC comparable.
+    pytest.param(
+        {"date_min": "2026-01-01"},
+        ["l.creation_date NOT IN ('unknown', '')", "l.creation_date >= %s"],
+        ["2026-01-01T00:00:00+00:00"],
+        id="date_min",
+    ),
+    pytest.param(
+        {"date_max": "2026-01-31"},
+        ["l.creation_date NOT IN ('unknown', '')", "l.creation_date <= %s"],
+        ["2026-01-31T23:59:59+00:00"],
+        id="date_max",
+    ),
     pytest.param(
         {"blacklisted_agencies": ["Foncia", "Nexity"]},
         ["l.agency NOT IN (%s,%s)"],
@@ -270,11 +284,13 @@ class TestBuildFilterClauses:
             "%loft%", "%loft%", "%loft%", "%loft%",
             800, 1500, 40, 90, 2, 4,
             "%Paris%", "%13e%", "75013", "apartment", "Foncia", "C", "B",
-            False, True, "2026-01-01", "Nexity", "Orpi",
+            False, True, "2026-01-01T00:00:00+00:00", "Nexity", "Orpi",
         ]
         assert count_placeholders(clause) == len(params)
-        # 18 filtres actifs, dont un (`q`) produit une clause unique parenthésée.
-        assert len(clause.split(" AND ")) == 18
+        # 19 filtres actifs (date_min émet deux clauses depuis l'issue #12 :
+        # exclusion de la sentinelle + borne), dont un (`q`) produit une clause
+        # unique parenthésée.
+        assert len(clause.split(" AND ")) == 19
 
     def test_preexisting_params_are_preserved(self, repo):
         """Les appelants amorcent `params = [search_id]` : le constructeur doit
@@ -290,12 +306,17 @@ class TestBuildFilterClauses:
         """🔒 L'invariant central. Chaque filtre reçoit une charge hostile ;
         aucune ne doit se retrouver dans la chaîne renvoyée — elles doivent
         toutes atterrir dans `params`, où psycopg2 les échappera.
+
+        Exception depuis l'issue #12 : `date_min`/`date_max` ne paramètrent
+        plus la valeur brute — ils la VALIDENT d'abord (`_borne_date_comparee`)
+        et lèvent ValueError sur toute charge hostile (voir le test dédié
+        ci-dessous). Ces deux filtres sont donc retirés de cette boucle.
         """
         params: list = []
         filters = {
             "q": payload, "city": payload, "district": payload, "zip_code": payload,
             "property_type": payload, "agency": payload, "epc": payload, "ges": payload,
-            "date_min": payload, "price_min": payload, "price_max": payload,
+            "price_min": payload, "price_max": payload,
             "surface_min": payload, "surface_max": payload, "rooms_min": payload,
             "rooms_max": payload, "is_private": payload, "is_new": payload,
             "blacklisted_agencies": [payload, payload],
@@ -310,6 +331,15 @@ class TestBuildFilterClauses:
         assert payload in params
         assert count_placeholders(clause) == len(params)
 
+    @pytest.mark.parametrize("filtre", ["date_min", "date_max"])
+    @pytest.mark.parametrize("payload", PAYLOADS)
+    def test_a_hostile_date_bound_is_rejected_not_parameterized(self, repo, filtre, payload):
+        """🔒 Issue #12 : les bornes de dates sont validées (« AAAA-MM-JJ »)
+        AVANT toute comparaison — une charge hostile lève ValueError au lieu
+        de produire un filtrage silencieusement faux ou une interpolation."""
+        with pytest.raises(ValueError, match="AAAA-MM-JJ"):
+            repo._build_filter_clauses({filtre: payload}, [])
+
 
 # ---------------------------------------------------------------------------
 # _build_order_clause — allowlist, jamais d'interpolation
@@ -322,8 +352,17 @@ SORT_MAP = {
     "price_desc": "l.price_value DESC NULLS LAST",
     "surface_asc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) ASC NULLS LAST",
     "surface_desc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST",
-    "date_desc": "l.creation_date DESC NULLS LAST",
-    "date_asc": "l.creation_date ASC NULLS LAST",
+    # Issue #12 : les ISO-8601 UTC se trient lexicalement ; les états
+    # dégénérés — sentinelle « unknown », vide hérité, NULL — sont repoussés
+    # en DERNIER par un drapeau de tri, dans les deux sens.
+    "date_desc": (
+        "CASE WHEN l.creation_date IN ('unknown', '') "
+        "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, l.creation_date DESC"
+    ),
+    "date_asc": (
+        "CASE WHEN l.creation_date IN ('unknown', '') "
+        "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, l.creation_date ASC"
+    ),
 }
 
 DEFAULT_ORDER = "sl.found_at DESC"

@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import psycopg2
 import psycopg2.extras
 from loguru import logger
 from psycopg2.extras import execute_values
 
+from parsers._dates import DATE_INCONNUE
 from repositories.base import BaseRepository
+
+
+def _borne_date_comparee(valeur: str, *, fin_de_journee: bool) -> str:
+    """Valide une borne de filtre de dates et la rend lexicalement comparable.
+
+    Issue #12 : ``creation_date`` est stocké en ISO-8601 UTC canonique
+    (``YYYY-MM-DDTHH:MM:SS+00:00``) — la comparaison lexicale n'est fiable
+    que si la borne est elle-même au même format. La route transmet une
+    date seule (« AAAA-MM-JJ », input type=date) : on l'étend en borne de
+    journée complète (début pour date_min, fin pour date_max) afin que le
+    jour borne soit INCLUS des deux côtés.
+
+    Lève ValueError si le format n'est pas une date valide : un filtre
+    malformé ne doit jamais produire un filtrage silencieusement faux.
+    """
+    try:
+        # date.fromisoformat (et non strptime) : pas de datetime naïf
+        # construit ici, seule la composante calendaire nous intéresse —
+        # la borne est ensuite étendue explicitement en UTC canonique.
+        jour = date.fromisoformat(valeur.strip()).isoformat()
+    except ValueError as erreur:
+        raise ValueError(
+            f"Borne de date invalide (format attendu AAAA-MM-JJ) : « {valeur} »"
+        ) from erreur
+    return (
+        f"{jour}T23:59:59+00:00" if fin_de_journee else f"{jour}T00:00:00+00:00"
+    )
 
 
 def _clean_string(s: str) -> str:
@@ -191,8 +221,16 @@ class ListingRepository(BaseRepository):
             clauses.append(f"{prefix}is_new = %s")
             params.append(filters["is_new"])
         if filters.get("date_min"):
+            # Issue #12 : ni « unknown » ni un vide hérité n'est une date —
+            # exclus explicitement ; la borne est validée puis étendue en
+            # début de journée ISO UTC.
+            clauses.append(f"{prefix}creation_date NOT IN ('{DATE_INCONNUE}', '')")
             clauses.append(f"{prefix}creation_date >= %s")
-            params.append(filters["date_min"])
+            params.append(_borne_date_comparee(filters["date_min"], fin_de_journee=False))
+        if filters.get("date_max"):
+            clauses.append(f"{prefix}creation_date NOT IN ('{DATE_INCONNUE}', '')")
+            clauses.append(f"{prefix}creation_date <= %s")
+            params.append(_borne_date_comparee(filters["date_max"], fin_de_journee=True))
         if filters.get("blacklisted_agencies"):
             placeholders = ",".join(["%s"] * len(filters["blacklisted_agencies"]))
             clauses.append(f"{prefix}agency NOT IN ({placeholders})")
@@ -209,8 +247,21 @@ class ListingRepository(BaseRepository):
             "surface_desc": (
                 "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST"
             ),
-            "date_desc": "l.creation_date DESC NULLS LAST",
-            "date_asc": "l.creation_date ASC NULLS LAST",
+            # Issue #12 : les valeurs canoniques (ISO-8601 UTC) se trient
+            # lexicalement ; les états dégénérés — sentinelle « unknown »,
+            # vide hérité d'une base pas encore migrée, NULL défensif — sont
+            # repoussés EN DERNIER dans les deux sens par un drapeau de tri
+            # (NULLS LAST seul ne suffit plus : ce ne sont pas des NULL).
+            "date_desc": (
+                f"CASE WHEN l.creation_date IN ('{DATE_INCONNUE}', '') "
+                "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, "
+                "l.creation_date DESC"
+            ),
+            "date_asc": (
+                f"CASE WHEN l.creation_date IN ('{DATE_INCONNUE}', '') "
+                "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, "
+                "l.creation_date ASC"
+            ),
         }
         return sort_map.get(sort, "sl.found_at DESC")
 

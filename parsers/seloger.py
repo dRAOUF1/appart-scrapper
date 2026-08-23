@@ -20,6 +20,7 @@ from loguru import logger
 
 from core.criteria import source_overrides
 from models.listing import Listing
+from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 
@@ -62,7 +63,7 @@ def _dict_to_listing(data: dict) -> Listing:
         is_new=data.get("isNew", False),
         is_exclusive=data.get("isExclusive", False),
         has_3d_visit=data.get("has3DVisit", False),
-        creation_date=data.get("creationDate", ""),
+        creation_date=normaliser_creation_date(data.get("creationDate")),
         update_date=data.get("updateDate", ""),
         headline=data.get("headline", ""),
         photos=json.dumps(photos),

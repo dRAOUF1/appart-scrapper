@@ -110,6 +110,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
+from parsers._dates import DATE_INCONNUE
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.pap.fr"
@@ -466,6 +467,10 @@ def _dict_to_listing(data: dict) -> Listing:
         # source) et toutes les annonces sont des vendeurs privés.
         agency="",
         is_private=True,
+        # Issue #12 : les cartes de recherche PAP ne portent aucune date («
+        # Annonce publiée le » n'apparaît que sur les fiches détail, jamais
+        # fetchées par ce parser). Sentinelle explicite plutôt que chaîne vide.
+        creation_date=DATE_INCONNUE,
     )
 
 

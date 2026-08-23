@@ -15,6 +15,12 @@ from __future__ import annotations
 
 from loguru import logger
 
+# Issue #12 : le contrat de normalisation de creation_date (date de
+# publication SOURCE, ISO-8601 UTC ou sentinelle « unknown ») est défini
+# UNE seule fois dans parsers/_dates.py — les parsers l'appliquent à
+# l'écriture, la migration ci-dessous à la reprise des valeurs héritées.
+# Aucune duplication volontaire : toute évolution du parsing se fait là-bas.
+from parsers._dates import normaliser_creation_date  # noqa: E402
 from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
@@ -180,7 +186,9 @@ class Storage:
                         is_new          BOOLEAN DEFAULT FALSE,
                         is_exclusive    BOOLEAN DEFAULT FALSE,
                         has_3d_visit    BOOLEAN DEFAULT FALSE,
-                        creation_date   TEXT DEFAULT '',
+                        -- Issue #12 : « unknown » plutôt que chaîne vide
+                        -- (sentinelle explicite, tri cohérent).
+                        creation_date   TEXT DEFAULT 'unknown',
                         update_date     TEXT DEFAULT '',
                         headline        TEXT DEFAULT '',
                         photos          JSONB DEFAULT '[]',
@@ -412,7 +420,7 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS is_new BOOLEAN DEFAULT FALSE,
                         ADD COLUMN IF NOT EXISTS is_exclusive BOOLEAN DEFAULT FALSE,
                         ADD COLUMN IF NOT EXISTS has_3d_visit BOOLEAN DEFAULT FALSE,
-                        ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT '',
+                        ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT 'unknown',
                         ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
                         ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
                         ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
@@ -450,6 +458,37 @@ class Storage:
                 # d'audit « user_token_reset » historiques restent en base
                 # (pas de migration de données).
                 cur.execute("ALTER TABLE users DROP COLUMN IF EXISTS api_token;")
+                # Issue #12 : fiabilisation de creation_date (date de
+                # publication SOURCE, pas la récupération scraper). La
+                # colonne reste en TEXT mais ne contient plus que deux
+                # formes : l'ISO-8601 UTC canonique
+                # (« YYYY-MM-DDTHH:MM:SS+00:00 ») ou la sentinelle
+                # « unknown ». Vides/NULL → « unknown » ; formats
+                # historiques hétérogènes (SeLoger « YYYY-MM-DD », bienici
+                # ISO+Z, orpi/foncia ISO+02:00, guyhoquet naïf) normalisés
+                # en Python par normaliser_creation_date() ; le garbage non
+                # parsable devient « unknown » plutôt que de faire échouer
+                # la migration. Idempotent : les valeurs déjà canoniques ne
+                # sont pas réécrites.
+                cur.execute("""
+                    UPDATE listings SET creation_date = 'unknown'
+                    WHERE creation_date IS NULL OR creation_date = '';
+                """)
+                cur.execute("""
+                    ALTER TABLE listings
+                        ALTER COLUMN creation_date SET DEFAULT 'unknown';
+                """)
+                cur.execute("""
+                    SELECT DISTINCT creation_date FROM listings
+                    WHERE creation_date <> 'unknown';
+                """)
+                for (brute,) in cur.fetchall():
+                    canonique = normaliser_creation_date(brute)
+                    if canonique != brute:
+                        cur.execute(
+                            "UPDATE listings SET creation_date = %s WHERE creation_date = %s;",
+                            (canonique, brute),
+                        )
                 phase_start = _log_phase("alter_other")
 
                 conn.commit()

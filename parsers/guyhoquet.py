@@ -42,6 +42,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, REGION
 from models.listing import Listing
+from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.guy-hoquet.com"
@@ -239,7 +240,9 @@ def _dict_to_listing(data: dict) -> Listing:
         is_new=_property_type_label(data.get("type")) == "Programme neuf",
         is_exclusive=bool(data.get("exclusivity")),
         has_3d_visit=bool(data.get("virtual_visit")),
-        creation_date=data.get("created_at") or "",
+        # created_at est naïf (« YYYY-MM-DD HH:MM:SS ») : supposé UTC par le
+        # normalisateur (issue #12).
+        creation_date=normaliser_creation_date(data.get("created_at")),
         update_date=data.get("updated_at") or "",
         photos=json.dumps(photos),
     )

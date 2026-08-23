@@ -71,6 +71,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
+from parsers._dates import DATE_INCONNUE
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.locations.esset-pm.com"
@@ -539,4 +540,9 @@ class EssetPmParser(BaseParser):
             zip_code=(row.get("codePostal") or "").strip(),
             property_type=property_type or "",
             is_private=False,
+            # Issue #12 : le payload essetpm ne contient qu'une
+            # `dateCommandeDpe` (date de commande du diagnostic DPE) — PAS
+            # une date de publication d'annonce, sémantique différente. Aucune
+            # date exploitable → sentinelle explicite plutôt que chaîne vide.
+            creation_date=DATE_INCONNUE,
         )

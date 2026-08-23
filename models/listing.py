@@ -34,7 +34,12 @@ class Listing:
     is_new: bool = False
     is_exclusive: bool = False
     has_3d_visit: bool = False
-    creation_date: str = ""
+    # Issue #12 : date de PUBLICATION de l'annonce chez sa source (pas la
+    # date de récupération par le scraper, portée par first_seen et
+    # search_listings.found_at). Toujours en ISO-8601 UTC canonique
+    # (« YYYY-MM-DDTHH:MM:SS+00:00 », cf. parsers/_dates.py) ou la sentinelle
+    # « unknown » quand la source ne fournit rien — jamais de chaîne vide.
+    creation_date: str = "unknown"
     update_date: str = ""
     headline: str = ""
     photos: str = "[]"

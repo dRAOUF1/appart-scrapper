@@ -68,6 +68,7 @@ from core.geocode import (
     resolve_insee_code as _resolve_insee_code,
 )
 from models.listing import Listing
+from parsers._dates import DATE_INCONNUE
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.laforet.com"
@@ -462,6 +463,11 @@ def _dict_to_listing(data: dict) -> Listing:
         # complète est stockée en JSON (voir parsers/seloger.py).
         image_url=photos[0] if photos else "",
         photos=json.dumps([{"url": url, "alt": "", "key": ""} for url in photos]),
+        # Issue #12 : les cartes d'annonces Laforêt ne portent aucune date de
+        # publication. Les balises <time datetime> des pages listes sont des
+        # dates d'ARTICLES DE BLOG (« Punaises de lit… »), pas des annonces —
+        # ne jamais s'en servir. Sentinelle explicite plutôt que chaîne vide.
+        creation_date=DATE_INCONNUE,
     )
 
 

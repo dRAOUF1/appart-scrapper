@@ -228,13 +228,12 @@
       <div class="listing-agency">🏢 {{ li.agency }}</div>
       {% endif %}
       <div class="listing-meta">
-        <span class="text-muted text-sm">
-          {% if li.creation_date|parse_iso_date %}
-          Publiée le {{ (li.creation_date|parse_iso_date|fr_time).strftime('%d/%m/%Y') }}
-          {% elif li.found_at %}
-          Détectée le {{ (li.found_at|fr_time).strftime('%d/%m/%Y %H:%M') }}
-          {% endif %}
-        </span>
+        {# Issue #12 : label explicite « Publiée le » / « Détectée le » via la
+        macro partagée — plus de bascule silencieuse entre les deux sémantiques. #}
+        {% from "_macros.html" import date_annonce %}
+        {% if li.creation_date|parse_iso_date or li.found_at %}
+        <span class="text-muted text-sm">{{ date_annonce(li.creation_date, li.found_at) }}</span>
+        {% endif %}
         <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
       </div>
     </div>

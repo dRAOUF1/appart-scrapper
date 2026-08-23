@@ -160,7 +160,8 @@ class TestDictToListing:
         ]
         assert listing.epc == "C"
         assert listing.ges == "A"
-        assert listing.creation_date == "2026-08-21T17:06:49+02:00"
+        # Issue #12 : ISO avec décalage +02:00 → converti en ISO-8601 UTC.
+        assert listing.creation_date == "2026-08-21T15:06:49+00:00"
 
     def test_an_item_without_canonical_url_is_unusable(self):
         """Pas de lien -> pas d'annonce utilisable, plutôt qu'une fiche morte."""
