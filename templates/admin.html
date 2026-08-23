@@ -234,7 +234,7 @@
                     <th>Prix</th>
                     <th>Localisation</th>
                     <th>Recherche</th>
-                    <th>Date</th>
+                    <th>Détectée le</th>
                 </tr>
             </thead>
             <tbody>
@@ -244,7 +244,9 @@
                     <td>{{ li.price or '—' }}</td>
                     <td>{{ li.location or '—' }}</td>
                     <td><span class="badge">{{ li.search_label }}</span></td>
-                    <td class="text-muted">{{ (li.first_seen|fr_time).strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
+                    {# Issue #12 : ces lignes ne portent que first_seen (pas de creation_date dans la requête) → toujours « Détectée le ». #}
+                    {% from "_macros.html" import date_annonce %}
+                    <td class="text-muted">{{ date_annonce(li.creation_date, li.first_seen) }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -394,7 +396,7 @@
                     <th>Prix</th>
                     <th>Surface</th>
                     <th>Localisation</th>
-                    <th>Ajoutée le</th>
+                    <th>Publiée / Détectée le</th>
                 </tr>
             </thead>
             <tbody>
@@ -404,7 +406,9 @@
                     <td>{{ li.price or '—' }}</td>
                     <td>{{ li.surface or '—' }}</td>
                     <td>{{ li.location or '—' }}</td>
-                    <td class="text-muted">{{ (li.found_at|fr_time).strftime('%d/%m/%Y %H:%M') if li.found_at else '—' }}</td>
+                    {# Issue #12 : l.* porte creation_date → « Publiée le » si exploitable, sinon « Détectée le » (found_at). #}
+                    {% from "_macros.html" import date_annonce %}
+                    <td class="text-muted">{{ date_annonce(li.creation_date, li.found_at) }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -556,6 +560,15 @@
             <span class="detail-label">Agence</span>
             <span class="detail-value">{{ listing_detail.agency or '—' }}</span>
         </div>
+        {# Issue #12 : la fiche détail distingue publication source et détection scraper. #}
+        {% from "_macros.html" import date_annonce %}
+        {% set publication = listing_detail.creation_date|parse_iso_date %}
+        {% if publication %}
+        <div class="detail-row">
+            <span class="detail-label">Publiée le</span>
+            <span class="detail-value">{{ (publication|fr_time).strftime('%d/%m/%Y') }}</span>
+        </div>
+        {% endif %}
         <div class="detail-row">
             <span class="detail-label">Détectée le</span>
             <span class="detail-value">{{ (listing_detail.first_seen|fr_time).strftime('%d/%m/%Y %H:%M') if listing_detail.first_seen else '—' }}</span>
@@ -625,7 +638,7 @@
                     <th>Localisation</th>
                     <th>Source</th>
                     <th>Liée à</th>
-                    <th>Détectée le</th>
+                    <th>Publiée / Détectée le</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -638,7 +651,9 @@
                     <td>{{ li.location or '—' }}</td>
                     <td><span class="badge badge-source">{{ li.source or '—' }}</span></td>
                     <td>{{ li.linked_searches }} recherche(s)</td>
-                    <td class="text-muted">{{ (li.first_seen|fr_time).strftime('%d/%m/%Y') if li.first_seen else '—' }}</td>
+                    {# Issue #12 : l.* porte creation_date → label explicite par ligne. #}
+                    {% from "_macros.html" import date_annonce %}
+                    <td class="text-muted">{{ date_annonce(li.creation_date, li.first_seen) }}</td>
                     <td>
                         <a href="{{ url_for('admin.admin_listing_detail', listing_id=li.listing_id) }}" class="btn btn-sm btn-ghost">Voir</a>
                         <form method="POST" action="{{ url_for('admin.admin_delete_listing', listing_id=li.listing_id) }}" class="inline-form" onsubmit="return confirm('Supprimer cette annonce ?')">

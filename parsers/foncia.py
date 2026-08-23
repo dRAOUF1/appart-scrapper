@@ -71,6 +71,7 @@ from core.criteria import (
 )
 from core.geocode import REGION, region_departments
 from models.listing import Listing
+from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://fr.foncia.com"
@@ -302,7 +303,8 @@ def _dict_to_listing(item: dict) -> Listing | None:
 
     En location le prix vit dans `loyer` (pas de champ prix). Pas de nom
     d'agence dans l'API (seulement numeroAgence) : agency reste vide.
-    datePublication est ISO 8601 tz-aware, conservée telle quelle."""
+    datePublication est ISO 8601 tz-aware, normalisée en ISO-8601 UTC
+    canonique (issue #12) par normaliser_creation_date."""
     reference = str(item.get("reference") or "")
     url = _detail_url(item)
     if not reference or not url:
@@ -357,7 +359,7 @@ def _dict_to_listing(item: dict) -> Listing | None:
         property_type=property_type,
         is_exclusive=bool(item.get("exclusivite")),
         has_3d_visit=bool(item.get("urlVisite360")),
-        creation_date=item.get("datePublication") or "",
+        creation_date=normaliser_creation_date(item.get("datePublication")),
         epc=item.get("noteConsoEnergie") or "",
         ges=item.get("noteEmissionGES") or "",
         photos=json.dumps(

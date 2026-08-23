@@ -148,7 +148,9 @@ class TestDictToListing:
         assert listing.is_exclusive is False
         assert listing.has_3d_visit is True
         assert listing.is_private is False
-        assert listing.creation_date == "2026-07-01"
+        # Issue #12 : la date brute SeLoger (« YYYY-MM-DD ») est normalisée
+        # en ISO-8601 UTC canonique par parsers/_dates.py.
+        assert listing.creation_date == "2026-07-01T00:00:00+00:00"
         assert listing.update_date == "2026-07-20"
 
     @pytest.mark.parametrize(
@@ -308,7 +310,10 @@ class TestDictToListing:
             ("agency", "agency"),
             ("epc", "epc"),
             ("ges", "ges"),
-            ("creation_date", "creationDate"),
+            # Issue #12 : creation_date n'est plus dans cette liste — une clé
+            # None est absorbée par normaliser_creation_date() (sentinelle
+            # « unknown »), elle ne fuit plus en None. Voir
+            # test_parsers_dates.py pour le contrat dédié.
             ("update_date", "updateDate"),
             ("headline", "headline"),
         ],

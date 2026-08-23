@@ -1,0 +1,20 @@
+{#
+  Macros partagées d'affichage des dates d'annonce (issue #12).
+
+  Règle : JAMAIS de date brute sans label. Une annonce affiche soit sa date
+  de PUBLICATION chez sa source (« Publiée le », quand listings.creation_date
+  est exploitable — ISO-8601 UTC ou sentinelle « unknown »), soit sa date de
+  DÉTECTION par le scraper (« Détectée le », first_seen / found_at).
+  La bascule entre les deux est explicite via le label, plus jamais muette.
+#}
+
+{% macro date_annonce(creation_date, detection) -%}
+    {%- set publication = creation_date|parse_iso_date -%}
+    {%- if publication -%}
+        Publiée le {{ (publication|fr_time).strftime('%d/%m/%Y') }}
+    {%- elif detection -%}
+        Détectée le {{ (detection|fr_time).strftime('%d/%m/%Y %H:%M') }}
+    {%- else -%}
+        Date inconnue
+    {%- endif -%}
+{%- endmacro %}

@@ -1132,3 +1132,80 @@ class TestUniqueAgenciesForUser:
     def test_a_user_without_listings_gets_an_empty_list(self, storage, user):
         assert storage.listings.get_unique_agencies_for_user(user["id"]) == []
         assert storage.listings.get_unique_agencies_for_user(999_999) == []
+
+
+# ---------------------------------------------------------------------------
+# Issue #12 : tri par date de publication et bornes de dates
+# ---------------------------------------------------------------------------
+
+
+class TestDateSortAndBounds:
+    """``creation_date`` est désormais ISO-8601 UTC ou « unknown » (jamais de
+    chaîne vide) : le tri lexical redevient fiable et la sentinelle doit être
+    repoussée en DERNIER dans les deux sens ; les bornes de dates excluent
+    explicitement la sentinelle."""
+
+    @pytest.fixture
+    def dated_search(self, storage, search, sql):
+        """Quatre annonces liées à la recherche avec des dates contrôlées :
+        deux canoniques encadrantes, une sentinelle « unknown », un vide
+        hérité d'une base pas encore migrée."""
+        for lid, titre in [("a_1", "A"), ("b_2", "B"), ("u_3", "U"), ("g_4", "G")]:
+            storage.listings.save_and_link(
+                [make_listing(listing_id=lid, title=titre)], search["id"],
+            )
+        sql.exec("UPDATE listings SET creation_date = '2026-01-01T10:00:00+00:00' WHERE listing_id = 'a_1'")
+        sql.exec("UPDATE listings SET creation_date = '2026-03-01T10:00:00+00:00' WHERE listing_id = 'b_2'")
+        # u_3 garde la sentinelle « unknown » (défaut du modèle)…
+        sql.exec("UPDATE listings SET creation_date = '' WHERE listing_id = 'g_4'")
+
+        return search
+
+    def test_date_asc_puts_the_unknown_sentinel_last(self, storage, dated_search):
+        listings = storage.listings.get_listings_for_search(
+            dated_search["id"], sort="date_asc",
+        )
+        assert [li["listing_id"] for li in listings] == ["a_1", "b_2", "g_4", "u_3"]
+
+    def test_date_desc_also_puts_the_unknown_sentinel_last(self, storage, dated_search):
+        listings = storage.listings.get_listings_for_search(
+            dated_search["id"], sort="date_desc",
+        )
+        assert [li["listing_id"] for li in listings] == ["b_2", "a_1", "g_4", "u_3"]
+
+    def test_a_null_creation_date_is_defensively_sorted_like_unknown(
+        self, storage, dated_search, sql,
+    ):
+        """La migration bascule les NULL vers « unknown », mais une ligne NULL
+        insérée par contournement ne doit pas remonter en tête du tri pour
+        autant (le drapeau de tri couvre IS NULL)."""
+        sql.exec("INSERT INTO listings (listing_id, url) VALUES ('n_5', 'https://x/n_5')")
+        sql.exec("INSERT INTO search_listings (search_id, listing_id) VALUES (%s, 'n_5')", (dated_search["id"],))
+        sql.exec("UPDATE listings SET creation_date = NULL WHERE listing_id = 'n_5'")
+
+        listings = storage.listings.get_listings_for_search(dated_search["id"], sort="date_asc")
+        assert [li["listing_id"] for li in listings][-2:] == ["g_4", "n_5"]
+
+    def test_date_min_excludes_unknown_and_includes_the_bounded_day(
+        self, storage, dated_search,
+    ):
+        listings = storage.listings.get_listings_for_search(
+            dated_search["id"], filters={"date_min": "2026-02-15"},
+        )
+        # a_1 (janvier) et g_4/u_3 (sentinelles) sont exclus.
+        assert [li["listing_id"] for li in listings] == ["b_2"]
+
+    def test_date_max_includes_the_whole_bounded_day(self, storage, dated_search):
+        listings = storage.listings.get_listings_for_search(
+            dated_search["id"],
+            filters={"date_min": "2026-01-01", "date_max": "2026-01-31"},
+        )
+        assert [li["listing_id"] for li in listings] == ["a_1"]
+
+    def test_a_malformed_bound_raises_valueerror_instead_of_filtering_wrongly(
+        self, storage, dated_search,
+    ):
+        with pytest.raises(ValueError, match="AAAA-MM-JJ"):
+            storage.listings.get_listings_for_search(
+                dated_search["id"], filters={"date_min": "01/02/2026"},
+            )

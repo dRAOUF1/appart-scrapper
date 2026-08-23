@@ -59,6 +59,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, REGION, region_departments
 from models.listing import Listing
+from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.orpi.com"
@@ -296,7 +297,7 @@ def _dict_to_listing(item: dict) -> Listing:
         zip_code=_zip_from_slug(slug),
         property_type=property_type,
         is_exclusive=bool(item.get("isExclusive")),
-        creation_date=item.get("onMarketSince") or "",
+        creation_date=normaliser_creation_date(item.get("onMarketSince")),
         photos=json.dumps(
             [{"url": url, "alt": "", "key": ""} for url in photos if url]
         ),

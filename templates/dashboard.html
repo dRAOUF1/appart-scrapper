@@ -66,10 +66,10 @@
                 {% endif %}
                 <div class="listing-meta">
                     <span class="badge badge-source">{{ li.search_label }}</span>
-                    {% if li.creation_date|parse_iso_date %}
-                    <span class="text-muted text-sm">Publiée le {{ (li.creation_date|parse_iso_date|fr_time).strftime('%d/%m/%Y') }}</span>
-                    {% elif li.found_at %}
-                    <span class="text-muted text-sm">{{ (li.found_at|fr_time).strftime('%d/%m/%Y') }}</span>
+                    {# Issue #12 : label explicite « Publiée le » / « Détectée le » via la macro partagée. #}
+                    {% from "_macros.html" import date_annonce %}
+                    {% if li.creation_date|parse_iso_date or li.found_at %}
+                    <span class="text-muted text-sm">{{ date_annonce(li.creation_date, li.found_at) }}</span>
                     {% endif %}
                     <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
                 </div>

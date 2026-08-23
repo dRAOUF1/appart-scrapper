@@ -76,6 +76,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, DEPARTMENT, REGION
 from models.listing import Listing
+from parsers._dates import DATE_INCONNUE
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.citya.com"
@@ -291,6 +292,11 @@ def _parse_card(card) -> Listing | None:
         is_private=False,
         headline="Meublé" if "meublé" in card_text.lower() else "",
         photos=json.dumps(photos),
+        # Issue #12 : les property-card Citya (data-itemid, data-itemname,
+        # data-category) ne portent aucune date de publication — les cartes
+        # sont volontairement pauvres (pas de description ni de DPE non plus).
+        # Sentinelle explicite plutôt que chaîne vide.
+        creation_date=DATE_INCONNUE,
     )
 
 

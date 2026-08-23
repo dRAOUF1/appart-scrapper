@@ -16,7 +16,13 @@ from datetime import datetime
 
 import pytest
 
-from tests.functional.conftest import make_dashboard_data
+from tests.functional.conftest import (
+    make_dashboard_data,
+    make_listing_detail,
+    make_search_detail,
+    make_user_detail,
+    make_view_listing,
+)
 from tests.helpers.factories import (
     make_criteria,
     make_listing_row,
@@ -952,3 +958,123 @@ class TestLogsImportExport:
         )
 
         assert storage.scrape_logs.import_scrape_logs.call_args.kwargs["allow_override"] is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #12 : toute date affichée porte son label
+# ---------------------------------------------------------------------------
+
+
+class TestDateLabels:
+    """« Publiée le » (publication source, ``creation_date`` exploitable) ou
+    « Détectée le » (récupération scraper, ``found_at``/``first_seen``) :
+    jamais de bascule muette entre les deux sémantiques, jamais de date brute.
+
+    NB sur les heures attendues : ``fr_time`` convertit en Europe/Paris — un
+    datetime naïf est supposé UTC et juillet décale de +2.
+    """
+
+    def test_the_dashboard_labels_a_known_publication_date(self, web_client, storage):
+        recent = [{
+            **make_view_listing(creation_date="2026-07-01T12:00:00+00:00"),
+            "search_label": "Paris 13e", "found_at": datetime(2026, 7, 2, 8, 0),
+        }]
+        storage.users.get_dashboard_data.return_value = make_dashboard_data(recent=recent)
+
+        resp = web_client.get("/dashboard")
+
+        assert resp.status_code == 200
+        text = resp.data.decode()
+        assert "Publiée le 01/07/2026" in text
+        # La publication est affichée : la date de détection ne doit pas
+        # apparaître à côté (une seule sémantique par annonce).
+        assert "Détectée le" not in text
+
+    def test_the_dashboard_labels_the_detection_fallback(self, web_client, storage):
+        recent = [{**make_view_listing(), "search_label": "X", "found_at": datetime(2026, 7, 1, 14, 30)}]
+        storage.users.get_dashboard_data.return_value = make_dashboard_data(recent=recent)
+
+        resp = web_client.get("/dashboard")
+
+        assert resp.status_code == 200
+        assert "Détectée le 01/07/2026 16:30" in resp.data.decode()
+
+    def test_the_listings_page_labels_publication_and_detection(self, web_client, storage, owned_search):
+        storage.listings.count_listings_for_search.return_value = 2
+        storage.listings.get_listings_for_search.return_value = [
+            {**make_view_listing(listing_id="a", creation_date="2026-07-05T09:00:00+00:00"),
+             "found_at": datetime(2026, 7, 6, 10, 0)},
+            {**make_view_listing(listing_id="b"), "found_at": datetime(2026, 7, 1, 14, 30)},
+        ]
+
+        resp = web_client.get("/listings/1")
+
+        assert resp.status_code == 200
+        text = resp.data.decode()
+        assert "Publiée le 05/07/2026" in text
+        assert "Détectée le 01/07/2026 16:30" in text
+
+    def test_the_admin_search_detail_shows_the_publication_when_known(self, admin_client, storage):
+        detail = make_search_detail()
+        detail["recent_listings"] = [{
+            **make_view_listing(creation_date="2026-07-05T09:00:00+00:00"),
+            "found_at": datetime(2026, 7, 6, 10, 0),
+        }]
+        storage.searches.get_search_detail.return_value = detail
+
+        resp = admin_client.get("/admin/searches/1")
+
+        assert resp.status_code == 200
+        text = resp.data.decode()
+        assert "Publiée / Détectée le" in text  # l'en-tête nomme les deux sémantiques
+        assert "Publiée le 05/07/2026" in text
+
+    def test_the_admin_user_detail_labels_first_seen_as_detection(self, admin_client, storage):
+        storage.users.get_user_detail.return_value = make_user_detail()
+
+        resp = admin_client.get("/admin/users/1")
+
+        assert resp.status_code == 200
+        text = resp.data.decode()
+        # Ces lignes ne portent que first_seen : toujours « Détectée le »…
+        assert "Détectée le 01/07/2026 02:00" in text
+        # …et jamais une colonne générique « Date » sans sémantique (#12).
+        assert "<th>Date</th>" not in text
+
+    def test_the_admin_bulk_table_labels_every_row(self, admin_client, storage):
+        storage.listings.count_all_listings.return_value = 1
+        storage.listings.get_orphan_listings_count.return_value = 0
+        storage.listings.get_all_listings.return_value = [{
+            **make_view_listing(),
+            "linked_searches": 2,
+            "first_seen": datetime(2026, 7, 1),
+        }]
+
+        resp = admin_client.get("/admin/listings")
+
+        assert resp.status_code == 200
+        assert "Publiée / Détectée le" in resp.data.decode()
+
+    def test_the_admin_listing_detail_shows_both_dates_when_available(self, admin_client, storage):
+        storage.listings.get_listing_detail.return_value = make_listing_detail(
+            creation_date="2026-07-05T09:00:00+00:00",
+        )
+
+        resp = admin_client.get("/admin/listings/sl_1")
+
+        assert resp.status_code == 200
+        text = resp.data.decode()
+        # La fiche distingue explicitement les deux horloges (#12).
+        assert "Publiée le" in text and "Détectée le" in text
+
+    def test_the_admin_listing_detail_hides_the_publication_row_when_unknown(
+        self, admin_client, storage,
+    ):
+        storage.listings.get_listing_detail.return_value = make_listing_detail()
+
+        resp = admin_client.get("/admin/listings/sl_1")
+
+        assert resp.status_code == 200
+        text = resp.data.decode()
+        assert 'detail-label">Publiée le<' not in text
+        assert 'detail-label">Détectée le<' in text

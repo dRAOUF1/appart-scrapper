@@ -127,7 +127,8 @@ class TestDictToListing:
         assert listing.is_exclusive is False
         assert listing.has_3d_visit is True
         assert listing.is_private is False
-        assert listing.creation_date == "2026-07-01T00:55:44.275Z"
+        # Issue #12 : ISO+Z avec millisecondes → ISO-8601 UTC canonique.
+        assert listing.creation_date == "2026-07-01T00:55:44+00:00"
         assert listing.update_date == "2026-07-02T05:15:36.301Z"
         assert listing.description == BIENICI_AD["description"]
 
@@ -253,7 +254,9 @@ class TestDictToListing:
             ("agency", "accountDisplayName"),
             ("epc", "energyClassification"),
             ("ges", "greenhouseGazClassification"),
-            ("creation_date", "publicationDate"),
+            # Issue #12 : creation_date sort de cette liste — une clé None
+            # donne désormais la sentinelle « unknown » (parsers/_dates.py),
+            # plus une chaîne vide. Voir test_parsers_dates.py.
             ("update_date", "modificationDate"),
         ],
     )

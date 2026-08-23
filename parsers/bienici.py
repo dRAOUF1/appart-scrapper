@@ -24,6 +24,7 @@ from loguru import logger
 from core.criteria import source_overrides
 from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
+from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.bienici.com"
@@ -127,7 +128,7 @@ def _dict_to_listing(data: dict) -> Listing:
         is_new=bool(data.get("newProperty", False)),
         is_exclusive=bool(data.get("isBienIciExclusive", False)),
         has_3d_visit=bool(data.get("with3dModel", False)),
-        creation_date=data.get("publicationDate") or "",
+        creation_date=normaliser_creation_date(data.get("publicationDate")),
         update_date=data.get("modificationDate") or "",
         photos=json.dumps(photos),
     )

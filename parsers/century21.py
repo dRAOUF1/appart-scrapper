@@ -93,6 +93,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
+from parsers._dates import DATE_INCONNUE
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
 BASE_URL = "https://www.century21.fr"
@@ -511,6 +512,10 @@ def _dict_to_listing(data: dict) -> Listing:
         # dans la description) : le champ reste vide, le blacklist par agence
         # ne s'applique pas à cette source.
         agency="",
+        # Issue #12 : le balisage des cartes Century21 (data-uid, aria-label,
+        # h3, description) ne contient aucune date de publication. Sentinelle
+        # explicite plutôt que chaîne vide.
+        creation_date=DATE_INCONNUE,
     )
 
 

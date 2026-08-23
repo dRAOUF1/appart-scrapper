@@ -595,3 +595,69 @@ def test_a_failure_between_the_two_commits_leaves_a_half_migrated_database(blank
     Storage.run_migrations(url)
     search = storage.searches.create_search(user["id"], "Réparé", "topic", "seloger", make_criteria(), 5)
     assert storage.searches.get_search(search["id"])["sources"] == ["seloger"]
+
+
+def test_migration_normalises_creation_date_to_iso_utc_or_unknown(blank_db):
+    """Issue #12 : les valeurs héritées de ``listings.creation_date`` —
+    chaînes vides, NULL, date seule SeLoger, ISO+Z bienici, décalage
+    +02:00 orpi/foncia, naïf guyhoquet, garbage — sont normalisées en
+    ISO-8601 UTC canonique ou basculées sur la sentinelle « unknown ».
+
+    Scénario de déploiement réel : une base à jour du schéma précédent
+    contient des annonces dans tous les formats historiques ; le déploiement
+    qui porte le correctif rejoue ``run_migrations``, qui doit réparer les
+    données sans en perdre une seule.
+    """
+    url = blank_db()
+    Storage.run_migrations(url)  # schéma courant…
+
+    legacy = [
+        ("L1", ""),                           # vide → unknown
+        ("L2", None),                         # NULL → unknown
+        ("L3", "2026-07-01"),                 # SeLoger → minuit UTC
+        ("L4", "2026-07-01T00:55:44.275Z"),   # bienici → UTC, ms tronquées
+        ("L5", "2026-08-06T00:00:00+02:00"),  # orpi/foncia → converti UTC
+        ("L6", "2026-08-22 18:08:17"),        # guyhoquet naïf → supposé UTC
+        ("L7", "pas une date"),               # garbage → unknown (jamais d'échec)
+        ("L8", "2026-07-01T12:00:00+00:00"),  # déjà canonique → intacte
+    ]
+    for lid, brute in legacy:
+        _exec(
+            url,
+            "INSERT INTO listings (listing_id, url, creation_date) VALUES (%s, %s, %s)",
+            (lid, f"https://exemple.fr/{lid}", brute),
+        )
+
+    Storage.run_migrations(url)  # …puis le déploiement qui porte la normalisation
+
+    rows = dict(_query(url, "SELECT listing_id, creation_date FROM listings"))
+    assert rows == {
+        "L1": "unknown",
+        "L2": "unknown",
+        "L3": "2026-07-01T00:00:00+00:00",
+        "L4": "2026-07-01T00:55:44+00:00",
+        "L5": "2026-08-05T22:00:00+00:00",
+        "L6": "2026-08-22T18:08:17+00:00",
+        "L7": "unknown",
+        "L8": "2026-07-01T12:00:00+00:00",
+    }
+
+    # Idempotence observable : rejouer la migration ne change AUCUNE valeur
+    # (le SELECT DISTINCT ne renvoie plus que des valeurs déjà canoniques).
+    avant = _query(url, "SELECT listing_id, creation_date FROM listings ORDER BY listing_id")
+    Storage.run_migrations(url)
+    assert (
+        _query(url, "SELECT listing_id, creation_date FROM listings ORDER BY listing_id")
+        == avant
+    )
+
+    # Le DEFAULT a convergé : une ligne insérée sans date naît « unknown »,
+    # pas chaîne vide — y compris sur une base créée AVANT le correctif.
+    _exec(
+        url,
+        "INSERT INTO listings (listing_id, url) VALUES ('L9', 'https://exemple.fr/L9')",
+    )
+    assert (
+        _query(url, "SELECT creation_date FROM listings WHERE listing_id = 'L9'")[0][0]
+        == "unknown"
+    )

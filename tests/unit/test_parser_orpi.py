@@ -482,7 +482,8 @@ class TestDictToListing:
         assert listing.property_type == "Appartement"
         assert listing.agency == "Agence De La Mairie"
         assert listing.is_exclusive is True
-        assert listing.creation_date == "2026-08-06T00:00:00+02:00"
+        # Issue #12 : ISO avec décalage +02:00 → converti en ISO-8601 UTC.
+        assert listing.creation_date == "2026-08-05T22:00:00+00:00"
 
     def test_photos_are_serialised_from_full_url_first(self):
         listing = _dict_to_listing(ITEM_NOMINAL)
