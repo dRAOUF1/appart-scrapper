@@ -23,8 +23,11 @@ réelles de century21.fr (dossier materiel_century21/) :
   (sans le « f »), deux types et plus ->
   `/annonces/f/achat-appartement-maison/{slug}/` (un seul type avec « f »
   renvoie 410, vérifié) ;
-* Century 21 est mono-localisation : une URL par localisation, jamais de
-  fusion. Départements et régions sont couverts : le département a son slug
+* les localisations d'une recherche sont FUSIONNÉES en UNE seule URL de
+  recherche (le moteur du site accepte plusieurs périmètres, vérifié en
+  direct — issue #7) : slugs regroupés PAR PRÉFIXE (_level_segments), un
+  segment homogène par famille, ordre de segments fixe ; les slugs collés à
+  la main restent seuls à garder une URL chacun. Le département a son slug
   propre (`d-33_gironde`, dérivé de l'autocomplete), la région est élargie à
   ses départements côté parser (`_resolvable_targets`) — jamais en liste de
   communes.
@@ -48,13 +51,13 @@ from parsers.century21 import (
     _dict_to_listing,
     _fetch_with_retries,
     _is_merged_slug,
+    _level_segments,
     _location_ok,
     _merged_slug,
     _parse_cards,
     _parse_price,
     _passes_filters,
     _property_type_label,
-    _region_segments,
     _resolvable_targets,
     _type_slugs,
     _url_filters,
@@ -237,6 +240,27 @@ def manual_criteria(slug: str = "cp-75001", **overrides) -> dict:
     }
     criteria.update(overrides)
     return criteria
+
+
+def slug_resolver(**slugs):
+    """Un double de `resolve_slug_id` : renvoie le slug associé à toute valeur
+    de la localisation (nom, code INSEE, code postal, code de département...)
+    présente parmi `slugs`. À utiliser en gestionnaire de contexte autour des
+    appels qui déclenchent la résolution automatique — aucun réseau."""
+
+    def side_effect(location, repo=None):
+        values = set()
+        for value in location.values():
+            if isinstance(value, list):
+                values |= {str(item) for item in value}
+            else:
+                values.add(str(value))
+        for key, slug in slugs.items():
+            if key in values:
+                return slug
+        return None
+
+    return patch("services.century21_geocode.resolve_slug_id", side_effect=side_effect)
 
 
 # ---------------------------------------------------------------------------
@@ -761,11 +785,11 @@ class TestMergedSlug:
         assert _is_merged_slug(slug) is expected
 
 
-class TestRegionSegments:
+class TestLevelSegments:
     def test_departments_merge_into_one_segment(self):
         """Le cas Corse : deux départements, aucun repli ville — un seul
         segment où seul le premier slug garde son préfixe."""
-        assert _region_segments(["d-201_corse_du_sud", "d-202_haute_corse"]) == (
+        assert _level_segments(["d-201_corse_du_sud", "d-202_haute_corse"]) == (
             "d-201_corse_du_sud-202_haute_corse"
         )
 
@@ -775,10 +799,33 @@ class TestRegionSegments:
         (`v-paris-77_seine_et_marne-...`) renvoie 410, vérifié en direct."""
         slugs = ["v-paris", "d-77_seine_et_marne", "d-78_yvelines"]
 
-        assert _region_segments(slugs) == "v-paris/d-77_seine_et_marne-78_yvelines"
+        assert _level_segments(slugs) == "v-paris/d-77_seine_et_marne-78_yvelines"
 
     def test_only_cities(self):
-        assert _region_segments(["v-paris"]) == "v-paris"
+        assert _level_segments(["v-paris"]) == "v-paris"
+
+    def test_two_cities_fuse_into_one_homogeneous_segment(self):
+        """🔒 Issue #7 : deux villes (même préfixe `v-`) se fusionnent en UN
+        segment — seule la première garde son préfixe, exactement comme les
+        départements du format vérifié en direct
+        (/f/location-appartement/v-paris/d-91_essonne-92_hauts_de_seine/)."""
+        assert _level_segments(["v-montrouge", "v-nantes"]) == "v-montrouge-nantes"
+
+    def test_postal_codes_and_names_are_two_families_two_segments(self):
+        """`cp-` (arrondissements : numérique) et `v-`/`cpv-` (communes par
+        nom) sont deux FAMILLES pour le moteur : après le premier slug, un
+        segment ne sait plus relire qu'un seul niveau ET un seul format — un
+        mélange (`cp-75001-montrouge`) n'est pas exprimable. Chacun son
+        segment, au sein de la MÊME URL."""
+        assert _level_segments(["cp-75001", "v-montrouge"]) == "v-montrouge/cp-75001"
+
+    def test_segment_order_is_fixed_regardless_of_criteria_order(self):
+        """L'ordre des segments ne dépend pas de l'ordre des critères :
+        `v-`/`cpv-` puis `cp-` puis `d-` (_LEVEL_ORDER) ; au sein d'un
+        segment, l'ordre des critères est conservé."""
+        slugs = ["d-40_landes", "cp-75001", "v-nantes", "d-33_gironde"]
+
+        assert _level_segments(slugs) == "v-nantes/cp-75001/d-40_landes-33_gironde"
 
 
 # ---------------------------------------------------------------------------
@@ -786,11 +833,10 @@ class TestRegionSegments:
 # ---------------------------------------------------------------------------
 
 class TestBuildSearchUrls:
-    def test_one_url_per_location_never_merged(self):
-        """Hors région, chaque localisation garde SA propre URL : la fusion en
-        un segment unique est réservée aux départements d'une même région
-        (_slugs), pas aux villes choisies séparément — le formulaire du site
-        ne propose qu'un seul champ de ville (vérifié en direct)."""
+    def test_manual_slugs_keep_one_url_each(self):
+        """Des slugs collés à la main ne sont JAMAIS fusionnés : c'est
+        l'utilisateur qui a fixé ce découpage, chaque slug garde sa propre
+        URL et son isolement en cas d'erreur (voir TestScrapePartialFailures)."""
         criteria = {
             "locations": [PARIS_1ER, MONTROUGE],
             "transaction": "buy",
@@ -804,6 +850,115 @@ class TestBuildSearchUrls:
             f"{BASE_URL}/annonces/f/achat-appartement-maison/cp-75001/",
             f"{BASE_URL}/annonces/f/achat-appartement-maison/v-montrouge/",
         ]
+
+    def test_two_resolved_cities_produce_one_url_with_fused_city_segments(self):
+        """🔒 Issue #7 : deux villes résolues automatiquement -> UNE SEULE URL
+        portant les deux périmètres fusionnés en un segment homogène. Avant
+        la fix, chaque ville partait dans SA propre série de pages."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [MONTROUGE, NANTES],
+            "transaction": "buy",
+            "propertyTypes": ["apartment"],
+        }
+
+        with slug_resolver(**{"92120": "v-montrouge", "44000": "v-nantes"}):
+            urls = parser.build_search_urls(criteria)
+
+        # Un seul type demandé mais une fusion : la forme « f » s'impose.
+        assert urls == [f"{BASE_URL}/annonces/f/achat-appartement/v-montrouge-nantes/"]
+
+    def test_cities_and_departments_share_one_url_in_separate_level_segments(self):
+        """🔒 Villes ET département demandés ensemble -> toujours UNE seule
+        URL, avec UN segment homogène PAR niveau (mélanger les niveaux dans
+        un même segment renvoie 410, vérifié en direct)."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [MONTROUGE, GIRONDE],
+            "transaction": "rent",
+            "propertyTypes": [],
+        }
+
+        with slug_resolver(**{"92120": "v-montrouge", "33": "d-33_gironde"}):
+            urls = parser.build_search_urls(criteria)
+
+        assert urls == [f"{BASE_URL}/annonces/f/location/v-montrouge/d-33_gironde/"]
+
+    def test_a_region_alone_keeps_its_single_fused_url(self):
+        """Une région seule : UNE URL portant tous ses départements — le
+        comportement pré-existant est inchangé par la généralisation."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {"locations": [IDF], "transaction": "rent", "propertyTypes": []}
+
+        with slug_resolver(**{code: f"d-{code}_nom" for code in IDF["departments"]}):
+            urls = parser.build_search_urls(criteria)
+
+        expected = "d-75_nom-" + "-".join(f"{c}_nom" for c in IDF["departments"][1:])
+        assert urls == [f"{BASE_URL}/annonces/f/location/{expected}/"]
+
+    def test_a_region_and_a_city_fuse_into_one_url(self):
+        """🔒 Région + ville séparée -> UNE seule URL : segment villes puis
+        segment des départements élargis de la région (_level_segments)."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [IDF, MONTROUGE],
+            "transaction": "rent",
+            "propertyTypes": [],
+        }
+        resolver = slug_resolver(
+            **{code: f"d-{code}_nom" for code in IDF["departments"]},
+            **{"92120": "v-montrouge"},
+        )
+
+        with resolver:
+            urls = parser.build_search_urls(criteria)
+
+        expected_dept = "d-75_nom-" + "-".join(f"{c}_nom" for c in IDF["departments"][1:])
+        assert urls == [f"{BASE_URL}/annonces/f/location/v-montrouge/{expected_dept}/"]
+
+    def test_a_single_auto_resolved_location_is_byte_for_byte_unregressed(self):
+        """Non-régression mono-localisation (auto-résolue) : même URL qu'avant
+        la généralisation — un seul type SANS « f », slug nu sans fusion."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [MONTROUGE],
+            "transaction": "buy",
+            "propertyTypes": ["apartment"],
+        }
+
+        with slug_resolver(**{"92120": "v-montrouge"}):
+            urls = parser.build_search_urls(criteria)
+
+        assert urls == [f"{BASE_URL}/annonces/achat-appartement/v-montrouge/"]
+
+    def test_build_search_url_returns_the_single_fused_url(self):
+        """« Voir l'URL » : avec UNE seule URL fusible, le lien affiché EST la
+        recherche complète (issue #7 : il ne montrait que la première ville)."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [MONTROUGE, NANTES],
+            "transaction": "buy",
+            "propertyTypes": [],
+        }
+
+        with slug_resolver(**{"92120": "v-montrouge", "44000": "v-nantes"}):
+            shown = parser.build_search_url(criteria)
+            urls = parser.build_search_urls(criteria)
+
+        assert len(urls) == 1
+        assert shown == urls[0]
 
     @pytest.mark.parametrize(
         ("types", "expected"),
@@ -850,21 +1005,21 @@ class TestSlugs:
         ) as mock_resolve:
             slugs = parser._slugs(criteria, criteria["locations"])
 
-        assert slugs == [(PARIS_19, "cp-75001")]
+        assert slugs == [([PARIS_19], "cp-75001")]
         mock_resolve.assert_not_called()
 
     def test_manual_slugs_are_honoured_for_every_perimeter_level(self, logged):
         """Avec des slugs collés à la main, AUCUN niveau n'est filtré :
         `zip(strict=False)` épouse la liste des slugs, département et région
-        compris — c'est l'utilisateur qui a collé ces slugs, on les honore. Le
-        filtrage des niveaux non couverts ne s'applique qu'à la résolution
-        automatique (test suivant)."""
+        compris — c'est l'utilisateur qui a collé ces slugs, on les honore,
+        UN couple isolé par slug (pas de fusion). Le filtrage des niveaux non
+        couverts ne s'applique qu'à la résolution automatique (test suivant)."""
         parser = Century21Parser()
         locations = [PARIS_1ER, GIRONDE, IDF]
 
         slugs = parser._slugs({"sourceOverrides": {"century21": {"slugs": ["cp-75001", "x", "y"]}}}, locations)
 
-        assert [loc["kind"] for loc, _ in slugs] == ["city", "department", "region"]
+        assert [covered[0]["kind"] for covered, _ in slugs] == ["city", "department", "region"]
 
     def test_without_storage_the_impossibility_is_logged(self, logged):
         parser = Century21Parser()
@@ -875,9 +1030,11 @@ class TestSlugs:
             for level, message in logged
         )
 
-    def test_a_department_resolves_like_any_other_perimeter(self, logged):
+    def test_a_department_and_a_city_fuse_into_one_multi_level_entry(self, logged):
         """Le département a son propre niveau de couverture : il est résolu
-        directement (slug complet dérivé de l'autocomplete), pas écarté."""
+        directement (slug complet dérivé de l'autocomplete), pas écarté — et
+        il rejoint la ville dans la MÊME entrée fusionnée, chacun son segment
+        (issue #7 : avant la fix, deux séries de pages séparées)."""
         from tests.helpers.fakes import fake_storage
 
         parser = Century21Parser(storage=fake_storage())
@@ -888,8 +1045,24 @@ class TestSlugs:
             slugs = parser._slugs({"locations": [GIRONDE, PARIS_1ER]}, [GIRONDE, PARIS_1ER])
 
         assert slugs == [
-            (GIRONDE, "d-33_slug"),
-            (PARIS_1ER, "v-paris"),
+            ([GIRONDE, PARIS_1ER], "v-paris/d-33_slug"),
+        ]
+        assert not any(level == "WARNING" for level, _ in logged)
+
+    def test_every_resolved_location_joins_the_same_fused_entry(self, logged):
+        """Toutes les localisations résolues convergent vers UNE seule entrée
+        fusionnée, qui porte TOUTES les localisations couvertes pour le
+        filtrage aval ; l'ordre des critères est conservé au sein d'un
+        segment."""
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        locations = [PARIS_1ER, MONTROUGE, NANTES]
+        with slug_resolver(**{"75001": "cp-75001", "92120": "v-montrouge", "44000": "v-nantes"}):
+            slugs = parser._slugs({"locations": locations}, locations)
+
+        assert slugs == [
+            ([PARIS_1ER, MONTROUGE, NANTES], "v-montrouge-nantes/cp-75001"),
         ]
         assert not any(level == "WARNING" for level, _ in logged)
 
@@ -908,7 +1081,9 @@ class TestSlugs:
             slugs = parser._slugs({"locations": [IDF]}, [IDF])
 
         expected = "d-75_nom-" + "-".join(f"{c}_nom" for c in IDF["departments"][1:])
-        assert slugs == [(IDF, expected)]
+        # La copie « scoped » porte les départements élargis : c'est elle que
+        # le filtrage aval lit (location_postal_prefixes sur une région).
+        assert slugs == [([{**IDF, "departments": list(IDF["departments"])}], expected)]
         assert mock_resolve.call_count == len(IDF["departments"])
         assert not any(level == "WARNING" for level, _ in logged)
 
@@ -930,7 +1105,7 @@ class TestSlugs:
         expected = "d-75_nom-" + "-".join(
             f"{c}_nom" for c in IDF["departments"][1:] if c != "77"
         )
-        assert slugs == [(IDF, expected)]
+        assert slugs == [([{**IDF, "departments": list(IDF["departments"])}], expected)]
         assert any(level == "WARNING" and "Aucun slug résolu" in m for level, m in logged)
 
     def test_the_expansion_falls_back_to_the_geo_api_without_a_departments_list(self):
@@ -1278,6 +1453,32 @@ class TestPagination:
 
         assert [li.listing_id for li in listings] == ["c21_111", "c21_222"]
 
+    def test_pagination_walks_the_pages_of_the_fused_url(self):
+        """🔒 Issue #7 : la pagination s'applique à l'URL FUSIONNÉE — UNE
+        seule série de pages page-N/ pour toutes les villes, pas une série
+        par ville. Les cartes portent les codes postaux des deux villes :
+        elles ne passent le filtre que si le scope couvre bien les deux."""
+        session = FakeSession([
+            page(card("111", zip_code="92120")),
+            page(card("222", zip_code="44000")),
+            page(card("222", zip_code="44000")),
+        ])
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [MONTROUGE, NANTES],
+            "transaction": "buy",
+            "propertyTypes": ["apartment"],
+        }
+
+        with slug_resolver(**{"92120": "v-montrouge", "44000": "v-nantes"}):
+            listings = run_scrape(criteria, session, parser)
+
+        base = f"{BASE_URL}/annonces/f/achat-appartement/v-montrouge-nantes/"
+        assert session.urls == [base, f"{base}page-2/", f"{base}page-3/"]
+        assert len(listings) == 2
+
 
 # ---------------------------------------------------------------------------
 # scrape : filtrage et dégradation partielle
@@ -1308,6 +1509,35 @@ class TestScrapeFilters:
         listings = run_scrape(criteria, session)
 
         assert [li.legacy_id for li in listings] == ["111"]
+
+    def test_a_fused_url_is_filtered_against_all_covered_locations(self):
+        """🔒 Issue #7 : l'URL fusionnée porte PLUSIEURS périmètres, donc
+        _passes_filters doit recevoir TOUTES les localisations couvertes
+        (pattern « scoped » du chemin région) — une carte de CHACUNE des
+        villes est retenue, une carte hors des deux est écartée."""
+        session = FakeSession([
+            page(
+                card("111", zip_code="92120"),
+                card("222", zip_code="44000"),
+                card("333", zip_code="75004"),
+            ),
+            page(card("222", zip_code="44000")),
+        ])
+        from tests.helpers.fakes import fake_storage
+
+        parser = Century21Parser(storage=fake_storage())
+        criteria = {
+            "locations": [MONTROUGE, NANTES],
+            "transaction": "buy",
+            "propertyTypes": ["apartment", "house"],
+        }
+
+        with slug_resolver(**{"92120": "v-montrouge", "44000": "v-nantes"}):
+            listings = run_scrape(criteria, session, parser)
+
+        # 111 (Montrouge) et 222 (Nantes) passent, chacune sous SA ville ;
+        # 333 (Paris 4e, la section hors périmètre) est écartée.
+        assert [li.legacy_id for li in listings] == ["111", "222"]
 
 
 class TestScrapePartialFailures:

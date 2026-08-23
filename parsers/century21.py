@@ -47,10 +47,21 @@ résultats mais ne le sont pas (même leçon que Laforêt et sa section
       parsing ne cible que `.c-the-list-of-properties-list` ;
     - des blocs publicitaires `c-the-ad`, sans `data-uid`.
 
-Century 21 ne référence qu'un seul périmètre par recherche : le champ
+Le formulaire du site ne référence qu'un seul périmètre à la fois : le champ
 localisation devient désactivé dès qu'une ville est choisie (vérifié en
-direct). Une recherche multi-villes produit donc UNE URL par localisation
-(voir build_search_urls), jamais de fusion.
+direct). Mais le moteur accepte en réalité PLUSIEURS périmètres par URL
+(vérifié en direct) : les slugs se fusionnent en un seul segment, le premier
+gardant son préfixe de niveau et les suivants se collant nus par tirets —
+`/annonces/f/location-appartement/v-paris/d-91_essonne-92_hauts_de_seine/`
+renvoie 200 et couvre les trois périmètres. Toutes les localisations d'une
+recherche sont donc FUSIONNÉES en UNE seule URL (voir build_search_urls) :
+regroupées PAR NIVEAU (_level_segments), chaque niveau formant son segment
+au sein de la même URL, le scrape passe par UNE seule série de pages et
+_passes_filters rejoue le contrôle sur TOUTES les localisations couvertes.
+Seuls les slugs collés à la main restent un couple slug/périmètre par URL :
+c'est l'utilisateur qui a fixé ce découpage, chaque slug garde ainsi son
+isolement en cas d'erreur. La fusion exige la forme « f », même avec un seul
+type demandé.
 
 Niveaux de périmètre supportés : city (commune ou arrondissement),
 whole_city et department (page `d-{code}_{nom}`, vérifiée en direct : 200
@@ -59,14 +70,6 @@ complet se dérive de l'autocomplete du site (voir services.century21_geocode).
 La région n'a AUCUN identifiant propre (autocomplete muet, `/r-11/` renvoie
 410, vérifié en direct) : elle est élargie côté parser à ses départements —
 jamais en liste de communes.
-
-Le moteur du site accepte en réalité PLUSIEURS périmètres par URL (vérifié
-en direct) : les slugs se fusionnent en un seul segment, le premier gardant
-son préfixe de niveau et les suivants se collant nus par tirets —
-`/annonces/f/location-appartement/v-paris/d-91_essonne-92_hauts_de_seine/`
-renvoie 200 et couvre les trois périmètres. Une région est donc scrapée en
-UNE série de pages portant tous ses départements ; cette fusion exige la
-forme « f », même avec un seul type demandé.
 """
 
 from __future__ import annotations
@@ -169,22 +172,36 @@ def _merged_slug(slugs: list[str]) -> str:
     return "-".join([first, *rest])
 
 
-def _region_segments(slugs: list[str]) -> str:
-    """Les segments de localisation d'une région fusionnée.
+# Ordre canonique des niveaux de périmètre dans une URL fusionnée : les
+# localités par nom d'abord (`v-` ville entière, `cpv-` commune désignée par
+# son code postal), puis les localités par code postal (`cp-`, seul moyen de
+# viser un arrondissement), puis les départements (`d-`). Chaque préfixe est
+# SON niveau pour le moteur du site : un segment homogène par préfixe, jamais
+# de mélange.
+_LEVEL_ORDER = ("v", "cpv", "cp", "d")
 
-    Le site lit UN type de périmètre par segment : les départements se
-    fusionnent entre eux (_merged_slug), une ville de repli (Paris, seul cas)
-    vit dans son propre segment placé avant. Mélanger les niveaux dans un
-    même segment renvoie 410 (vérifié en direct : /f/location-appartement/
+
+def _level_segments(slugs: list[str]) -> str:
+    """Les segments de localisation d'une URL multi-périmètres.
+
+    Le site lit UN type de périmètre par segment, et un seul FORMAT au sein
+    de ce type : les slugs sont donc regroupés PAR PRÉFIXE (`v-`/`cpv-` et
+    `cp-` sont deux familles de localités — nom vs code postal — issues des
+    mêmes entrées d'autocomplete ; `d-` est le niveau département), chaque
+    groupe est fusionné entre eux (_merged_slug) et l'ordre des segments est
+    fixe (_LEVEL_ORDER). Mélanger les niveaux dans un MÊME segment renvoie
+    410 (vérifié en direct : /f/location-appartement/
     v-paris-77_seine_et_marne-.../ -> 410 contre 200 pour /v-paris/
     d-77_seine_et_marne-.../) — après le premier slug, le segment ne sait
     plus relire qu'un seul niveau."""
-    cities = [s for s in slugs if not s.startswith("d-")]
-    departments = [s for s in slugs if s.startswith("d-")]
-    segments = [*cities]
-    if departments:
-        segments.append(_merged_slug(departments))
-    return "/".join(segments)
+    groups: dict[str, list[str]] = {}
+    for slug in slugs:
+        level = slug.partition("-")[0]
+        groups.setdefault(level, []).append(slug)
+
+    levels = [level for level in _LEVEL_ORDER if level in groups]
+    levels += [level for level in groups if level not in _LEVEL_ORDER]
+    return "/".join(_merged_slug(groups[level]) for level in levels)
 
 
 def _is_merged_slug(slug: str) -> bool:
@@ -531,22 +548,32 @@ class Century21Parser(BaseParser):
         sur un thread de fond, hors contexte d'application."""
         return getattr(self.storage, "century21_geo", None) if self.storage else None
 
-    def _slugs(self, criteria: dict, locations: list[dict]) -> list[tuple[dict, str]]:
-        """Les couples (localisation, slug) à scraper : les slugs collés à la
-        main s'il y en a, sinon ceux résolus depuis les localisations.
+    def _slugs(self, criteria: dict, locations: list[dict]) -> list[tuple[list[dict], str]]:
+        """Les couples (localisations couvertes, segment d'URL) à scraper.
 
-        Une région est élargie à ses départements (_resolvable_targets), dont
-        chaque slug est résolu individuellement (et caché sous sa clé
-        `dept:{code}`), puis FUSIONNÉ en un chemin multi-segments
-        (_region_segments) : le site accepte plusieurs périmètres par
-        recherche, la région se scrape donc en UNE série de pages. Un
+        Les slugs collés à la main d'abord : UN couple par slug, sans fusion —
+        l'utilisateur a fixé ce découpage lui-même et chaque slug garde son
+        isolement en cas d'erreur (le périmètre couvert reste la localisation
+        appariée par zip strict=False).
+
+        Sinon, chaque localisation est résolue individuellement (une région
+        est élargie à ses départements via _resolvable_targets, chaque slug
+        étant caché sous sa clé `dept:{code}` ; la copie « scoped » porte les
+        codes demandés pour que le filtrage par préfixes postaux en aval
+        fonctionne même quand la liste a dû être demandée à l'API geo — les
+        critères ne sont jamais mutés, ils sont partagés entre sources). Puis
+        TOUS les slugs résolus sont FUSIONNÉS en UNE seule URL multi-segments
+        (_level_segments) : le moteur du site accepte plusieurs périmètres par
+        recherche à condition de respecter un niveau par segment, donc toute
+        recherche fusible se scrape en UNE seule série de pages, et le couple
+        porte TOUTES les localisations couvertes pour le filtrage aval. Un
         périmètre dont la résolution échoue est écarté avec un avertissement
         clair — jamais développé en liste de communes."""
         manual = source_overrides(criteria, self.SOURCE_ID).get("slugs")
         if manual:
             # L'utilisateur peut coller plus ou moins de slugs que de villes :
             # zip strict=False épouse ce qu'il y a, dans l'ordre.
-            return list(zip(locations, manual, strict=False))
+            return [([location], slug) for location, slug in zip(locations, manual, strict=False)]
 
         repo = self._geo_repo()
         if repo is None:
@@ -566,12 +593,12 @@ class Century21Parser(BaseParser):
                 )
             return slug
 
-        resolved: list[tuple[dict, str]] = []
+        contributions: list[tuple[dict, list[str]]] = []
         for location in locations:
             if location.get("kind", CITY) != REGION:
                 slug = resolve(location)
                 if slug:
-                    resolved.append((location, slug))
+                    contributions.append((location, [slug]))
                 continue
 
             targets = _resolvable_targets(location)
@@ -592,8 +619,16 @@ class Century21Parser(BaseParser):
             # l'API geo. Jamais mutés : les critères sont partagés entre
             # sources pendant un scrape.
             scoped = {**location, "departments": [t["code"] for t in targets]}
-            resolved.append((scoped, _region_segments(slugs)))
-        return resolved
+            contributions.append((scoped, slugs))
+
+        if not contributions:
+            return []
+
+        covered = [location for location, _ in contributions]
+        segment = _level_segments(
+            [slug for _, contribution in contributions for slug in contribution]
+        )
+        return [(covered, segment)]
 
     def parse_manual_override(self, value: str) -> dict:
         value = (value or "").strip()
@@ -658,24 +693,26 @@ class Century21Parser(BaseParser):
         return f"{BASE_URL}/annonces/f/{transaction}-{types}/{slug}{suffix}/"
 
     def build_search_url(self, criteria: dict) -> str | None:
-        """First location's URL — see build_search_urls() for all of them."""
+        """La première URL — depuis la fusion (#7), LA recherche complète :
+        voir build_search_urls()."""
         urls = self.build_search_urls(criteria)
         return urls[0] if urls else None
 
     def build_search_urls(self, criteria: dict) -> list[str]:
-        """Une URL par localisation — Century 21 est mono-localisation par
-        recherche dans son formulaire (le champ se désactive après une
-        sélection, vérifié en direct), mais son moteur accepte plusieurs
-        périmètres par URL : une région produit donc UNE URL portant tous ses
-        départements fusionnés (_merged_slug), et se scrape en une seule
-        série de pages. Les autres niveaux gardent leur URL propre."""
+        """UNE seule URL portant toutes les localisations fusibles — le
+        formulaire du site ne référence qu'un périmètre à la fois (le champ se
+        désactive après une sélection, vérifié en direct), mais son moteur
+        accepte plusieurs périmètres par URL : les slugs résolus sont donc
+        regroupés PAR NIVEAU et fusionnés dans une même recherche
+        (_level_segments), qui se scrape en UNE seule série de pages. Seuls
+        les slugs collés à la main gardent une URL propre chacun (_slugs)."""
         locations = get_locations(criteria)
         if not locations:
             return []
 
         urls = []
-        for _loc, slug in self._slugs(criteria, locations):
-            urls.append(self._base_path(criteria, slug))
+        for _covered, segment in self._slugs(criteria, locations):
+            urls.append(self._base_path(criteria, segment))
         return urls
 
     # ------------------------------------------------------------------
@@ -706,14 +743,15 @@ class Century21Parser(BaseParser):
         listings: list[Listing] = []
         errors: list[str] = []
 
-        for location, slug in resolved:
+        for covered, segment in resolved:
+            label = ", ".join(_describe(location) for location in covered)
             try:
                 listings.extend(
-                    self._scrape_slug(session, criteria, location, slug, seen)
+                    self._scrape_slug(session, criteria, covered, segment, seen)
                 )
             except Exception as e:
-                errors.append(f"{_describe(location)} ({slug}): {e}")
-                logger.warning(f"[Century21] {_describe(location)}: {e}")
+                errors.append(f"{label} ({segment}): {e}")
+                logger.warning(f"[Century21] {label}: {e}")
 
         if errors and len(errors) == len(resolved):
             raise ValueError("; ".join(errors))
@@ -721,15 +759,18 @@ class Century21Parser(BaseParser):
         logger.info(f"[Century21] Scraping terminé : {len(listings)} annonces uniques")
         return listings
 
-    def _scrape_slug(self, session, criteria: dict, location: dict, slug: str,
+    def _scrape_slug(self, session, criteria: dict, covered: list[dict], segment: str,
                      seen: set) -> list[Listing]:
-        base_path = self._base_path(criteria, slug)
+        """Une série de pages pour UN segment d'URL fusionné : le contrôle
+        aval (_passes_filters) reçoit TOUTES les localisations couvertes par
+        ce segment — comme la copie « scoped » du chemin région."""
+        base_path = self._base_path(criteria, segment)
 
         def fetch(page: int) -> str:
             url = base_path if page == 1 else f"{base_path}page-{page}/"
             return _fetch_with_retries(session, url)
 
-        return self._collect_pages(fetch, criteria, [location], seen, slug)
+        return self._collect_pages(fetch, criteria, covered, seen, segment)
 
     def _collect_pages(self, fetch, criteria: dict, locations: list[dict],
                        seen: set, label: str) -> list[Listing]:
