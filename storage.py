@@ -18,6 +18,7 @@ from loguru import logger
 from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
+from repositories.citya_geo_repo import CityaGeoRepository
 from repositories.foncia_geo_repo import FonciaGeoRepository
 from repositories.guyhoquet_geo_repo import GuyHoquetGeoRepository
 from repositories.listing_repo import ListingRepository
@@ -48,6 +49,7 @@ class Storage:
         self.orpi_geo = OrpiGeoRepository(database_url)
         self.foncia_geo = FonciaGeoRepository(database_url)
         self.guyhoquet_geo = GuyHoquetGeoRepository(database_url)
+        self.citya_geo = CityaGeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -305,6 +307,21 @@ class Storage:
                 # leur slug se dérive du code sans réseau.
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS guyhoquet_geo_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        slug_id     TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Même clé de périmètre (`area_key`) que les autres caches
+                # géo — voir services.citya_geocode.area_cache_key.
+                # `slug_id` est le slug de recherche Citya renvoyé par son
+                # autocomplete (`toulouse-31555`, `lyon-69000`,
+                # `haute-garonne-31`), une valeur unique comme le slug_id de
+                # Foncia. Aucun niveau ne se dérive localement : le site
+                # replie silencieusement sur la France entière quand un slug
+                # ne colle pas, tout périmètre résolu passe donc par ce cache.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS citya_geo_ids (
                         area_key    TEXT PRIMARY KEY,
                         slug_id     TEXT,
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

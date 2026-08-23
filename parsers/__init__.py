@@ -20,6 +20,7 @@ That's it — the new source is immediately available via get_parser("my_source"
 from parsers.base import BaseParser, ParserRegistry
 from parsers.bienici import BienIciParser
 from parsers.century21 import Century21Parser
+from parsers.citya import CityaParser
 from parsers.essetpm import EssetPmParser
 from parsers.foncia import FonciaParser
 from parsers.guyhoquet import GuyHoquetParser
@@ -65,5 +66,5 @@ def list_sources() -> list[dict]:
 __all__ = [
     "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
     "SeLogerParser", "LaforetParser", "BienIciParser", "Century21Parser", "PapParser",
-    "OrpiParser", "EssetPmParser", "FonciaParser", "GuyHoquetParser",
+    "OrpiParser", "EssetPmParser", "FonciaParser", "GuyHoquetParser", "CityaParser",
 ]
