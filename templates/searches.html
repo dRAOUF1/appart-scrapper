@@ -27,6 +27,20 @@
                     <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
                 </div>
                 <div class="form-group">
+                    <!-- Marqueur obligatoire : une case décochée n'est pas envoyée
+                         par le navigateur, lui seul permet de distinguer
+                         « décoché » de « champ absent » (#10). -->
+                    <input type="hidden" name="notify_enabled_present" value="1">
+                    <label>Notifications ntfy</label>
+                    <div class="pill-toggle-group">
+                        <label class="pill-toggle">
+                            <input type="checkbox" id="notify_enabled" name="notify_enabled" checked>
+                            <span class="pill-toggle-label">🔔 Notifier les nouvelles annonces</span>
+                        </label>
+                    </div>
+                    <small class="form-help">Décochez pour continuer à scraper cette recherche sans recevoir de push.</small>
+                </div>
+                <div class="form-group">
                     <label for="scrape_interval">Intervalle (min)</label>
                     <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
                 </div>
@@ -191,6 +205,9 @@
                     {% else %}
                     <span class="badge badge-inactive">Inactif</span>
                     {% endif %}
+                    {% if not s.notify_enabled %}
+                    <span class="badge badge-muted" title="Notifications ntfy désactivées — le scraping continue">🔕 Notifications off</span>
+                    {% endif %}
                 </div>
             </div>
             <!-- Status indicator -->
@@ -274,6 +291,18 @@
                     {% else %}
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     <span>Activer</span>
+                    {% endif %}
+                </button>
+            </form>
+            <form method="POST" action="{{ url_for('web.toggle_search_notify_web', search_id=s.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-btn {% if not s.notify_enabled %}action-pause{% endif %}" title="{% if s.notify_enabled %}Couper les notifications ntfy (le scraping continue){% else %}Réactiver les notifications ntfy{% endif %}">
+                    {% if s.notify_enabled %}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    <span>Notifs ON</span>
+                    {% else %}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    <span>Notifs OFF</span>
                     {% endif %}
                 </button>
             </form>

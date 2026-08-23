@@ -43,7 +43,7 @@ class SearchRepository(BaseRepository):
     def create_search(
         self, user_id: int, label: str, ntfy_topic: str, source: str = "seloger",
         criteria: dict | None = None, scrape_interval: int = 5, is_active: bool = True,
-        sources: list[str] | None = None,
+        sources: list[str] | None = None, notify_enabled: bool = True,
     ) -> dict:
         criteria_json = json.dumps(criteria or {})
         sources = sources or [source]
@@ -53,9 +53,10 @@ class SearchRepository(BaseRepository):
             with self._dict_cursor(conn) as cur:
                 cur.execute(
                     "INSERT INTO searches (user_id, label, ntfy_topic, source, criteria,"
-                    " scrape_interval, is_active, sources)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                    (user_id, label, ntfy_topic, source, criteria_json, scrape_interval, is_active, sources_json),
+                    " scrape_interval, is_active, sources, notify_enabled)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (user_id, label, ntfy_topic, source, criteria_json, scrape_interval,
+                     is_active, sources_json, notify_enabled),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -69,6 +70,7 @@ class SearchRepository(BaseRepository):
                     "criteria": criteria or {},
                     "scrape_interval": scrape_interval,
                     "is_active": is_active,
+                    "notify_enabled": notify_enabled,
                 }
         finally:
             self._release_conn(conn)
@@ -91,7 +93,7 @@ class SearchRepository(BaseRepository):
         self, search_id: int, user_id: int, label: str | None = None,
         ntfy_topic: str | None = None, criteria: dict | None = None,
         scrape_interval: int | None = None, is_active: bool | None = None,
-        sources: list[str] | None = None,
+        sources: list[str] | None = None, notify_enabled: bool | None = None,
     ) -> bool:
         fields = []
         params = []
@@ -115,6 +117,9 @@ class SearchRepository(BaseRepository):
             params.append(json.dumps(sources))
             fields.append("source = %s")
             params.append(sources[0] if sources else "seloger")
+        if notify_enabled is not None:
+            fields.append("notify_enabled = %s")
+            params.append(notify_enabled)
         if not fields:
             return False
         params.extend([search_id, user_id])
@@ -163,7 +168,7 @@ class SearchRepository(BaseRepository):
                 cur.execute(
                     """SELECT s.id, s.label, s.ntfy_topic, s.source, s.sources, s.criteria,
                               s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
-                              s.blacklisted_agencies, s.blacklist_mode,
+                              s.notify_enabled, s.blacklisted_agencies, s.blacklist_mode,
                               (SELECT COUNT(*) FROM search_listings WHERE search_id = s.id) AS listing_count
                        FROM searches s
                        WHERE s.user_id = %s
@@ -187,7 +192,7 @@ class SearchRepository(BaseRepository):
                 cur.execute(
                     "SELECT id, user_id, label, ntfy_topic, source, sources, criteria,"
                     " scrape_interval, last_scraped, created_at, is_active,"
-                    " blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
+                    " notify_enabled, blacklisted_agencies, blacklist_mode FROM searches WHERE id = %s",
                     (search_id,),
                 )
                 row = cur.fetchone()
@@ -228,9 +233,28 @@ class SearchRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
+    def toggle_search_notifications(self, search_id: int) -> bool | None:
+        """Bascule `notify_enabled` (issue #10) : renvoie la nouvelle valeur,
+        ou None si la recherche n'existe plus. Le scraping n'est pas touché :
+        seul l'envoi ntfy est piloté par ce flag."""
+        conn = self._get_conn_for_request()
+        try:
+            with self._dict_cursor(conn) as cur:
+                cur.execute(
+                    "UPDATE searches SET notify_enabled = NOT notify_enabled"
+                    " WHERE id = %s RETURNING notify_enabled",
+                    (search_id,),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return row["notify_enabled"] if row else None
+        finally:
+            self._release_conn(conn)
+
     def get_all_searches(self, user_filter="", source_filter="") -> list[dict]:
         query = """SELECT s.id, s.label, s.ntfy_topic, s.source, s.sources, s.criteria,
                           s.scrape_interval, s.last_scraped, s.created_at, s.is_active,
+                          s.notify_enabled,
                           u.id AS user_id, u.username,
                           COUNT(sl.listing_id) AS listing_count
                    FROM searches s

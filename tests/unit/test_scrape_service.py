@@ -490,6 +490,68 @@ class TestNotifications:
         env.notifier.notify_summary.assert_not_called()
 
     @freeze_time(FROZEN)
+    def test_notifications_disabled_skip_sending_but_still_mark_everything_handled(self, env):
+        """#10 : `notify_enabled=False` court-circuite l'ENVOI, jamais le
+        marquage. Toutes les annonces en attente (celles du scrape courant ET
+        les restes d'un scrape antérieur) sont marquées traitées sans envoi :
+        c'est ce qui garantit qu'à la réactivation, seules les annonces
+        FUTURES partiront — jamais de salve rétrospective.
+        """
+        leftover = make_listing(listing_id="sl_previous")
+        fresh = make_listing(listing_id="sl_fresh")
+        scraped = self._prepare(env, [leftover, fresh], notify_enabled=False)
+
+        env.run({"seloger": make_parser(scraped)})
+
+        env.notifier.notify_new_listing.assert_not_called()
+        env.storage.listings.mark_listings_notified.assert_called_once_with(1, ["sl_previous", "sl_fresh"])
+
+    @freeze_time(FROZEN)
+    def test_disabled_notifications_pay_no_throttle(self, env, slept):
+        """Le throttle ntfy protège l'envoi : aucune notification partant,
+        aucun sommeil — un scrape silencieux ne doit pas ralentir."""
+        pending = [make_listing(listing_id=f"sl_{i}") for i in range(3)]
+        scraped = self._prepare(env, pending, notify_enabled=False)
+
+        env.run({"seloger": make_parser(scraped)})
+
+        assert slept == []
+        env.storage.listings.mark_listings_notified.assert_called_once_with(
+            1, ["sl_0", "sl_1", "sl_2"]
+        )
+
+    @freeze_time(FROZEN)
+    def test_a_row_without_the_notify_flag_keeps_notifying(self, env):
+        """Rétrocompat : une ligne lue sans la clé (lectures qui n'auraient pas
+        encore la colonne) retombe sur le défaut « notifications activées »."""
+        listing = make_listing(listing_id="sl_1")
+        row = make_search_row(sources=["seloger"])
+        row.pop("notify_enabled")
+        env.storage.searches.get_search.return_value = row
+        env.storage.listings.save_and_link.return_value = ([listing], [])
+        env.storage.listings.get_unnotified_listings_for_search.return_value = [listing]
+
+        env.run({"seloger": make_parser([listing])})
+
+        env.notifier.notify_new_listing.assert_called_once_with("test-topic", listing)
+        env.storage.listings.mark_listings_notified.assert_called_once_with(1, ["sl_1"])
+
+    @freeze_time(FROZEN)
+    def test_disabled_notifications_beat_an_empty_blacklist_and_still_mark(self, env):
+        """Le flag #10 s'ajoute au filtrage blacklist : sans blacklist, toutes
+        les annonces sont quand même marquées traitées, sans envoi."""
+        listings = [make_listing(listing_id="sl_a"), make_listing(listing_id="sl_b")]
+        scraped = self._prepare(
+            env, list(listings),
+            notify_enabled=False, blacklist_mode="exclude", blacklisted_agencies=[],
+        )
+
+        env.run({"seloger": make_parser(scraped)})
+
+        env.notifier.notify_new_listing.assert_not_called()
+        env.storage.listings.mark_listings_notified.assert_called_once_with(1, ["sl_a", "sl_b"])
+
+    @freeze_time(FROZEN)
     def test_blacklisted_agencies_null_in_database_is_harmless_in_exclude_mode(self, env):
         """La colonne est nullable : `None` ne doit pas faire dérailler le
         filtrage (`needs_filter` devient simplement faux)."""

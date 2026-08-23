@@ -162,6 +162,17 @@ class ScrapeService:
         # notifiées seulement après confirmation d'envoi (pas de perte
         # silencieuse en cas de crash ou d'échec ntfy).
         pending = storage.listings.get_unnotified_listings_for_search(search_id)
+        # Issue #10 : notifications coupées pour cette recherche. Le scrape
+        # continue normalement ; les annonces en attente sont marquées
+        # traitées SILENCIEUSEMENT, sans envoi. À la réactivation, seules les
+        # annonces futures partiront — jamais de salve rétrospective.
+        notify_enabled = search.get("notify_enabled", True)
+        if not notify_enabled and pending:
+            logger.info(
+                f"[search:{search_id}] Notifications désactivées : "
+                f"{len(pending)} annonce(s) marquée(s) traitée(s) sans envoi"
+            )
+
         handled_ids = []
         for listing in pending:
             agency = listing.agency
@@ -169,6 +180,9 @@ class ScrapeService:
                 handled_ids.append(listing.listing_id)
                 continue
             if agency in skip_notify_agencies:
+                handled_ids.append(listing.listing_id)
+                continue
+            if not notify_enabled:
                 handled_ids.append(listing.listing_id)
                 continue
             if notifier.notify_new_listing(topic, listing):

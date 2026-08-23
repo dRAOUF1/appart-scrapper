@@ -21,6 +21,9 @@ class Search:
     last_scraped: datetime | None = None
     created_at: datetime | None = None
     is_active: bool = True
+    # Issue #10 : notifications ntfy activées par défaut ; à False, le scrape
+    # continue mais aucun push ne part (les annonces restent enregistrées).
+    notify_enabled: bool = True
     blacklisted_agencies: list[str] = field(default_factory=list)
     blacklist_mode: str = "exclude"
 

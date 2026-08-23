@@ -254,6 +254,21 @@ def _parse_source_overrides_from_form(form_data: dict) -> dict:
     return overrides
 
 
+def _parse_notify_enabled_from_form(form_data: dict) -> bool:
+    """Le flag de notifications ntfy (#10) depuis le formulaire.
+
+    Une case à cocher HTML décochée n'est PAS envoyée : sans champ marqueur,
+    impossible de distinguer « l'utilisateur a décoché » de « champ absent ».
+    Les templates postent donc toujours `notify_enabled_present` quand ils
+    rendent la case. En l'absence du marqueur (POST programmatique, client qui
+    ne connaît pas le flag), on retombe sur le défaut rétrocompatible :
+    notifications activées — une création sans mention du flag vaut True.
+    """
+    if "notify_enabled_present" not in form_data:
+        return True
+    return "notify_enabled" in form_data
+
+
 def _validate_sources_criteria(sources: list[str], criteria: dict) -> list[dict]:
     """Per-source validity of `criteria`, with a precise, actionable reason
     when a selected source can't run — instead of one generic "invalid
@@ -380,6 +395,7 @@ def searches():
             current_app.storage.searches.create_search(
                 g.user["id"], label, ntfy_topic, selected_sources[0], criteria, scrape_interval,
                 sources=selected_sources,
+                notify_enabled=_parse_notify_enabled_from_form(request.form),
             )
             remember_manual_overrides(selected_sources, criteria, storage=current_app.storage)
             flash(f"Recherche « {label} » créée !", "success")
@@ -508,6 +524,29 @@ def toggle_search_active_web(search_id: int):
     return redirect(url_for("web.searches"))
 
 
+@web_bp.route("/searches/<int:search_id>/toggle-notify", methods=["POST"])
+@require_login
+def toggle_search_notify_web(search_id: int):
+    """Bascule rapide des notifications ntfy (#10) depuis la liste.
+
+    Le scraping n'est pas suspendu : seul l'envoi ntfy est piloté ici. Les
+    annonces trouvées pendant la période désactivée sont marquées traitées
+    par le service — la réactivation ne provoque jamais de salve rétrospective.
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("web.searches"))
+    new_value = storage.searches.toggle_search_notifications(search_id)
+    if new_value is not None:
+        flash(
+            "Notifications activées" if new_value else "Notifications désactivées",
+            "success",
+        )
+    return redirect(url_for("web.searches"))
+
+
 @web_bp.route("/searches/<int:search_id>/blacklist-agencies", methods=["POST"])
 @require_login
 def update_blacklist_agencies(search_id: int):
@@ -586,6 +625,7 @@ def edit_search(search_id: int):
                 label=label, ntfy_topic=ntfy_topic,
                 criteria=criteria, scrape_interval=scrape_interval,
                 sources=selected_sources,
+                notify_enabled=_parse_notify_enabled_from_form(request.form),
             )
             remember_manual_overrides(selected_sources, criteria, storage=current_app.storage)
             flash("Recherche mise à jour !", "success")

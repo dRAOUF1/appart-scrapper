@@ -12,6 +12,10 @@
       <span class="badge badge-source">{{ search.source }}</span>
       <span>·</span>
       <code>{{ search.ntfy_topic }}</code>
+      {% if not search.notify_enabled %}
+      <span>·</span>
+      <span class="badge badge-muted" title="Notifications ntfy désactivées — le scraping continue">🔕 Notifications désactivées</span>
+      {% endif %}
     </div>
   </div>
 </div>

@@ -225,6 +225,28 @@ def test_valid_blacklist_modes_is_callable_without_an_instance():
 
 
 # ===========================================================================
+# Search — notifications ntfy (#10)
+# ===========================================================================
+
+
+def test_the_default_is_to_notify():
+    """Une recherche construite sans mention du flag notifie par défaut :
+    c'est le contrat rétrocompatible porté aussi par la colonne (DEFAULT TRUE)."""
+    search = Search(id=1, user_id=1, label="Test", ntfy_topic="test")
+
+    assert search.notify_enabled is True
+
+
+def test_notify_enabled_travels_through_the_dataclass_and_to_dict():
+    """Le flag se construit depuis une ligne de repo (`False` explicite) et
+    survit à la sérialisation — `to_dict` est ce que consomment les vues."""
+    search = _search(notify_enabled=False)
+
+    assert search.notify_enabled is False
+    assert search.to_dict()["notify_enabled"] is False
+
+
+# ===========================================================================
 # Search — has_valid_criteria
 # ===========================================================================
 

@@ -118,12 +118,14 @@ def _round_trip_whole_schema(url: str) -> None:
     search = storage.searches.create_search(
         user["id"], "Label migré", "topic-migré", "laforet",
         criteria, 12, is_active=False, sources=["laforet", "seloger"],
+        notify_enabled=False,
     )
     fetched = storage.searches.get_search(search["id"])
     assert fetched["criteria"] == criteria           # colonne criteria JSONB
     assert fetched["sources"] == ["laforet", "seloger"]  # colonne sources JSONB
     assert fetched["scrape_interval"] == 12
     assert fetched["is_active"] is False
+    assert fetched["notify_enabled"] is False        # colonne BOOLEAN NOT NULL (#10)
     assert fetched["blacklisted_agencies"] == []     # colonne TEXT[]
     assert fetched["blacklist_mode"] == "exclude"
 
@@ -462,6 +464,55 @@ def test_migration_adds_notified_to_a_pre_existing_search_listings_table(blank_d
     storage.listings.save_and_link([make_listing(listing_id="brand_new")], search["id"])
     unnotified = storage.listings.get_unnotified_listings_for_search(search["id"])
     assert [item.listing_id for item in unnotified] == ["brand_new"]
+
+
+def test_migration_backfills_notify_enabled_on_an_existing_database(blank_db):
+    """Issue #10 : une base déjà déployée reçoit la colonne par l'ALTER
+    idempotent, avec DEFAULT TRUE en backfill — les recherches existantes
+    notifient comme avant, sans réécriture de table.
+
+    Même mécanique que le bug `notified` ci-dessus : la colonne existe dans le
+    DDL mais n'arrive sur une base en production que par `scripts/migrate.py`.
+    """
+    url = blank_db()
+    Storage.run_migrations(url)
+    storage = Storage(url)
+    user = storage.users.create_user("notify_backfill")
+    # Ligne « d'avant la colonne » : SQL brut, le repo écrirait le flag.
+    search_id = _query(url, """
+        INSERT INTO searches (user_id, label, ntfy_topic, source)
+        VALUES (%s, 'Ancienne', 'topic', 'seloger') RETURNING id
+    """, (user["id"],))[0][0]
+
+    _exec(url, "ALTER TABLE searches DROP COLUMN notify_enabled")
+
+    Storage.run_migrations(url)
+
+    # La recherche pré-existante notifie : le backfill DEFAULT TRUE a passé
+    # toutes les lignes à TRUE (pas d'état ambigu, pas de salve manquée).
+    assert storage.searches.get_search(search_id)["notify_enabled"] is True
+    # Et la colonne recréée est pleinement fonctionnelle dans les deux sens.
+    created = storage.searches.create_search(
+        user["id"], "Neuve", "topic-2", "seloger", make_criteria(), 5,
+        notify_enabled=False,
+    )
+    assert storage.searches.get_search(created["id"])["notify_enabled"] is False
+
+
+def test_notify_enabled_is_not_null_with_a_true_default_on_a_virgin_database(blank_db):
+    """Le contrat de schéma du flag #10 : NOT NULL (jamais d'état « on ne sait
+    pas » côté pipeline) et DEFAULT TRUE (rétrocompatible). `information_schema`
+    est légitime ici : c'est la contrainte et le défaut qui sont le sujet."""
+    url = blank_db()
+    Storage.run_migrations(url)
+
+    rows = _query(url, """
+        SELECT is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_name = 'searches' AND column_name = 'notify_enabled'
+    """)
+
+    assert rows == [("NO", "true")]
 
 
 # ---------------------------------------------------------------------------

@@ -1063,6 +1063,13 @@ code {
     border-color: rgba(255, 159, 10, 0.2);
 }
 
+/* Badge discret pour un état neutre (ex. notifications ntfy coupées, #10). */
+.badge-muted {
+    background: rgba(142, 142, 147, 0.15);
+    color: var(--text-secondary);
+    border-color: rgba(142, 142, 147, 0.25);
+}
+
 /* ============================================================
    Search Cards
    ============================================================ */

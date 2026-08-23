@@ -98,6 +98,7 @@ WEB_ENDPOINTS = [
     pytest.param("POST", f"/searches/{SEARCH_ID}/scrape", {}, id="POST-scrape"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/interval", {"data": {"interval": "10"}}, id="POST-interval"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/toggle-active", {}, id="POST-toggle-active"),
+    pytest.param("POST", f"/searches/{SEARCH_ID}/toggle-notify", {}, id="POST-toggle-notify"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/blacklist-agencies", {"data": {}}, id="POST-blacklist-agencies"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/blacklist-mode",
                  {"data": {"blacklist_mode": "exclude"}}, id="POST-blacklist-mode"),

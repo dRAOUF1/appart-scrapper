@@ -74,6 +74,22 @@
                     <label for="scrape_interval">Intervalle (min)</label>
                     <input type="number" id="scrape_interval" name="scrape_interval" value="{{ search.scrape_interval or 5 }}" min="1" max="1440">
                 </div>
+                <div class="form-group">
+                    <!-- Marqueur obligatoire : une case décochée n'est pas envoyée
+                         par le navigateur, lui seul permet de distinguer
+                         « décoché » de « champ absent » (#10). -->
+                    <input type="hidden" name="notify_enabled_present" value="1">
+                    <label>Notifications ntfy</label>
+                    <div class="pill-toggle-group">
+                        <label class="pill-toggle">
+                            <input type="checkbox" id="notify_enabled" name="notify_enabled"
+                                {% if search.notify_enabled %}checked{% endif %}>
+                            <span class="pill-toggle-label">🔔 Notifier les nouvelles annonces</span>
+                        </label>
+                    </div>
+                    <small class="form-help">Décoché : le scraping continue, aucun push ne part.
+                    À la réactivation, seules les annonces futures seront notifiées — pas de rattrapage.</small>
+                </div>
             </div>
         </div>
 

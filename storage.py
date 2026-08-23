@@ -146,6 +146,10 @@ class Storage:
                         scrape_interval INTEGER DEFAULT 5,
                         last_scraped    TIMESTAMP,
                         is_active       BOOLEAN DEFAULT TRUE,
+                        -- Issue #10 : les notifications ntfy sont activées par
+                        -- défaut ; désactivables recherche par recherche sans
+                        -- suspendre le scraping.
+                        notify_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
                         created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -423,6 +427,10 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
                         ADD COLUMN IF NOT EXISTS blacklisted_agencies TEXT[] DEFAULT '{}',
                         ADD COLUMN IF NOT EXISTS blacklist_mode TEXT DEFAULT 'exclude',
+                        -- Issue #10 : NOT NULL + DEFAULT TRUE backfill les
+                        -- recherches existantes à TRUE (rétrocompatible, pas
+                        -- de réécriture de table pour une constante).
+                        ADD COLUMN IF NOT EXISTS notify_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                         ADD COLUMN IF NOT EXISTS sources JSONB DEFAULT NULL;
                 """)
                 # Backfill : une recherche créée avant l'ajout du multi-source

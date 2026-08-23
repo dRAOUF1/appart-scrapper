@@ -322,6 +322,47 @@ class TestSearchesPage:
         storage.seloger_geo.get_cached.assert_called()
 
 
+def _creation_data(**extra) -> dict:
+    """Un POST de création minimal et valide, surchargé par mot-clé."""
+    data = {
+        "label": "Paris 13e",
+        "ntfy_topic": "mon-topic",
+        "sources": "seloger",
+        "location_payload": PARIS_PAYLOAD,
+    }
+    data.update(extra)
+    return data
+
+
+class TestCreateNotifyFlag:
+    """Le flag #10 à la création : la case cochée du template envoie
+    `notify_enabled`, le marqueur atteste que la question a été posée."""
+
+    def test_a_checked_box_creates_a_notifying_search(self, web_client, storage):
+        web_client.post("/searches", data=_creation_data(
+            notify_enabled_present="1", notify_enabled="on",
+        ))
+
+        assert storage.searches.create_search.call_args.kwargs["notify_enabled"] is True
+
+    def test_an_unchecked_box_creates_a_silent_search(self, web_client, storage):
+        """Une case décochée n'est PAS envoyée par le navigateur : seul le
+        marqueur `notify_enabled_present` permet de savoir que l'utilisateur a
+        choisi de couper les notifications."""
+        web_client.post("/searches", data=_creation_data(notify_enabled_present="1"))
+
+        assert storage.searches.create_search.call_args.kwargs["notify_enabled"] is False
+
+    def test_a_creation_without_any_notify_field_defaults_to_notifying(
+        self, web_client, storage,
+    ):
+        """Ni case ni marqueur (POST programmatique, client antérieur au flag) :
+        défaut rétrocompatible — une création sans mention du flag notifie."""
+        web_client.post("/searches", data=_creation_data())
+
+        assert storage.searches.create_search.call_args.kwargs["notify_enabled"] is True
+
+
 class TestListingsPage:
     def test_the_page_paginates_by_twenty(self, web_client, storage, owned_search):
         storage.listings.count_listings_for_search.return_value = 45
@@ -452,6 +493,33 @@ class TestToggleActive:
         assert "désactivée".encode() not in resp.data
 
 
+class TestToggleNotify:
+    """La bascule rapide des notifications ntfy (#10) depuis la liste."""
+
+    @pytest.mark.parametrize(
+        ("new_value", "expected"),
+        [(True, "Notifications activées"), (False, "Notifications désactivées")],
+    )
+    def test_the_message_reflects_the_new_state(
+        self, web_client, storage, owned_search, new_value, expected
+    ):
+        storage.searches.toggle_search_notifications.return_value = new_value
+
+        resp = web_client.post("/searches/1/toggle-notify", follow_redirects=True)
+
+        assert expected.encode() in resp.data
+
+    def test_a_search_that_vanished_produces_no_message(self, web_client, storage, owned_search):
+        storage.searches.toggle_search_notifications.return_value = None
+
+        resp = web_client.post("/searches/1/toggle-notify", follow_redirects=True)
+
+        # « activées »/« désactivées » (accord pluriel du flash) nulle part —
+        # le libellé du formulaire (« Notifications ntfy ») ne doit pas gêner.
+        assert "activées".encode() not in resp.data
+        assert "désactivées".encode() not in resp.data
+
+
 class TestBlacklist:
     def test_the_selected_agencies_replace_the_previous_list(self, web_client, storage, owned_search):
         web_client.post("/searches/1/blacklist-agencies", data={"agencies": ["Foncia", "Nexity"]})
@@ -502,6 +570,29 @@ class TestEditSearch:
         assert args[0] == (1, user["id"])
         assert args.kwargs["label"] == "Nouveau libellé"
         assert args.kwargs["scrape_interval"] == 15
+
+    @pytest.mark.parametrize(
+        ("notify_fields", "expected"),
+        [
+            pytest.param({"notify_enabled_present": "1", "notify_enabled": "on"}, True,
+                         id="case-cochee"),
+            pytest.param({"notify_enabled_present": "1"}, False,
+                         id="case-decochee-marqueur-seul"),
+        ],
+    )
+    def test_the_edit_form_carries_the_notify_flag(
+        self, web_client, storage, owned_search, notify_fields, expected,
+    ):
+        data = {
+            "label": "Édité",
+            "ntfy_topic": "topic",
+            "sources": "seloger",
+            "location_payload": PARIS_PAYLOAD,
+        }
+        data.update(notify_fields)
+        web_client.post("/searches/1/edit", data=data)
+
+        assert storage.searches.update_search.call_args.kwargs["notify_enabled"] is expected
 
     def test_an_invalid_edit_shows_the_error_instead_of_crashing(
         self, web_client, storage, owned_search
