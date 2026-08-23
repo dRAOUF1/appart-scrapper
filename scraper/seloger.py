@@ -287,6 +287,51 @@ def _split_csv_values(values: list[str]) -> list[str]:
     return result
 
 
+def _agency_name(item: dict) -> str:
+    """Le nom de l'agence d'une annonce, via une chaîne de repli ordonnée (#11).
+
+    `cardProvider` — longtemps l'unique source du champ — est la carte
+    d'affichage de la page de résultats : SeLoger y met tantôt l'agence,
+    tantôt le contact (« Votre contact »), tantôt rien. S'y fier enregistrait
+    le nom de la personne à la place de l'agence (« Alex Studapart » pour
+    « STUDAPART »), ou None faute de mieux. La chaîne commence donc par la
+    carte de l'intermédiaire, réellement responsable de l'annonce :
+
+      1. ``provider.intermediaryCard.title``     — le nom de l'agence (fiable)
+      2. ``cardProvider.title``                  — carte SERP, mélange agence/contact
+      3. ``provider.contactCard.title``          — le contact (peut être une personne)
+      4. ``provider.agencyLegalInformations[0]`` — raison sociale, dernier recours
+
+    Chaque maillon est optionnel : structure absente, titre null ou blanc,
+    liste vide — tout est ignoré sans jamais lever, et une annonce sans
+    aucune source exploitable renvoie "".
+    """
+    provider = item.get("provider")
+    if not isinstance(provider, dict):
+        provider = {}
+    card_provider = item.get("cardProvider")
+    if not isinstance(card_provider, dict):
+        card_provider = {}
+
+    intermediary_card = provider.get("intermediaryCard")
+    contact_card = provider.get("contactCard")
+    legal_informations = provider.get("agencyLegalInformations")
+
+    candidates = (
+        intermediary_card.get("title") if isinstance(intermediary_card, dict) else None,
+        card_provider.get("title"),
+        contact_card.get("title") if isinstance(contact_card, dict) else None,
+        legal_informations[0]
+        if isinstance(legal_informations, list) and legal_informations else None,
+    )
+    for candidate in candidates:
+        # Une valeur vide ou ne contenant que des espaces vaut absence :
+        # on passe au maillon suivant plutôt que d'enregistrer un nom vide.
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return ""
+
+
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
     """Récupère les données détaillées depuis le HTML compressé.
 
@@ -377,8 +422,10 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 price_info = hf.get("price", {})
                 location = item.get("location", {}).get("address", {})
                 metadata = item.get("metadata", {})
-                provider = item.get("provider", {})
-                card_provider = item.get("cardProvider", {})
+                # `or {}` et non le défaut de .get() : une clé présente mais
+                # null (comme cardProvider dans 14/30 annonces réelles, #11)
+                # doit donner un dict vide, pas casser toute l'extraction.
+                provider = item.get("provider") or {}
                 main_desc = item.get("mainDescription", {})
                 tags = item.get("tags", {})
                 raw_data = item.get("rawData", {})
@@ -407,7 +454,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                         {"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")}
                         for img in gallery.get("images", [])
                     ],
-                    "agency": card_provider.get("title"),
+                    "agency": _agency_name(item),
                     "isPrivate": provider.get("isPrivateOwner", False),
                     "phone": provider.get("phoneNumbers", []),
                     "epc": item.get("energyClass", ""),
