@@ -1,0 +1,105 @@
+{
+  "typeAnnonce": "location",
+  "typeBien": "appartement",
+  "canonicalUrl": "/location/toulouse-31200/appartement/331698636.htm",
+  "reference": "331698636",
+  "numeroAgence": "6904",
+  "libelle": "APPARTEMENT",
+  "titles": {
+    "breadcrumb": "Appartement 3 pièces",
+    "description": "Appartement 3 pièces (63.5 m²) à louer - Toulouse 2ᵉ (31200)",
+    "main": "Location Appartement 3 pièces 63.5 m² - LE MONTESQUIEU 2 RUE MONTESQUIEU Toulouse 31200",
+    "seo": "Appartement 3 pièces T3 F3 63.5 m² à louer - 860 €/mois - Toulouse 2ᵉ (31200)"
+  },
+  "description": "T3 Privilégié avec Parking Double - Secteur Canal et MétroDécouvrez cet appartement idéalement situé à deux pas du Conseil Général, offrant un cadre de vie exceptionnel en bordure du canal. Sa position stratégique à proximité immédiate d&s;une station de métro vous garantit une mobilité optimale pour tous vos déplacements urbains.Ce bien attractif se compose d&s;une entrée accueillante, d&s;un séjour lumineux, de deux chambres confortables, d&s;une cuisine fonctionnelle, d&s;une salle de bains et de toilettes séparées. Rare avantage dans ce secteur recherché, vous bénéficierez d&s;un emplacement de parking double, vous offrant un confort quotidien inestimable et une réelle plus-value patrimoniale.N&s;hésitez pas à déposer votre dossier sur notre site internet Foncia au plus vite.",
+  "dpe": {
+    "date": "2025-06-11T00:00:00.000Z",
+    "energyPriceMax": 1320,
+    "energyPriceMin": 950,
+    "mixedPremises": false,
+    "GES": 5,
+    "urlDiagrammeMixte": "https://dpe.foncia.net/notes/1/C/154.0/A/5.0/700/350/3/dpe.png",
+    "yearPriceRef": "2023",
+    "urlDiagrammeEnergie": "https://dpe.foncia.net/notes/1/C/154.0/A/5.0/448/350/1/dpe.png",
+    "energyPrice": 0,
+    "urlDiagrammeClimat": "https://dpe.foncia.net/notes/1/C/154.0/A/5.0/256/350/2/dpe.png",
+    "KW": 154,
+    "statut": "0"
+  },
+  "caracteristiques": {
+    "accesHandicape": false
+  },
+  "localisation": {
+    "ville": "TOULOUSE",
+    "departement": "31",
+    "isAddressDisplay": true,
+    "locality": {
+      "departement": {
+        "reference": "departement_31",
+        "libelleDisplay": "Haute-Garonne (31)",
+        "codeDepartement": "31",
+        "slug": "haute-garonne-31"
+      },
+      "libelleDisplay": "Toulouse (31200)",
+      "lastUpdateDate": "2024-11-13T11:30:20.414Z",
+      "arrondissement": "2",
+      "libelle": "Toulouse",
+      "codePostal": [
+        "31200"
+      ],
+      "type": "ville",
+      "geoPoint": {
+        "lon": 1.4486309,
+        "lat": 43.6389829
+      },
+      "pluriDistribue": false,
+      "reference": "ville_20144",
+      "nonCanonicalSlugs": [
+        "toulouse-2-31200",
+        "toulouse-2eme-31200"
+      ],
+      "codeInsee": "315552",
+      "region": {
+        "reference": "76",
+        "libelleDisplay": "Occitanie",
+        "codeRegion": "76",
+        "slug": "occitanie"
+      },
+      "slug": "toulouse-31200",
+      "status": "active"
+    },
+    "villeRattach": "TOULOUSE",
+    "codePostal": "31200",
+    "geoPoint": {
+      "lon": 1.43466,
+      "lat": 43.615976
+    },
+    "region": "76"
+  },
+  "loyer": 860,
+  "loyerAnnexe": 0,
+  "medias": [
+    "https://storage.fonciamillenium.net/thumbnail/685ec1b6d096e624e172e609/1/640/480",
+    "https://img.prod.fonciatech.net/constatimmo/base/default/Location-en-ligne.png"
+  ],
+  "mediasCDN": [
+    "https://d7b3sch6x3cpd.cloudfront.net/annonces/93/3a/3b/df/c5/42/ab/a9/39/a9/15/ad/e1/ec/85/52",
+    "https://d7b3sch6x3cpd.cloudfront.net/annonces/0d/08/25/cc/4a/26/d1/84/0f/64/0a/be/87/b6/7b/6c"
+  ],
+  "surface": {
+    "habitable": 63.5,
+    "totale": 63.5
+  },
+  "nbChambre": 0,
+  "nbSDB": 0,
+  "nbSDE": 0,
+  "noteConsoEnergie": "C",
+  "noteEmissionGES": "A",
+  "nbPiece": 3,
+  "exclusivite": false,
+  "datePublication": "2026-08-21T17:06:49+02:00",
+  "status": "active",
+  "urlVisite360": "https://view.ricoh360.com/e831e6b2-1700-4ccf-9637-3e80bc6e4a68?type=compact",
+  "parcoursLocataireOrClac": true,
+  "numLot": "37"
+}
