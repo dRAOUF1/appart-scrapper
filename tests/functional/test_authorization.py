@@ -1,20 +1,19 @@
 """Balayage systématique du contrôle de propriété sur les recherches.
 
-Le motif `get_search(id)` → `search["user_id"] != g.user["id"]` → 404 est
-recopié à la main dans ~24 endpoints. Rien dans le code ne l'impose : une seule
-omission, sur une seule route, est une IDOR — n'importe qui pourrait lire,
+Le motif `get_search(id)` → `search["user_id"] != g.user["id"]` → refus est
+recopié à la main dans chaque endpoint. Rien dans le code ne l'impose : une
+seule omission, sur une seule route, est une IDOR — n'importe qui pourrait lire,
 modifier ou supprimer la recherche d'un autre en changeant un entier dans l'URL.
 
 Ce fichier existe pour rendre cette omission impossible à commettre en silence.
 Il ne teste pas le comportement métier de chaque route (c'est le travail de
-test_api_*.py et test_web_pages.py), mais une seule chose, sur toutes :
+test_web_pages.py et test_search_urls.py), mais une seule chose, sur toutes :
 
     la recherche appartient à quelqu'un d'autre  ⇒  refus, et aucune écriture.
 
-Deux règles de forme importantes :
-- l'API répond **404 et jamais 403** : un 403 confirmerait l'existence de la
-  recherche, et donnerait un oracle d'énumération ;
-- le web redirige avec un message, sans jamais rendre la page.
+Règle de forme : le web redirige avec un message (ou 404 JSON pour les routes
+de données comme `/urls`), sans jamais rendre la page. Les anciens endpoints API,
+qui répondaient 404 et jamais 403, ont disparu avec le token (#30).
 """
 
 from __future__ import annotations
@@ -90,92 +89,11 @@ def _mutating_calls(storage):
 
 
 # ---------------------------------------------------------------------------
-# API — 404, jamais 403
-# ---------------------------------------------------------------------------
-
-API_ENDPOINTS = [
-    pytest.param("GET", f"/api/searches/{SEARCH_ID}/urls", {}, id="GET-urls"),
-    pytest.param("DELETE", f"/api/searches/{SEARCH_ID}", {}, id="DELETE-search"),
-    pytest.param("PUT", f"/api/searches/{SEARCH_ID}/criteria", {"json": {"criteria": {}}}, id="PUT-criteria"),
-    pytest.param("POST", f"/api/searches/{SEARCH_ID}/toggle-active", {}, id="POST-toggle-active"),
-    pytest.param("PUT", f"/api/searches/{SEARCH_ID}/blacklist-mode",
-                 {"json": {"blacklist_mode": "exclude"}}, id="PUT-blacklist-mode"),
-    pytest.param("PUT", f"/api/searches/{SEARCH_ID}/blacklist-agencies",
-                 {"json": {"agencies": []}}, id="PUT-blacklist-agencies"),
-    pytest.param("POST", f"/api/scrape/{SEARCH_ID}", {}, id="POST-scrape"),
-    pytest.param("GET", f"/api/listings/{SEARCH_ID}", {}, id="GET-listings"),
-    pytest.param("GET", f"/api/searches/{SEARCH_ID}/logs/export", {}, id="GET-logs-export"),
-    pytest.param("POST", f"/api/searches/{SEARCH_ID}/logs/import", UPLOAD, id="POST-logs-import"),
-]
-
-
-class TestApiOwnership:
-    @pytest.mark.parametrize(("method", "url", "kwargs"), API_ENDPOINTS)
-    def test_a_search_owned_by_someone_else_is_not_found(
-        self, api_client, storage, foreign_search, method, url, kwargs
-    ):
-        resp = _request(api_client, method, url, kwargs)
-
-        assert resp.status_code == 404, f"{method} {url} n'a pas refusé une recherche étrangère"
-        assert _mutating_calls(storage) == []
-
-    @pytest.mark.parametrize(("method", "url", "kwargs"), API_ENDPOINTS)
-    def test_a_missing_search_is_indistinguishable_from_a_foreign_one(
-        self, api_client, storage, missing_search, method, url, kwargs
-    ):
-        """Même code, même corps : l'API ne dit pas si la recherche existe.
-
-        Répondre 403 pour « existe mais pas à vous » et 404 pour « n'existe
-        pas » donnerait un oracle permettant d'énumérer les recherches des
-        autres utilisateurs.
-        """
-        resp = _request(api_client, method, url, kwargs)
-
-        assert resp.status_code == 404
-        assert _mutating_calls(storage) == []
-
-    @pytest.mark.parametrize(("method", "url", "kwargs"), API_ENDPOINTS)
-    def test_ownership_is_checked_before_anything_else(
-        self, api_client, storage, foreign_search, method, url, kwargs
-    ):
-        """Le refus ne doit dépendre ni du corps de la requête ni d'un appel
-        réseau : les corps envoyés ici sont volontairement minimaux, et aucune
-        lecture de données ne doit avoir eu lieu."""
-        _request(api_client, method, url, kwargs)
-
-        storage.searches.get_search.assert_called_with(SEARCH_ID)
-        storage.listings.get_listings_for_search.assert_not_called()
-        storage.scrape_logs.get_scrape_logs.assert_not_called()
-
-
-class TestApiRequiresAToken:
-    """Sans jeton valide, aucune de ces routes ne doit répondre autre chose
-    qu'un 401 — la vérification de propriété vient après l'authentification."""
-
-    @pytest.mark.parametrize(("method", "url", "kwargs"), API_ENDPOINTS)
-    def test_an_anonymous_call_is_rejected(self, client, storage, method, url, kwargs):
-        resp = _request(client, method, url, kwargs)
-
-        assert resp.status_code == 401
-        storage.searches.get_search.assert_not_called()
-        assert _mutating_calls(storage) == []
-
-    @pytest.mark.parametrize(("method", "url", "kwargs"), API_ENDPOINTS)
-    def test_an_unknown_token_is_rejected(self, app, storage, user, method, url, kwargs):
-        client = app.test_client()
-        client.environ_base["HTTP_X_API_TOKEN"] = "jeton-invente"
-
-        resp = _request(client, method, url, kwargs)
-
-        assert resp.status_code == 401
-        assert _mutating_calls(storage) == []
-
-
-# ---------------------------------------------------------------------------
 # Web — redirection, jamais la page
 # ---------------------------------------------------------------------------
 
 WEB_ENDPOINTS = [
+    pytest.param("GET", f"/searches/{SEARCH_ID}/urls", {}, id="GET-urls"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/delete", {}, id="POST-delete"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/scrape", {}, id="POST-scrape"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/interval", {"data": {"interval": "10"}}, id="POST-interval"),

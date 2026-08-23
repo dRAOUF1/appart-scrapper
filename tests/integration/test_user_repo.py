@@ -18,22 +18,18 @@ from tests.integration.conftest import insert_search, insert_user
 # ---------------------------------------------------------------------------
 
 class TestCreateUser:
-    def test_created_user_is_readable_by_id_username_and_token(self, storage):
+    def test_created_user_is_readable_by_id_and_username(self, storage):
         created = storage.users.create_user("alice")
 
-        by_token = storage.users.get_user_by_token(created["api_token"])
+        by_id = storage.users.get_user_by_id(created["id"])
         by_username = storage.users.get_user_by_username("alice")
         detail = storage.users.get_user_detail(created["id"])
 
-        assert by_token["id"] == created["id"]
-        assert by_username["api_token"] == created["api_token"]
+        assert created == {"id": created["id"], "username": "alice"}
+        assert by_id["username"] == "alice"
+        assert by_id["created_at"] is not None
+        assert by_username["id"] == created["id"]
         assert detail["username"] == "alice"
-        assert by_token["created_at"] is not None
-
-    def test_each_user_gets_a_distinct_token(self, storage):
-        tokens = {storage.users.create_user(f"u{i}")["api_token"] for i in range(5)}
-
-        assert len(tokens) == 5
 
     def test_duplicate_username_raises_value_error(self, storage):
         storage.users.create_user("alice")
@@ -55,8 +51,7 @@ class TestCreateUser:
             storage.users.create_user("alice")
 
         second = storage.users.create_user("bob")
-        assert storage.users.get_user_by_username("bob")["id"] == second["id"]
-        assert storage.users.get_user_stats(second["id"])["searches"] == 0
+        assert storage.users.get_user_by_id(second["id"])["username"] == "bob"
         assert {u["username"] for u in storage.users.get_all_users()} == {"alice", "bob"}
 
     @pytest.mark.parametrize(
@@ -75,8 +70,8 @@ class TestCreateUser:
 
         assert storage.users.get_user_by_username(username)["id"] == created["id"]
 
-    def test_unknown_token_and_username_return_none(self, storage, user):
-        assert storage.users.get_user_by_token("token-inexistant") is None
+    def test_unknown_id_and_username_return_none(self, storage, user):
+        assert storage.users.get_user_by_id(999_999) is None
         assert storage.users.get_user_by_username("inconnu") is None
         assert storage.users.get_user_detail(999_999) is None
 
@@ -196,29 +191,25 @@ class TestDeleteUser:
 
 
 # ---------------------------------------------------------------------------
-# reset_user_token
+# get_user_by_id
 # ---------------------------------------------------------------------------
 
-class TestResetUserToken:
-    def test_reset_replaces_the_token_and_invalidates_the_old_one(self, storage, user):
-        new_token = storage.users.reset_user_token(user["id"])
+class TestGetUserById:
+    def test_the_session_resolution_reads_a_real_row(self, storage, user):
+        """`get_user_by_id` est ce que les décorateurs de session appellent à
+        CHAQUE requête : il doit relire la vraie ligne, `created_at` compris."""
+        found = storage.users.get_user_by_id(user["id"])
 
-        assert new_token != user["api_token"]
-        assert storage.users.get_user_by_token(user["api_token"]) is None
-        assert storage.users.get_user_by_token(new_token)["id"] == user["id"]
+        assert found == {
+            "id": user["id"],
+            "username": "alice",
+            "created_at": user["created_at"],
+        }
 
-    def test_reset_returns_a_token_even_for_a_user_that_does_not_exist(self, storage):
-        """# BUG : `reset_user_token` ne lit pas `cur.rowcount` — l'`UPDATE`
-        ne touche aucune ligne mais la méthode renvoie quand même un token
-        tout neuf. L'appelant (routes/admin.py) l'affiche donc comme si la
-        réinitialisation avait réussi, sur un utilisateur inexistant.
-
-        Comportement ACTUEL figé ici : le token renvoyé n'authentifie personne.
-        """
-        token = storage.users.reset_user_token(999_999)
-
-        assert isinstance(token, str) and token
-        assert storage.users.get_user_by_token(token) is None
+    def test_an_unknown_id_returns_none_instead_of_raising(self, storage):
+        """Un `user_id` de session qui ne correspond plus à rien (compte
+        supprimé) doit mener au `session.clear()` du décorateur, pas à une 500."""
+        assert storage.users.get_user_by_id(999_999) is None
 
 
 # ---------------------------------------------------------------------------

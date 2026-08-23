@@ -448,17 +448,18 @@ class TestLogAdminAction:
 # ---------------------------------------------------------------------------
 
 class TestCreateUser:
-    def test_the_token_is_generated_with_a_cryptographic_source(self, monkeypatch):
-        """Le jeton est le seul secret du compte : il doit venir de `secrets`,
-        pas de `random`. On le fige ici pour rendre le test déterministe, ce qui
-        vérifie au passage que c'est bien ce module qui est utilisé."""
-        monkeypatch.setattr("repositories.user_repo.secrets.token_urlsafe", lambda n: f"jeton-{n}")
+    def test_create_user_inserts_the_username_and_returns_id_and_name(self):
+        """Plus aucun secret généré côté repo depuis la suppression du token :
+        l'INSERT ne porte que le username, et le retour alimente la session."""
         conn = RecordingConnection(results=[{"id": 1}])
         repo = bind_repository(UserRepository, conn)
 
         user = repo.create_user("alice")
 
-        assert user == {"id": 1, "username": "alice", "api_token": "jeton-32"}
+        assert user == {"id": 1, "username": "alice"}
+        sql, params = conn.executed[0]
+        assert params == ("alice",)
+        assert "api_token" not in sql
 
     def test_a_duplicate_username_becomes_a_user_facing_error(self):
         """Le message est affiché tel quel (409 dans l'API, flash sur le web) :
@@ -496,17 +497,6 @@ class TestCreateUser:
             repo.create_user("alice")
 
         assert isinstance(excinfo.value.__cause__, psycopg2.IntegrityError)
-
-    def test_resetting_a_token_does_not_check_that_the_user_exists(self, monkeypatch):
-        """# BUG : `reset_user_token` renvoie un jeton neuf même quand aucune
-        ligne n'a été modifiée (`rowcount == 0`). L'appelant croit avoir
-        réinitialisé le compte et affiche un jeton qui n'existe nulle part.
-        Vérifier `rowcount` suffirait à renvoyer None."""
-        monkeypatch.setattr("repositories.user_repo.secrets.token_urlsafe", lambda n: "jeton-orphelin")
-        conn = RecordingConnection(results=[None])
-        repo = bind_repository(UserRepository, conn)
-
-        assert repo.reset_user_token(9999) == "jeton-orphelin"
 
 
 # ---------------------------------------------------------------------------

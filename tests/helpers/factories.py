@@ -133,7 +133,6 @@ def make_user_row(**overrides) -> dict:
     defaults = {
         "id": 1,
         "username": "alice",
-        "api_token": "token-alice",
         "created_at": datetime(2026, 1, 1, 12, 0, 0),
     }
     defaults.update(overrides)

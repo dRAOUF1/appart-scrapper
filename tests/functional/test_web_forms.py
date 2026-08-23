@@ -391,7 +391,7 @@ class TestValidationErrorMessage:
 
 
 # ---------------------------------------------------------------------------
-# _parse_listing_filters — et sa parité avec la version de routes/api.py
+# _parse_listing_filters — le parseur de filtres de la page annonces
 # ---------------------------------------------------------------------------
 
 FILTER_QUERY_STRINGS = [
@@ -412,20 +412,15 @@ FILTER_QUERY_STRINGS = [
 
 class TestParseListingFilters:
     @pytest.mark.parametrize("args", FILTER_QUERY_STRINGS)
-    def test_web_and_api_parse_the_same_query_string_identically(self, args):
-        """🔒 `_parse_listing_filters` existe en DEUX exemplaires — un dans
-        routes/web.py, un dans routes/api.py — avec des implémentations
-        différentes (boucles contre `if` à plat). Les deux alimentent le même
-        `_build_filter_clauses` : la moindre divergence donne des résultats
-        différents entre la page web et l'API pour la même requête, et se
-        remarquerait surtout comme un bug de pagination.
+    def test_any_query_string_parses_into_a_dict_without_raising(self, args):
+        """`_parse_listing_filters` traduit la query string en filtres pour le
+        repository. Elle n'existe plus qu'en UN exemplaire (routes/web.py)
+        depuis la suppression de l'API (#30) : la liste de charges historiques
+        (vides, illisibles, hostiles) doit continuer de produire un dict,
+        jamais une exception."""
+        result = _parse_listing_filters(MultiDict(args))
 
-        Ce test est la seule chose qui les tient synchronisées tant qu'elles ne
-        sont pas factorisées.
-        """
-        from routes.api import _parse_listing_filters as api_parse
-
-        assert _parse_listing_filters(MultiDict(args)) == api_parse(MultiDict(args))
+        assert isinstance(result, dict)
 
     def test_an_empty_query_string_yields_no_filter(self):
         assert _parse_listing_filters(MultiDict()) == {}

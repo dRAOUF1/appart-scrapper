@@ -69,7 +69,7 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.searches.get_search.return_value = None
     storage.searches.get_user_searches.return_value = []
     storage.searches.get_all_searches.return_value = []
-    storage.users.get_user_by_token.return_value = None
+    storage.users.get_user_by_id.return_value = None
     storage.users.get_user_by_username.return_value = None
     storage.users.get_all_users.return_value = []
     storage.listings.get_listings_for_search.return_value = []

@@ -355,7 +355,7 @@ class TestBuildOrderClause:
             "; DROP TABLE listings",
             "price_value; --",
             "l.price_value ASC; DELETE FROM users",
-            "price_asc, (SELECT api_token FROM users)",
+            "price_asc, (SELECT username FROM users)",
             "found_at_desc UNION SELECT 1",
             "PRICE_ASC",
             "price_asc ",

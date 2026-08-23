@@ -104,9 +104,9 @@ def client(app):
 
 @pytest.fixture
 def user(storage):
-    """Utilisateur standard, reconnu par token (API et session web)."""
-    row = make_user_row(id=1, username="alice", api_token="token-alice")
-    storage.users.get_user_by_token.side_effect = lambda token: row if token == row["api_token"] else None
+    """Utilisateur standard, résolu par sa session (`get_user_by_id`)."""
+    row = make_user_row(id=1, username="alice")
+    storage.users.get_user_by_id.side_effect = lambda user_id: row if user_id == row["id"] else None
     storage.users.get_user_by_username.side_effect = lambda name: row if name == row["username"] else None
     return row
 
@@ -114,21 +114,13 @@ def user(storage):
 @pytest.fixture
 def admin_user(storage):
     """Utilisateur dont le username correspond à ADMIN_USERNAME."""
-    row = make_user_row(id=99, username=ADMIN_USERNAME, api_token="token-admin")
-    storage.users.get_user_by_token.side_effect = lambda token: row if token == row["api_token"] else None
+    row = make_user_row(id=99, username=ADMIN_USERNAME)
+    storage.users.get_user_by_id.side_effect = lambda user_id: row if user_id == row["id"] else None
     return row
 
 
-@pytest.fixture
-def api_client(app, user):
-    """Client HTTP authentifié par header, comme un consommateur de l'API."""
-    client = app.test_client()
-    client.environ_base["HTTP_X_API_TOKEN"] = user["api_token"]
-    return client
-
-
 def _log_in(client, row):
-    """Pose exactement les trois clés que `/login` écrit en production.
+    """Pose exactement les deux clés que `/login` écrit en production.
 
     `username` en fait partie : `templates/base.html` l'utilise sans garde
     (`session.get('username','')[0]`), donc une session incomplète ferait
@@ -137,7 +129,6 @@ def _log_in(client, row):
     with client.session_transaction() as sess:
         sess["user_id"] = row["id"]
         sess["username"] = row["username"]
-        sess["api_token"] = row["api_token"]
     return client
 
 
@@ -213,16 +204,9 @@ def make_dashboard_data(**overrides) -> dict:
     return data
 
 
-def make_user_stats(**overrides) -> dict:
-    """Retour de `UserRepository.get_user_stats()` (GET /api/stats)."""
-    stats = {"searches": 2, "total_listings": 12, "new_today": 3}
-    stats.update(overrides)
-    return stats
-
-
 def make_admin_user_row(**overrides) -> dict:
     """Ligne de `get_all_users()` : un user_row enrichi des compteurs admin."""
-    row = make_user_row(**{k: v for k, v in overrides.items() if k in ("id", "username", "api_token", "created_at")})
+    row = make_user_row(**{k: v for k, v in overrides.items() if k in ("id", "username", "created_at")})
     row.setdefault("search_count", 2)
     row.setdefault("listing_count", 11)
     row.update({k: v for k, v in overrides.items() if k in ("search_count", "listing_count")})
