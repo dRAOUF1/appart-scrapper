@@ -461,48 +461,6 @@ code {
 }
 
 /* ============================================================
-   Token Card
-   ============================================================ */
-
-.token-card { 
-    margin-bottom: 2rem; 
-}
-
-.token-display {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: rgba(0, 0, 0, 0.3);
-    padding: 0.75rem 1rem;
-    border-radius: var(--radius-sm);
-    margin-top: 0.75rem;
-    border: 1px solid var(--glass-border);
-}
-
-.token-content {
-    flex: 1;
-    font-family: 'SF Mono', 'JetBrains Mono', monospace;
-    font-size: 0.85rem;
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.token-prefix {
-    color: var(--text-tertiary);
-}
-
-.token-visible {
-    color: var(--accent);
-    letter-spacing: 0.05em;
-}
-
-.token-hidden {
-    color: var(--text-tertiary);
-    letter-spacing: 0.1em;
-}
-
-/* ============================================================
    Forms
    ============================================================ */
 

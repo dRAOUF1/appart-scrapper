@@ -191,22 +191,6 @@
             <span class="detail-value">{{ user_detail.listing_count }}</span>
         </div>
     </div>
-    <div class="detail-card">
-        <h3>🔑 Token API</h3>
-        <div class="token-display" style="margin-top: 0.5rem;">
-            <div class="token-content">
-                <span class="token-prefix">sk_live_</span>
-                <span class="token-visible">{{ user_detail.api_token[:8] }}</span>
-                <span class="token-hidden">••••••••</span>
-                <span class="token-visible">{{ user_detail.api_token[-4:] if user_detail.api_token|length >= 4 else '' }}</span>
-            </div>
-            <button class="btn btn-sm btn-ghost" onclick="copyToken('user-detail-token', '{{ user_detail.api_token }}')">Copier</button>
-        </div>
-        <form method="POST" action="{{ url_for('admin.admin_reset_token', user_id=user_detail.id) }}" class="inline-form" style="margin-top: 1rem;" onsubmit="return confirm('Réinitialiser le token API ?')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-danger btn-sm">🔄 Réinitialiser le token</button>
-        </form>
-    </div>
 </div>
 
 {% if user_detail.searches %}
@@ -306,7 +290,6 @@
                     <th>Recherches</th>
                     <th>Annonces</th>
                     <th>Inscrit le</th>
-                    <th>Token API</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -318,10 +301,6 @@
                     <td>{{ u.search_count }}</td>
                     <td>{{ u.listing_count }}</td>
                     <td class="text-muted">{{ (u.created_at|fr_time).strftime('%d/%m/%Y') if u.created_at else '—' }}</td>
-                    <td>
-                        <code class="token-mini" id="tok-{{ u.id }}">{{ u.api_token[:16] }}…</code>
-                        <button class="btn btn-sm btn-ghost" onclick="copyToken('tok-{{ u.id }}', '{{ u.api_token }}')">Copier</button>
-                    </td>
                     <td>
                         <a href="{{ url_for('admin.admin_user_detail', user_id=u.id) }}" class="btn btn-sm btn-ghost">Voir</a>
                         <form method="POST" action="{{ url_for('admin.admin_delete_user', user_id=u.id) }}" class="inline-form" onsubmit="return confirm('Supprimer {{ u.username }} ?')">
@@ -894,7 +873,6 @@
             <option value="">Toutes les actions</option>
             <option value="user_deleted" {% if action_filter == 'user_deleted' %}selected{% endif %}>user_deleted</option>
             <option value="user_created" {% if action_filter == 'user_created' %}selected{% endif %}>user_created</option>
-            <option value="user_token_reset" {% if action_filter == 'user_token_reset' %}selected{% endif %}>user_token_reset</option>
             <option value="search_deleted" {% if action_filter == 'search_deleted' %}selected{% endif %}>search_deleted</option>
             <option value="listing_deleted" {% if action_filter == 'listing_deleted' %}selected{% endif %}>listing_deleted</option>
             <option value="orphan_cleanup" {% if action_filter == 'orphan_cleanup' %}selected{% endif %}>orphan_cleanup</option>
@@ -964,13 +942,5 @@
 
 {% block scripts %}
 <script>
-    function copyToken(elementId, fullToken) {
-        const text = fullToken || document.getElementById(elementId).textContent;
-        navigator.clipboard.writeText(text).then(() => {
-            const btn = event.target;
-            btn.textContent = 'Copié ✓';
-            setTimeout(() => btn.textContent = 'Copier', 2000);
-        });
-    }
 </script>
 {% endblock %}
