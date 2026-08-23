@@ -19,7 +19,19 @@ en production, et sont commentés à l'endroit du test :
   sinon le site bascule en recherche nationale ;
 * la pagination s'arrête sur « page sans annonce inédite », pas sur le nombre
   de pages annoncé par le site (qui disparaît dès qu'un filtre est présent) ;
-* un scrape multi-périmètres n'échoue que si TOUT échoue.
+* un scrape multi-périmètres n'échoue que si TOUT échoue ;
+* département/région s'ancrent sur leurs pages CANONIQUES (/departement/…,
+  /region/…) — vérifiées en live le 2026-08-23. L'ancienne ancre « ville
+  principale du département + premier CP » redirigeait (301) sur 37
+  départements sur 101, et saint-denis-97400 rebasculait vers la recherche
+  NATIONALE : le repli sans filtres balayait alors tout le stock français
+  pour n'en retenir rien, silencieusement ;
+* une page HTTP 200 qui ne rend AUCUNE carte sur une requête portant des
+  filtres de périmètre ALERTE bruyamment au lieu de présenter un succès vide
+  comme une vérité (impossible de distinguer « périmètre vraiment vide »
+  d'« HTML inattendu » sans voir la page) ;
+* les périmètres d'outre-mer (971–974, 976), que le moteur Laforêt ne couvre
+  pas du tout, sont annoncés AVANT le scrape plutôt qu'en 0 résultat muet.
 
 Les tests de régression de tests/_legacy/test_laforet_parser.py sont tous
 repris, réorganisés et paramétrés (le doublon exact
@@ -40,13 +52,16 @@ from parsers.laforet import (
     _DETAIL_LINK_RE,
     BASE_URL,
     DESKTOP_UA,
+    DOM_ROM_DEPARTMENTS,
     MAX_PAGES,
     LaforetParser,
+    _canonical_slug,
     _card_photos,
     _city_insee_codes,
     _department_codes,
     _describe,
     _dict_to_listing,
+    _dom_rom_departments,
     _extract_genuine_section,
     _listing_path,
     _parse_cards,
@@ -75,7 +90,14 @@ PARIS_18 = make_city_location("Paris", "75018", "75118")
 PARIS_14 = make_city_location("Paris", "75014", "75114")
 LYON_7 = make_city_location("Lyon", "69007", "69387")
 GIRONDE = make_department_location("33", "Gironde")
+AUBE = make_department_location("10", "Aube")
 IDF = make_region_location("11", "Île-de-France", ("75", "77", "78", "91", "92", "93", "94", "95"))
+PACS = make_region_location("93", "Provence-Alpes-Côte d'Azur", ("13",))
+# Outre-mer : le moteur Laforêt n'y référence aucun bien (issue #13, vérifié
+# en live) — ces périmètres servent à figer l'avertissement.
+SAINT_DENIS_REUNION = make_city_location("Saint-Denis", "97400", "97411")
+REUNION = make_department_location("974", "La Réunion")
+GUADELOUPE_REGION = make_region_location("01", "Guadeloupe", ("971", "972"))
 PARIS_WHOLE = make_whole_city_location("Paris", ("75001", "75002", "75015"), "75056")
 BORDEAUX = {"city": "Bordeaux", "postalCode": "33000"}
 
@@ -345,6 +367,29 @@ class TestSlugify:
         assert "--" not in slug
 
 
+class TestCanonicalSlug:
+    """Le slug des pages canoniques /departement/ et /region/, tel que le site
+    l'écrit lui-même (voir _canonical_slug)."""
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("Gironde", "gironde"),
+            ("Aube", "aube"),
+            ("Île-de-France", "ile-de-france"),
+            # L'apostrophe est SUPPRIMÉE, pas convertie en tiret : c'est ce que
+            # fait le site (vérifié en live le 2026-08-23,
+            # /region/location-appartement-provence-alpes-cote-dazur rend 86
+            # annonces ; la forme ...-cote-d-azur, elle, n'existe pas).
+            ("Provence-Alpes-Côte d'Azur", "provence-alpes-cote-dazur"),
+            # Apostrophe typographique (’) : même traitement que la droite.
+            ("Provence-Alpes-Côte d\u2019Azur", "provence-alpes-cote-dazur"),
+        ],
+    )
+    def test_slugs(self, name, expected):
+        assert _canonical_slug(name) == expected
+
+
 # ---------------------------------------------------------------------------
 # _transaction
 # ---------------------------------------------------------------------------
@@ -555,6 +600,80 @@ class TestDepartmentCodes:
     )
     def test_narrow_perimeters_have_no_department_code(self, location):
         assert _department_codes(location) == []
+
+
+# ---------------------------------------------------------------------------
+# Outre-mer : des périmètres que le moteur Laforêt ne couvre PAS DU TOUT
+# ---------------------------------------------------------------------------
+
+class TestDomRomDepartments:
+    """Le moteur Laforêt ne référence aucun bien outre-mer (vérifié en live le
+    2026-08-23 : filter[departments][]=974 et filter[cities][]=97411 rendent
+    0 annonce, même avec des filtres). La détection couvre tous les niveaux de
+    périmètre, pour pouvoir prévenir l'utilisateur AVANT le scrape plutôt que
+    de laisser un 0 annonce silencieux passer pour un succès (issue #13)."""
+
+    def test_the_known_outre_mer_departments(self):
+        """Mayotte (976) y figure ; la Corse (2A/2B, codes postaux 20xxx),
+        elle, est en métropole."""
+        assert DOM_ROM_DEPARTMENTS == ("971", "972", "973", "974", "976")
+
+    def test_a_department_perimeter(self):
+        assert _dom_rom_departments([REUNION]) == ["974"]
+
+    def test_a_region_through_its_departments(self):
+        assert _dom_rom_departments([GUADELOUPE_REGION]) == ["971", "972"]
+
+    def test_a_city_through_its_postal_code_and_insee(self):
+        assert _dom_rom_departments([SAINT_DENIS_REUNION]) == ["974"]
+
+    def test_a_whole_city_through_its_postal_codes(self):
+        fort_de_france = {
+            "kind": "whole_city",
+            "city": "Fort-de-France",
+            "postalCodes": ["97200", "97234"],
+            "inseeCode": "97209",
+        }
+        assert _dom_rom_departments([fort_de_france]) == ["972"]
+
+    def test_metropolitan_perimeters_are_never_flagged(self):
+        assert _dom_rom_departments([PARIS_18, LYON_7, GIRONDE, IDF, PARIS_WHOLE]) == []
+
+    def test_mixed_perimeters_are_deduplicated_and_ordered(self):
+        assert _dom_rom_departments([GIRONDE, REUNION, SAINT_DENIS_REUNION]) == ["974"]
+
+
+class TestDomRomWarning:
+    @pytest.mark.parametrize(
+        "criteria",
+        [
+            {"locations": [SAINT_DENIS_REUNION]},
+            {"locations": [REUNION]},
+            {"locations": [IDF, REUNION]},
+        ],
+        ids=["commune_dom", "departement_dom", "mixte_metropole_et_dom"],
+    )
+    def test_an_outre_mer_perimeter_is_announced_before_scraping(self, criteria, logged):
+        session = FakeSession([EMPTY_PAGE_HTML])
+        run_scrape(criteria, session)
+
+        assert any(
+            level == "WARNING" and "Départements d'outre-mer couverts" in message
+            for level, message in logged
+        )
+
+    def test_one_warning_for_the_whole_scrape_even_with_several_dom_locations(self, logged):
+        session = FakeSession([EMPTY_PAGE_HTML])
+        run_scrape({"locations": [REUNION, SAINT_DENIS_REUNION]}, session)
+
+        warnings = [m for level, m in logged if level == "WARNING" and "outre-mer" in m]
+        assert len(warnings) == 1
+
+    def test_a_metropolitan_search_stays_silent_about_outre_mer(self, logged):
+        session = FakeSession([MERGED_PAGE_HTML])
+        run_scrape({"locations": [PARIS_18, LYON_7]}, session)
+
+        assert not any("outre-mer" in message for _, message in logged)
 
 
 # ---------------------------------------------------------------------------
@@ -1322,21 +1441,32 @@ class TestToNative:
 # ---------------------------------------------------------------------------
 
 class TestPathAnchor:
-    """Les pages de Laforêt sont organisées par ville. Le chemin n'a aucun effet
-    quand des filtres de périmètre sont présents (vérifié : la même requête
-    depuis /paris-75015 ou /bordeaux-33000 rend le même résultat) mais il doit
-    EXISTER — un chemin inventé renvoie 404."""
+    """Le tronçon de chemin identifiant le périmètre : un niveau et un slug.
+
+    Les communes passent par les pages /ville/ (inchangées). Départements et
+    régions passent par leurs pages CANONIQUES, vérifiées en live le
+    2026-08-23 — elles existent pour tous les départements et portent tous les
+    filtres. L'ancienne ancre « ville principale + premier CP » est bannie :
+    sur 37 départements sur 101 la page /ville/ n'existait pas et le site
+    redirigeait (301), pire saint-denis-97400 rebasculait vers la recherche
+    NATIONALE — le repli sans filtres balayait alors tout le stock français
+    pour n'en retenir rien, silencieusement.
+    """
 
     @pytest.mark.parametrize(
         ("location", "expected"),
         [
-            (PARIS_18, {"city": "Paris", "postalCode": "75018"}),
-            ({"city": "Paris", "postalCode": "75018"}, {"city": "Paris", "postalCode": "75018"}),
+            # Commune : page /ville/, slug + code postal — INCHANGÉ.
+            (PARIS_18, {"level": "ville", "slug": "paris-75018"}),
+            (
+                {"city": "Paris", "postalCode": "75018"},
+                {"level": "ville", "slug": "paris-75018"},
+            ),
             # Ville entière : le plus petit code postal, pour un chemin stable.
-            (PARIS_WHOLE, {"city": "Paris", "postalCode": "75001"}),
+            (PARIS_WHOLE, {"level": "ville", "slug": "paris-75001"}),
             (
                 make_whole_city_location("Bordeaux", ("33800", "33000"), "33063"),
-                {"city": "Bordeaux", "postalCode": "33000"},
+                {"level": "ville", "slug": "bordeaux-33000"},
             ),
         ],
     )
@@ -1346,34 +1476,57 @@ class TestPathAnchor:
     def test_a_whole_city_without_postal_codes_has_no_anchor(self):
         assert LaforetParser()._path_anchor({"kind": "whole_city", "city": "Paris"}) is None
 
-    def test_a_department_anchors_on_its_main_city(self):
-        """Prendre la ville principale garde l'URL lisible."""
-        with patch("parsers.laforet.department_main_city", return_value=BORDEAUX) as mock_main:
-            assert LaforetParser()._path_anchor(GIRONDE) == BORDEAUX
-        mock_main.assert_called_once_with("33")
+    def test_a_department_anchors_on_its_canonical_page(self):
+        """Plus aucune dépendance à department_main_city : le slug vient du NOM
+        du département (« Gironde »), pas d'une ville déduite."""
+        assert LaforetParser()._path_anchor(GIRONDE) == {"level": "departement", "slug": "gironde"}
 
-    def test_a_region_anchors_on_the_main_city_of_its_first_department(self):
-        main_city = {"city": "Paris", "postalCode": "75001"}
-        with patch("parsers.laforet.department_main_city", return_value=main_city) as mock_main:
-            assert LaforetParser()._path_anchor(IDF) == {"city": "Paris", "postalCode": "75001"}
-        mock_main.assert_called_once_with("75")
+    def test_another_department_anchors_on_its_canonical_page(self):
+        """Second département figé (Aube) : le slug ne doit rien devoir à une
+        table de villes principales."""
+        assert LaforetParser()._path_anchor(AUBE) == {"level": "departement", "slug": "aube"}
 
-    def test_a_region_without_stored_departments_resolves_them_first(self):
-        with patch("parsers.laforet.region_departments", return_value=["2A", "2B"]):
-            corsican_city = {"city": "Ajaccio", "postalCode": "20000"}
-            with patch("parsers.laforet.department_main_city", return_value=corsican_city) as mock_main:
-                anchor = LaforetParser()._path_anchor({"kind": "region", "name": "Corse", "code": "94"})
-        assert anchor == {"city": "Ajaccio", "postalCode": "20000"}
-        mock_main.assert_called_once_with("2A")
+    def test_a_region_anchors_on_its_canonical_page(self):
+        """L'ancre région est la page canonique, pas l'artefact paris-75001 qui
+        paraissait ne pas filtrer."""
+        assert LaforetParser()._path_anchor(IDF) == {
+            "level": "region",
+            "slug": "ile-de-france",
+        }
 
-    @pytest.mark.parametrize("main_city", [None], ids=["ville_principale_introuvable"])
-    def test_no_anchor_when_the_main_city_cannot_be_found(self, main_city):
-        with patch("parsers.laforet.department_main_city", return_value=main_city):
-            assert LaforetParser()._path_anchor(GIRONDE) is None
+    def test_a_composite_region_slug_is_built_from_the_name(self):
+        """« Provence-Alpes-Côte d'Azur » -> provence-alpes-cote-dazur : slug
+        composé vérifié en live (/region/location-appartement-provence-alpes-
+        cote-dazur + dept13 -> 86 annonces)."""
+        assert LaforetParser()._path_anchor(PACS) == {
+            "level": "region",
+            "slug": "provence-alpes-cote-dazur",
+        }
 
-    def test_a_region_without_any_department_has_no_anchor(self):
-        with patch("parsers.laforet.region_departments", return_value=[]):
-            assert LaforetParser()._path_anchor({"kind": "region", "code": "94"}) is None
+    @pytest.mark.parametrize(
+        ("location", "described"),
+        [
+            ({"kind": "department", "code": "33"}, "département 33"),
+            ({"kind": "department", "name": "", "code": "33"}, "département 33"),
+            ({"kind": "region", "name": "", "code": "94"}, "région 94"),
+        ],
+        ids=["departement_sans_nom", "nom_vide", "region_nom_vide"],
+    )
+    def test_no_anchor_without_a_name_and_a_loud_warning(self, location, described, logged):
+        """Le code seul (« /departement/location-appartement-33 ») ne correspond
+        à aucune page réelle : plutôt que d'inventer un lien mort, on renonce à
+        l'ancre EN ALERTANT — l'ancien comportement échouait en silence."""
+        assert LaforetParser()._path_anchor(location) is None
+        assert any(
+            level == "WARNING"
+            and f"{described} : pas de nom pour construire l'URL canonique" in message
+            for level, message in logged
+        )
+
+    def test_an_unknown_kind_has_no_anchor(self):
+        """Un kind inattendu n'est jamais deviné (comportement de l'ancien code :
+        il tombait dans _department_codes -> liste vide -> None)."""
+        assert LaforetParser()._path_anchor({"kind": "zone", "city": "Paris"}) is None
 
 
 class TestBasePath:
@@ -1403,8 +1556,14 @@ class TestBasePath:
         )
 
     def test_no_path_without_an_anchor(self):
-        with patch("parsers.laforet.department_main_city", return_value=None):
-            assert LaforetParser()._base_path({}, GIRONDE) is None
+        """Un département sans nom n'a pas de page canonique constructible :
+        plutôt qu'un lien mort (404), aucun chemin."""
+        assert LaforetParser()._base_path({}, {"kind": "department", "code": "33"}) is None
+
+    def test_a_department_path_is_the_canonical_page(self):
+        assert LaforetParser()._base_path({}, GIRONDE) == (
+            f"{BASE_URL}/departement/location-appartement-gironde"
+        )
 
     def test_only_unsupported_types_would_break_the_path(self):
         """Fragilité latente, inatteignable par l'API publique : `_base_path`
@@ -1537,10 +1696,9 @@ class TestLocationFilters:
 class TestSplitLocations:
     def test_every_resolvable_perimeter_goes_into_the_merged_request(self):
         parser = LaforetParser()
-        with patch("parsers.laforet.department_main_city", return_value=BORDEAUX):
-            filterable, filters, plain = parser._split_locations(
-                {"locations": [PARIS_18, LYON_7, GIRONDE]}
-            )
+        filterable, filters, plain = parser._split_locations(
+            {"locations": [PARIS_18, LYON_7, GIRONDE]}
+        )
 
         assert filterable == [PARIS_18, LYON_7, GIRONDE]
         assert filters == [
@@ -1607,8 +1765,7 @@ class TestBuildSearchUrls:
             "surfaceMax": 80,
             "rooms": [3, 4],
         }
-        with patch("parsers.laforet.department_main_city", return_value=BORDEAUX):
-            urls = LaforetParser().build_search_urls(criteria)
+        urls = LaforetParser().build_search_urls(criteria)
 
         assert urls == [
             f"{BASE_URL}/ville/location-appartement-paris-75014"
@@ -1671,21 +1828,22 @@ class TestBuildSearchUrls:
         puisque le site combine les filtres en UNION (vérifié en live :
         cities=33063 rend 149 annonces, departments=75 en rend 824, les deux
         ensemble 973)."""
-        with patch("parsers.laforet.department_main_city", return_value=BORDEAUX):
-            urls = LaforetParser().build_search_urls({"locations": [GIRONDE, PARIS_14]})
+        urls = LaforetParser().build_search_urls({"locations": [GIRONDE, PARIS_14]})
 
         assert len(urls) == 1
         assert "filter%5Bdepartments%5D%5B%5D=33" in urls[0]
         assert "filter%5Bcities%5D%5B%5D=75114" in urls[0]
-        # Le chemin est ancré sur la ville principale du premier périmètre.
-        assert urls[0].startswith(f"{BASE_URL}/ville/location-appartement-bordeaux-33000?")
+        # Le chemin est ancré sur la page canonique du premier périmètre.
+        assert urls[0].startswith(f"{BASE_URL}/departement/location-appartement-gironde?")
 
     def test_a_department_url(self):
-        with patch("parsers.laforet.department_main_city", return_value=BORDEAUX):
-            urls = LaforetParser().build_search_urls({"locations": [GIRONDE]})
+        """Ancre canonique /departement/ : la page existe pour tous les
+        départements (vérifié en live) et porte tous les filtres — l'ancienne
+        ancre ville-principale redirigeait (301) sur 37 départements sur 101."""
+        urls = LaforetParser().build_search_urls({"locations": [GIRONDE]})
 
         assert urls == [
-            f"{BASE_URL}/ville/location-appartement-bordeaux-33000"
+            f"{BASE_URL}/departement/location-appartement-gironde"
             "?filter%5Btypes%5D%5B%5D=apartment&filter%5Bdepartments%5D%5B%5D=33"
         ]
         # Surtout pas `filter[department]` au singulier : il ne filtre rien et
@@ -1694,9 +1852,11 @@ class TestBuildSearchUrls:
         assert "filter%5Bcities%5D" not in urls[0]
 
     def test_a_region_becomes_all_its_departments(self):
-        with patch("parsers.laforet.department_main_city", return_value={"city": "Paris", "postalCode": "75001"}):
-            urls = LaforetParser().build_search_urls({"locations": [IDF]})
+        urls = LaforetParser().build_search_urls({"locations": [IDF]})
 
+        # Ancre canonique /region/, vérifiée en live (931 annonces avec ses
+        # 8 départements).
+        assert urls[0].startswith(f"{BASE_URL}/region/location-appartement-ile-de-france?")
         for department in IDF["departments"]:
             assert f"filter%5Bdepartments%5D%5B%5D={department}" in urls[0]
         # Le filtre région natif existe et donne le même résultat, mais les
@@ -1705,13 +1865,13 @@ class TestBuildSearchUrls:
 
     def test_a_region_without_stored_departments_is_resolved(self):
         with patch("parsers.laforet.region_departments", return_value=["2A", "2B"]) as mock_region:
-            with patch("parsers.laforet.department_main_city", return_value={"city": "Ajaccio", "postalCode": "20000"}):
-                urls = LaforetParser().build_search_urls(
-                    {"locations": [{"kind": "region", "name": "Corse", "code": "94"}]}
-                )
+            urls = LaforetParser().build_search_urls(
+                {"locations": [{"kind": "region", "name": "Corse", "code": "94"}]}
+            )
 
         mock_region.assert_called_with("94")
-        assert urls[0].startswith(f"{BASE_URL}/ville/location-appartement-ajaccio-20000?")
+        # Le slug vient du NOM (« corse »), plus aucune ville principale déduite.
+        assert urls[0].startswith(f"{BASE_URL}/region/location-appartement-corse?")
         assert "filter%5Bdepartments%5D%5B%5D=2A" in urls[0]
         assert "filter%5Bdepartments%5D%5B%5D=2B" in urls[0]
 
@@ -1787,18 +1947,16 @@ class TestBuildSearchUrls:
         assert LaforetParser().build_search_urls(criteria) == []
         assert LaforetParser().build_search_url(criteria) is None
 
-    def test_no_url_when_the_department_city_cannot_be_found(self):
-        """Sans ville pour ancrer le chemin, Laforêt renvoie 404 : mieux vaut
-        aucune URL qu'un lien mort."""
-        with patch("parsers.laforet.department_main_city", return_value=None):
-            assert LaforetParser().build_search_urls({"locations": [GIRONDE]}) == []
+    def test_no_url_when_the_department_has_no_name(self):
+        """Sans nom, pas de page canonique constructible — et un chemin inventé
+        renvoie 404 : mieux vaut aucune URL qu'un lien mort."""
+        assert LaforetParser().build_search_urls({"locations": [{"kind": "department", "code": "33"}]}) == []
 
     def test_an_unanchorable_perimeter_does_not_hide_the_others(self):
         with patch("parsers.laforet._resolve_insee_code", return_value=None):
-            with patch("parsers.laforet.department_main_city", return_value=None):
-                urls = LaforetParser().build_search_urls({
-                    "locations": [GIRONDE, {"city": "Paris", "postalCode": "75014"}],
-                })
+            urls = LaforetParser().build_search_urls({
+                "locations": [{"kind": "department", "code": "33"}, {"city": "Paris", "postalCode": "75014"}],
+            })
         assert urls == [f"{BASE_URL}/ville/location-appartement-paris-75014"]
 
     def test_build_search_url_returns_the_first_url(self):
@@ -1846,12 +2004,10 @@ class TestValidity:
     def test_validation_never_resolves_anything(self, criteria):
         """Créer une recherche ne doit dépendre ni de l'API géo ni de Laforêt."""
         with patch("parsers.laforet._resolve_insee_code") as mock_resolve:
-            with patch("parsers.laforet.department_main_city") as mock_main:
-                assert LaforetParser().has_valid_criteria(criteria) is True
-                assert LaforetParser().cannot_search_reason(criteria) is None
+            assert LaforetParser().has_valid_criteria(criteria) is True
+            assert LaforetParser().cannot_search_reason(criteria) is None
 
         mock_resolve.assert_not_called()
-        mock_main.assert_not_called()
 
     def test_no_location_is_reported_before_the_capabilities(self):
         assert LaforetParser().cannot_search_reason({"propertyTypes": ["parking"]}) == (
@@ -1879,6 +2035,41 @@ class TestValidity:
         for transaction in ("rent", "buy"):
             criteria = {"locations": [PARIS_18], "transaction": transaction}
             assert LaforetParser().cannot_search_reason(criteria) is None
+
+
+# ---------------------------------------------------------------------------
+# URL_NOTE — la note affichée à côté du lien « Voir l'URL » (routes/api.py)
+# ---------------------------------------------------------------------------
+
+class TestUrlNote:
+    """Issue #13 : trois limites du site doivent être dites à l'utilisateur
+    dans la note, puisqu'aucune n'est corrigeable par une URL."""
+
+    def test_the_note_explains_the_communal_granularity(self):
+        """P1 : un code postal ne peut pas être isolé de sa commune — Laforêt
+        ne scopre qu'à la commune, le scraper re-filtre ensuite côté serveur."""
+        note = LaforetParser.URL_NOTE
+        assert "commune" in note
+        assert "code postal" in note
+
+    def test_the_note_warns_about_the_site_map_losing_the_perimeter(self):
+        """P4 : bug front chez l'éditeur — searchOnMove() jette cities et
+        sérialise mal les tableaux ; la carte peut induire en erreur."""
+        note = LaforetParser.URL_NOTE
+        assert "carte" in note and "périmètre" in note
+
+    def test_the_note_names_the_uncovered_outre_mer_departements(self):
+        """P5 : les DOM-ROM ne sont pas couverts par le moteur du site."""
+        note = LaforetParser.URL_NOTE
+        assert "outre-mer" in note
+        for code in DOM_ROM_DEPARTMENTS:
+            assert code in note
+
+    def test_the_existing_caveats_are_still_documented(self):
+        """Non-régression : surface max absente et pièces au minimum."""
+        note = LaforetParser.URL_NOTE
+        assert "surface maximale" in note
+        assert "minimum" in note
 
 
 # ---------------------------------------------------------------------------
@@ -1982,14 +2173,13 @@ class TestScrapeMerged:
         with pytest.raises(ValueError, match="500 Server Error"):
             run_scrape({"locations": [PARIS_18]}, session)
 
-    def test_no_city_to_anchor_the_merged_url(self):
-        """Un périmètre filtrable mais sans ville d'ancrage (département dont la
-        ville principale est introuvable) : la requête fusionnée échoue, et le
-        repli par périmètre échoue de même — donc tout échoue."""
+    def test_no_anchor_for_the_merged_url_fails_loudly(self):
+        """Un périmètre filtrable mais sans ancre possible (département sans
+        nom) : la requête fusionnée échoue, et le repli par périmètre échoue de
+        même — donc tout échoue, bruyamment, au lieu d'un succès vide."""
         session = FakeSession([SAMPLE_PAGE_HTML])
-        with patch("parsers.laforet.department_main_city", return_value=None):
-            with pytest.raises(ValueError, match="aucune ville pour ancrer l'URL"):
-                run_scrape({"locations": [GIRONDE]}, session)
+        with pytest.raises(ValueError, match="aucune page pour ancrer l'URL"):
+            run_scrape({"locations": [{"kind": "department", "code": "33"}]}, session)
         assert session.calls == []
 
 
@@ -2090,6 +2280,57 @@ class TestPagination:
         assert [li.legacy_id for li in listings] == ["111"]
 
 
+class TestLoudEmptyPage:
+    """Une page HTTP 200 qui ne rend AUCUNE carte sur une requête portant des
+    filtres de périmètre est SUSPECTE : soit le périmètre est vraiment vide,
+    soit la page n'est pas celle attendue (redirection 301 vers le national,
+    changement de balisage). Impossible de trancher sans voir la page — donc on
+    alerte au lieu d'un succès vide silencieux. C'est ce silence qui a rendu si
+    longs à détecter saint-denis-97400 rebasculant en recherche nationale
+    (issue #13) : 0 annonce présenté comme un succès."""
+
+    def test_an_empty_first_page_with_scope_filters_warns(self, logged):
+        session = FakeSession([EMPTY_PAGE_HTML])
+        listings = run_scrape({"locations": [PARIS_18]}, session)
+
+        assert listings == []
+        assert len(session.calls) == 1
+        assert any(
+            level == "WARNING"
+            and "requête fusionnée : page 1 en HTTP 200 mais aucune carte parsée" in message
+            for level, message in logged
+        )
+
+    def test_an_empty_page_without_scope_filters_stays_silent(self, logged):
+        """Le repli plain SANS filtre de périmètre est supposé pouvoir être
+        vide (c'est voulu : seuls, les critères prix basculeraient en national) :
+        pas d'alerte dessus."""
+        session = FakeSession([EMPTY_PAGE_HTML])
+        with patch("parsers.laforet._resolve_insee_code", return_value=None):
+            listings = run_scrape({"city": "Nawak", "postalCode": "99999"}, session)
+
+        assert listings == []
+        assert not any("aucune carte parsée" in message for _, message in logged)
+
+    def test_a_legitimate_end_of_pagination_does_not_warn(self, logged):
+        """Page 1 remplie puis page 2 vide : fin normale d'une pagination, rien
+        à signaler."""
+        session = FakeSession([page(card("111")), EMPTY_PAGE_HTML])
+        listings = run_scrape({"locations": [PARIS_18]}, session)
+
+        assert [li.legacy_id for li in listings] == ["111"]
+        assert not any("aucune carte parsée" in message for _, message in logged)
+
+    def test_a_last_page_of_overlapping_cards_does_not_warn(self, logged):
+        """Fin par chevauchement (page suivante = cartes déjà vues) : la page
+        n'est PAS vide, elle n'a juste plus rien d'inédit — aucun avertissement."""
+        session = FakeSession([page(card("111")), page(card("111"))])
+        listings = run_scrape({"locations": [PARIS_18]}, session)
+
+        assert [li.legacy_id for li in listings] == ["111"]
+        assert not any("aucune carte parsée" in message for _, message in logged)
+
+
 # ---------------------------------------------------------------------------
 # scrape : repli par périmètre (_scrape_location) et dégradation partielle
 # ---------------------------------------------------------------------------
@@ -2165,13 +2406,26 @@ class TestScrapePerLocationFallback:
 
         assert [li.listing_id for li in listings] == ["lf_52811904"]
 
-    def test_a_plain_location_without_an_anchor_fails_alone(self):
-        """Une région dont les départements sont introuvables n'a ni filtre ni
-        ville d'ancrage : elle échoue, avec un message qui la nomme."""
+    def test_a_region_without_departments_still_gets_its_own_canonical_request(self):
+        """Une région dont les départements sont introuvables n'a aucun filtre,
+        mais son nom suffit désormais à l'ancre canonique : elle part en requête
+        nue sur SA page (plutôt qu'échouer sans espoir, comme avant)."""
+        session = FakeSession([EMPTY_PAGE_HTML])
+        with patch("parsers.laforet.region_departments", return_value=[]):
+            listings = run_scrape({"locations": [{"kind": "region", "name": "Corse", "code": "94"}]}, session)
+
+        assert listings == []
+        assert session.plain_calls[0]["url"] == f"{BASE_URL}/region/location-appartement-corse"
+        # Repli SANS filtre de périmètre : il est supposé pouvoir être vide, pas
+        # d'alerte « aucune carte parsée » (voir TestLoudEmptyPage).
+
+    def test_a_region_without_any_name_fails_alone(self):
+        """Sans départements résolus ET sans nom, rien n'est possible : elle
+        échoue, avec un message qui la nomme."""
         session = FakeSession([SAMPLE_PAGE_HTML])
         with patch("parsers.laforet.region_departments", return_value=[]):
-            with pytest.raises(ValueError, match=r"région Corse: aucune ville pour ancrer l'URL"):
-                run_scrape({"locations": [{"kind": "region", "name": "Corse", "code": "94"}]}, session)
+            with pytest.raises(ValueError, match=r"région 94: aucune page pour ancrer l'URL"):
+                run_scrape({"locations": [{"kind": "region", "name": "", "code": "94"}]}, session)
         assert session.calls == []
 
 
@@ -2271,23 +2525,22 @@ class TestScrapePartialFailures:
 
 class TestScrapeMatchesTheAdvertisedUrls:
     @pytest.mark.parametrize(
-        ("criteria", "patches"),
+        "criteria",
         [
-            ({"locations": [PARIS_18]}, {}),
-            ({"locations": [PARIS_18, LYON_7], "priceMax": 1200, "rooms": [3]}, {}),
-            ({"locations": [GIRONDE]}, {"department_main_city": BORDEAUX}),
+            {"locations": [PARIS_18]},
+            {"locations": [PARIS_18, LYON_7], "priceMax": 1200, "rooms": [3]},
+            {"locations": [GIRONDE]},
         ],
         ids=["une_ville", "deux_villes_filtrees", "departement"],
     )
-    def test_the_first_request_is_exactly_the_advertised_url(self, criteria, patches):
+    def test_the_first_request_is_exactly_the_advertised_url(self, criteria):
         """« Voir l'URL » ne doit pas mentir : la première requête réellement
         émise doit être l'URL annoncée, paramètres compris."""
         from urllib.parse import urlencode
 
-        with patch("parsers.laforet.department_main_city", return_value=patches.get("department_main_city")):
-            expected = LaforetParser().build_search_urls(criteria)[0]
-            session = FakeSession([EMPTY_PAGE_HTML])
-            run_scrape(criteria, session)
+        expected = LaforetParser().build_search_urls(criteria)[0]
+        session = FakeSession([EMPTY_PAGE_HTML])
+        run_scrape(criteria, session)
 
         call = session.calls[0]
         assert f"{call['url']}?{urlencode(call['params'])}" == expected
