@@ -185,7 +185,7 @@ def _round_trip_whole_schema(url: str) -> None:
 _EXPECTED_TABLES = {
     "users", "searches", "listings", "search_listings",
     "admin_logs", "app_settings", "seloger_place_ids", "bienici_zone_ids",
-    "century21_geo_ids",
+    "century21_geo_ids", "guyhoquet_geo_ids",
 }
 
 
