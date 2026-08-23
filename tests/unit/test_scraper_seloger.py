@@ -79,8 +79,19 @@ CLASSIFIED_ITEM = {
         "creationDate": "2026-07-20T08:30:00Z",
         "updateDate": "2026-07-24T11:05:00Z",
     },
-    "provider": {"isPrivateOwner": False, "phoneNumbers": ["+33145678901"]},
-    "cardProvider": {"title": "Agence Beauséjour"},
+    # #11 : structures réelles du blob. La carte SERP (`cardProvider`) affiche
+    # ici le CONTACT et non l'agence — cas observé en production (« Alex
+    # Studapart » au lieu de « STUDAPART »). Le nom fiable est dans
+    # provider.intermediaryCard ; contactCard et agencyLegalInformations sont
+    # les maillons suivants de la chaîne de repli.
+    "provider": {
+        "isPrivateOwner": False,
+        "phoneNumbers": ["+33145678901"],
+        "intermediaryCard": {"title": "Agence Beauséjour"},
+        "contactCard": {"title": "Alex Martin"},
+        "agencyLegalInformations": ["SCI BEAUSEJOUR IMMOBILIER"],
+    },
+    "cardProvider": {"title": "Alex Martin"},
     "mainDescription": {
         "headline": "Charmant 3 pièces rénové",
         "description": "Très lumineux, exposé sud, proche métro Place d'Italie.",
@@ -866,6 +877,9 @@ class TestGetDetailedListingsFieldExtraction:
         assert listing["price"] is None and listing["priceValue"] is None
         assert listing["surface"] is None and listing["rooms"] is None
         assert listing["photos"] == [] and listing["phone"] == []
+        # #11 : sans aucune source, l'agence est une chaîne vide — jamais None,
+        # que parsers/seloger.py enregistrait telle quelle dans le Listing.
+        assert listing["agency"] == ""
         assert listing["isPrivate"] is False and listing["isNew"] is False
         assert listing["keyfacts"] == []
 
@@ -887,6 +901,153 @@ class TestGetDetailedListingsFieldExtraction:
 
         with pytest.raises(ValueError, match="DataDome"):
             get_detailed_listings({"placeIds": ["X"]}, max_retries=1)
+
+
+class TestGetDetailedListingsAgencyFallback:
+    """#11 : le champ « agence » lit une chaîne de repli ordonnée.
+
+    `cardProvider` — l'unique source historique — est la carte SERP : SeLoger y
+    met tantôt l'agence, tantôt le contact, tantôt rien. Sur un échantillon
+    réel de 30 annonces parisiennes : 8 affichaient le contact (« Alex
+    Studapart » pour une agence « STUDAPART »), 14 étaient null malgré une
+    agence connue, seules 8 portaient le bon nom. La chaîne retenue :
+
+        provider.intermediaryCard.title -> cardProvider.title
+        -> provider.contactCard.title   -> provider.agencyLegalInformations[0]
+    """
+
+    @staticmethod
+    def _item(provider, card_provider) -> dict:
+        """Une annonce dont `provider` et `cardProvider` sont remplacés."""
+        return {**CLASSIFIED_ITEM, "provider": provider, "cardProvider": card_provider}
+
+    def agency_of(self, serve, item: dict) -> str:
+        serve(page=ufrn_page(serp_payload({LISTING_ID: item})))
+
+        return get_detailed_listings({"placeIds": ["X"]}, max_retries=1)[0]["agency"]
+
+    def test_a_contact_name_in_card_provider_does_not_override_the_agency(self, serve):
+        """Le cas de production : la carte SERP porte le contact, l'agence est
+        dans intermediaryCard. C'est aussi ce que couvre la fixture partagée :
+        chaque assertion existante sur « Agence Beauséjour » prouve que le
+        contact « Alex Martin » n'est pas retenu à sa place."""
+        item = self._item(
+            {**CLASSIFIED_ITEM["provider"], "intermediaryCard": {"title": "Agence Beauséjour"}},
+            {"title": "Alex Martin"},
+        )
+
+        assert self.agency_of(serve, item) == "Agence Beauséjour"
+
+    def test_a_null_card_provider_still_yields_the_agency_from_intermediary_card(self, serve):
+        """Effet secondaire #11 : cardProvider null faisait stocker agency=None
+        (le défaut de `.get("agency", "")` du parser ne joue pas sur une clé
+        présente) alors que le nom existe dans intermediaryCard."""
+        item = self._item(
+            {**CLASSIFIED_ITEM["provider"], "intermediaryCard": {"title": "CABINET PLISSON"}},
+            None,
+        )
+
+        assert self.agency_of(serve, item) == "CABINET PLISSON"
+
+    @pytest.mark.parametrize(
+        ("provider", "card_provider", "expected"),
+        [
+            (
+                {"intermediaryCard": {"title": "Agence"}, "contactCard": {"title": "Contact"},
+                 "agencyLegalInformations": ["Raison sociale"]},
+                {"title": "Carte SERP"},
+                "Agence",
+            ),
+            (
+                {"contactCard": {"title": "Contact"}, "agencyLegalInformations": ["Raison sociale"]},
+                {"title": "Carte SERP"},
+                "Carte SERP",
+            ),
+            (
+                {"contactCard": {"title": "Contact"}, "agencyLegalInformations": ["Raison sociale"]},
+                None,
+                "Contact",
+            ),
+            (
+                {"agencyLegalInformations": ["Raison sociale", "Seconde"]}, None,
+                "Raison sociale",
+            ),
+        ],
+        ids=[
+            "intermediary_card_wins_over_everything",
+            "card_provider_without_intermediary",
+            "contact_card_without_the_two_above",
+            "legal_informations_last_resort",
+        ],
+    )
+    def test_the_fallback_chain_follows_the_documented_priority(
+        self, serve, provider, card_provider, expected
+    ):
+        """Chaque maillon ne parle que lorsque tous ceux qui le précèdent sont
+        absents — l'ordre est celui de la fiabilité constatée en production."""
+        assert self.agency_of(serve, self._item(provider, card_provider)) == expected
+
+    @pytest.mark.parametrize(
+        ("provider", "card_title", "expected"),
+        [
+            # intermediaryCard blanche : la carte SERP parle à sa place.
+            (
+                {**CLASSIFIED_ITEM["provider"], "intermediaryCard": {"title": "  "}},
+                "Carte SERP",
+                "Carte SERP",
+            ),
+            # intermediaryCard et carte SERP muettes : le contact (maillon 3)
+            # est retenu, faute de source plus fiable avant lui.
+            (
+                {
+                    **CLASSIFIED_ITEM["provider"],
+                    "intermediaryCard": {"title": ""},
+                    "contactCard": {"title": "Alex Martin"},
+                },
+                "",
+                "Alex Martin",
+            ),
+            # Tout est muet jusqu'à la raison sociale (maillon 4).
+            (
+                {
+                    **CLASSIFIED_ITEM["provider"],
+                    "intermediaryCard": {"title": None},
+                    "contactCard": {"title": "   "},
+                },
+                None,
+                "SCI BEAUSEJOUR IMMOBILIER",
+            ),
+        ],
+        ids=["skip_to_card_provider", "skip_to_contact_card", "skip_to_legal_informations"],
+    )
+    def test_blank_titles_are_skipped_to_the_next_usable_link(self, serve, provider, card_title, expected):
+        """Un titre vide ou blanc vaut absence : on descend au maillon suivant
+        plutôt que d'enregistrer une agence invisible à l'écran."""
+        assert self.agency_of(serve, self._item(provider, {"title": card_title})) == expected
+
+    @pytest.mark.parametrize(
+        ("provider", "card_provider"),
+        [
+            ({}, {}),
+            (None, None),
+            ({"intermediaryCard": None, "contactCard": {}, "agencyLegalInformations": []}, {"title": None}),
+            ({"intermediaryCard": "pas-un-dict", "agencyLegalInformations": {}}, []),
+        ],
+        ids=[
+            "both_empty_dicts",
+            "both_null",
+            "nested_structures_empty_or_null",
+            "wrong_shapes_entirely",
+        ],
+    )
+    def test_no_usable_source_yields_an_empty_string_never_an_error(self, serve, provider, card_provider):
+        """Structures manquantes ou inattendues à CHAQUE niveau : aucune
+        KeyError/TypeError ne doit fuir vers le `except Exception` de la boucle
+        de retry, qui les transformerait en faux blocage DataDome. Le contrat
+        minimal : une chaîne vide, jamais None."""
+        agency = self.agency_of(serve, self._item(provider, card_provider))
+
+        assert agency == ""
 
 
 class TestGetDetailedListingsRetryAndBackoff:
