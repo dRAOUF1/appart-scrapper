@@ -37,10 +37,16 @@ Trois pièges vérifiés en direct :
   recherche perd alors son filtre de type et devient TOUT TYPES (« vente-
   parkings » pluriel ou « locations-terrain » renvoient la page générique) :
   seuls les segments ci-dessus, vérifiés un à un, sont donc émis ;
-- UNE URL ne porte QU'UN seul périmètre (deux `-g{id}` redirigent vers le
-  premier) : une recherche multi-localisations produit donc une série de
-  pages PAR localisation, et un multi-types une série PAR type — jamais de
-  fusion, jamais de développement en liste de communes.
+- la FUSION des périmètres se fait en concaténant leurs identifiants dans UN
+  SEUL bloc `g`, SANS tiret entre eux (`...-g439g43267`) — vérifié en direct
+  le 23/08/2026 : les ids sont canonisés par le site en ordre croissant
+  (g43267g439 -> 301 vers g439g43267), la page fusionnée répond 200 et sert
+  les annonces des DEUX périmètres, y compris entre niveaux (deux
+  départements, g442g456) ; la pagination -2/-3 s'y applique normalement.
+  Deux blocs séparés par un tiret (-g439-g43267) NE marchent PAS :
+  redirection vers le seul premier périmètre. D'où l'émission retenue : UNE
+  série PAR TYPE demandé, TOUTES les localisations regroupées dans chaque
+  série (ids triés en ordre NUMÉRIQUE croissant pour éviter la 301).
 
 Les filtres prix et surface ONT un équivalent natif dans l'URL, vérifié en
 direct sous toutes ses formes (seule, combinée, avec pagination) :
@@ -51,7 +57,11 @@ direct sous toutes ses formes (seule, combinée, avec pagination) :
 (le site renormalise lui-même l'ordre et les formes via redirection). Ils ne
 sont pas optionnels : la pagination HTML plafonne à 25 PAGES côté serveur
 (vérifié en direct : la page 26 recycle le début des résultats), soit ~330
-annonces — sans filtres émis, une recherche large serait tronquée. Les listes
+annonces — sans filtres émis, une recherche large serait tronquée. La fusion
+des périmètres a un compromis assumé : ce plafond vaut PAR SÉRIE, regrouper
+plusieurs périmètres augmente donc le volume par série — et avec lui le
+risque d'un résultat partiel, signalé par les warnings déjà prévus
+(_DEPTH_CAP_SUSPECT / MAX_PAGES). Les listes
 de pièces (« 3 et 4 », « 5 et plus »), sans équivalent fiable (la sémantique
 du segment -N-pieces du site est ambiguë), restent appliquées côté scraper par
 _passes_filters, qui rejoue TOUS les critères sur chaque annonce — filet
@@ -238,6 +248,39 @@ def _location_slug(location: dict) -> str:
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     segments = [s for s in re.split(r"[^A-Za-z]+", ascii_text.lower()) if s]
     return "-".join(segments) or "france"
+
+
+def _geo_block(geo_ids: list[str]) -> str:
+    """Les identifiants CONCATÉNÉS d'une série fusionnée, tels qu'ils suivent
+    le `g` de l'URL (« 439g43267 ») — sans aucun tiret entre eux : la forme
+    -g439-g43267 ne porte que le premier périmètre (redirection vérifiée en
+    direct, voir la docstring du module)."""
+    return "g".join(geo_ids)
+
+
+def _sorted_geo_pairs(pairs: list[tuple[dict, str]]) -> list[tuple[dict, str]]:
+    """Les paires (localisation, geo_id) dédoublonnées par identifiant puis
+    triées en ordre NUMÉRIQUE croissant.
+
+    Le site canonise lui-même le bloc g en ordre croissant (g43267g439 ->
+    301 vers g439g43267, vérifié en direct) : trier à l'émission évite cette
+    redirection ET rend l'ordre déterministe quel que soit l'ordre des ids
+    saisis à la main ou résolus. Le tri est numérique (l'ordre lexical
+    mettrait « 43267 » devant « 439 ») ; un id manuel non numérique —
+    aberrant — passe après tous les autres sans faire lever le tri."""
+    uniques: dict[str, dict] = {}
+    for location, geo_id in pairs:
+        uniques.setdefault(geo_id, location)
+    return [
+        (location, geo_id)
+        for geo_id, location in sorted(
+            uniques.items(),
+            key=lambda item: (
+                not item[0].isdigit(),
+                int(item[0]) if item[0].isdigit() else -1,
+            ),
+        )
+    ]
 
 
 def _fetch_with_retries(session, url: str) -> str:
@@ -566,15 +609,19 @@ class PapParser(BaseParser):
             pairs.append((location, str(geo_id)))
         return pairs
 
-    def _series(self, criteria: dict, locations: list[dict]) -> list[tuple[dict, str, str]]:
-        """L'expansion complète du scrape : (localisation, geo_id, segment
-        d'URL) pour CHAQUE localisation × CHAQUE type demandé.
+    def _series(self, criteria: dict,
+                locations: list[dict]) -> list[tuple[list[dict], list[str], str]]:
+        """L'expansion complète du scrape : (localisations couvertes, geo_ids
+        triés, segment d'URL) pour CHAQUE type demandé, TOUTES les
+        localisations fusibles REGROUPÉES dans chaque série.
 
-        Une URL PAP ne porte qu'un seul périmètre ET qu'un seul type (voir la
-        docstring du module) : le produit cartésien est la seule fidélité
-        possible aux critères, et la déduplication globale (set seen) absorbe
-        les recouvrements. Sans type demandé, le segment générique de la
-        transaction couvre tout.
+        La fusion multi-périmètres est native chez PAP : les ids se
+        concatènent dans un seul bloc g (voir la docstring du module), une
+        recherche 2 villes × 1 type tient donc dans UNE série au lieu d'une
+        par localisation — le slug de nom reste reconstruit depuis la
+        première localisation du bloc (celle du premier id trié), le site
+        l'ignorant. Le compromis troncature (le plafond de ~25 pages vaut
+        par série) est documenté dans la docstring du module.
 
         Un type demandé sans segment vérifié pour cette transaction (le
         terrain en location, qui n'existe pas sur PAP) est écarté avec un
@@ -605,12 +652,19 @@ class PapParser(BaseParser):
             TYPE_PATHS[transaction][t] for t in expressible
         ] or [TRANSACTION_PATHS[transaction]]
 
-        return [(location, geo_id, segment) for location, geo_id in pairs for segment in segments]
+        fused = _sorted_geo_pairs(pairs)
+        fused_locations = [location for location, _ in fused]
+        fused_ids = [geo_id for _, geo_id in fused]
+        return [(fused_locations, fused_ids, segment) for segment in segments]
 
-    def _base_url(self, criteria: dict, location: dict, geo_id: str, segment: str) -> str:
+    def _base_url(self, criteria: dict, locations: list[dict],
+                  geo_ids: list[str], segment: str) -> str:
         """L'URL de la première page d'une série (miroir exact du scrape),
-        avec les filtres natifs prix/surface quand les critères en portent."""
-        url = f"{BASE_URL}/annonce/{segment}-{_location_slug(location)}-g{geo_id}"
+        avec les filtres natifs prix/surface quand les critères en portent.
+        Le slug de lieu dérive de la première localisation du bloc (celle du
+        premier id trié) : le site ignore ce slug et le reconstruit depuis le
+        premier id — l'aligner évite sa renormalisation."""
+        url = f"{BASE_URL}/annonce/{segment}-{_location_slug(locations[0])}-g{_geo_block(geo_ids)}"
         filters = _url_filter_segments(criteria)
         if filters:
             url += "-" + "-".join(filters)
@@ -654,17 +708,17 @@ class PapParser(BaseParser):
         return urls[0] if urls else None
 
     def build_search_urls(self, criteria: dict) -> list[str]:
-        """Une URL par série — localisation × type demandé (une URL PAP ne
-        porte qu'un périmètre et qu'un type, vérifié en direct) : la liste
-        reflète EXACTEMENT ce que scrape() parcourt, page 1 de chaque
-        série."""
+        """Une URL PAR TYPE demandé, toutes les localisations FUSIONNÉES dans
+        un seul bloc g trié ascendant (une URL PAP ne porte qu'un SEUL bloc —
+        voir la docstring du module) : la liste reflète EXACTEMENT ce que
+        scrape() parcourt, page 1 de chaque série."""
         locations = get_locations(criteria)
         if not locations:
             return []
 
         return [
-            self._base_url(criteria, location, geo_id, segment)
-            for location, geo_id, segment in self._series(criteria, locations)
+            self._base_url(criteria, fused_locations, geo_ids, segment)
+            for fused_locations, geo_ids, segment in self._series(criteria, locations)
         ]
 
     # ------------------------------------------------------------------
@@ -696,14 +750,16 @@ class PapParser(BaseParser):
         listings: list[Listing] = []
         errors: list[str] = []
 
-        for location, geo_id, segment in series:
+        for serie_locations, geo_ids, segment in series:
+            block = f"g{_geo_block(geo_ids)}"
+            described = ", ".join(_describe(location) for location in serie_locations)
             try:
                 listings.extend(
-                    self._scrape_series(session, criteria, location, geo_id, segment, seen)
+                    self._scrape_series(session, criteria, serie_locations, geo_ids, segment, seen)
                 )
             except Exception as e:
-                errors.append(f"{_describe(location)} (g{geo_id}): {e}")
-                logger.warning(f"[PAP] {_describe(location)} (g{geo_id}): {e}")
+                errors.append(f"{described} ({block}): {e}")
+                logger.warning(f"[PAP] {described} ({block}): {e}")
 
         if errors and len(errors) == len(series):
             raise ValueError("; ".join(errors))
@@ -711,9 +767,9 @@ class PapParser(BaseParser):
         logger.info(f"[PAP] Scraping terminé : {len(listings)} annonces uniques")
         return listings
 
-    def _scrape_series(self, session, criteria: dict, location: dict, geo_id: str,
-                       segment: str, seen: set) -> list[Listing]:
-        base_url = self._base_url(criteria, location, geo_id, segment)
+    def _scrape_series(self, session, criteria: dict, locations: list[dict],
+                       geo_ids: list[str], segment: str, seen: set) -> list[Listing]:
+        base_url = self._base_url(criteria, locations, geo_ids, segment)
 
         def fetch(page: int) -> str:
             if page > 1:
@@ -721,8 +777,10 @@ class PapParser(BaseParser):
             url = base_url if page == 1 else f"{base_url}-{page}"
             return _fetch_with_retries(session, url)
 
-        return self._collect_pages(fetch, criteria, [location], seen,
-                                   f"{segment}-g{geo_id}")
+        # La page fusionnée sert TOUS les périmètres du bloc g : le filtrage
+        # reçoit l'union complète — chaque annonce est rattachée au sien.
+        return self._collect_pages(fetch, criteria, locations, seen,
+                                   f"{segment}-g{_geo_block(geo_ids)}")
 
     def _collect_pages(self, fetch, criteria: dict, locations: list[dict],
                        seen: set, label: str) -> list[Listing]:
