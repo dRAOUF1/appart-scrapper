@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 import psycopg2
 import psycopg2.extras
 
@@ -14,20 +12,18 @@ class UserRepository(BaseRepository):
     """User CRUD operations."""
 
     def create_user(self, username: str) -> dict:
-        api_token = secrets.token_urlsafe(32)
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "INSERT INTO users (username, api_token) VALUES (%s, %s) RETURNING id",
-                    (username, api_token),
+                    "INSERT INTO users (username) VALUES (%s) RETURNING id",
+                    (username,),
                 )
                 row = cur.fetchone()
                 conn.commit()
                 return {
                     "id": row["id"],
                     "username": username,
-                    "api_token": api_token,
                 }
         except psycopg2.IntegrityError as e:
             conn.rollback()
@@ -35,13 +31,14 @@ class UserRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
-    def get_user_by_token(self, token: str) -> dict | None:
+    def get_user_by_id(self, user_id: int) -> dict | None:
+        """L'utilisateur tel que les décorateurs de session le résolvent."""
         conn = self._get_conn_for_request()
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT id, username, api_token, created_at FROM users WHERE api_token = %s",
-                    (token,),
+                    "SELECT id, username, created_at FROM users WHERE id = %s",
+                    (user_id,),
                 )
                 row = cur.fetchone()
                 return dict(row) if row else None
@@ -53,7 +50,7 @@ class UserRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT id, username, api_token, created_at FROM users WHERE username = %s",
+                    "SELECT id, username, created_at FROM users WHERE username = %s",
                     (username,),
                 )
                 row = cur.fetchone()
@@ -66,7 +63,7 @@ class UserRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    """SELECT u.id, u.username, u.api_token, u.created_at,
+                    """SELECT u.id, u.username, u.created_at,
                               (SELECT COUNT(*) FROM searches WHERE user_id = u.id) AS search_count,
                               (SELECT COUNT(DISTINCT sl.listing_id)
                                FROM search_listings sl
@@ -84,7 +81,7 @@ class UserRepository(BaseRepository):
         try:
             with self._dict_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT id, username, api_token, created_at FROM users WHERE id = %s",
+                    "SELECT id, username, created_at FROM users WHERE id = %s",
                     (user_id,),
                 )
                 user = cur.fetchone()
@@ -140,43 +137,6 @@ class UserRepository(BaseRepository):
                 cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
                 conn.commit()
                 return cur.rowcount > 0
-        finally:
-            self._release_conn(conn)
-
-    def reset_user_token(self, user_id: int) -> str:
-        new_token = secrets.token_urlsafe(32)
-        conn = self._get_conn_for_request()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE users SET api_token = %s WHERE id = %s",
-                    (new_token, user_id),
-                )
-                conn.commit()
-            return new_token
-        finally:
-            self._release_conn(conn)
-
-    def get_user_stats(self, user_id: int) -> dict:
-        conn = self._get_conn_for_request()
-        try:
-            with self._dict_cursor(conn) as cur:
-                cur.execute("""
-                    SELECT
-                        (SELECT COUNT(*) FROM searches WHERE user_id = %s) AS searches,
-                        (SELECT COUNT(DISTINCT sl.listing_id)
-                         FROM search_listings sl JOIN searches s ON s.id = sl.search_id
-                         WHERE s.user_id = %s) AS total_listings,
-                        (SELECT COUNT(DISTINCT sl.listing_id)
-                         FROM search_listings sl JOIN searches s ON s.id = sl.search_id
-                         WHERE s.user_id = %s AND sl.found_at >= CURRENT_DATE) AS new_today
-                """, (user_id, user_id, user_id))
-                row = cur.fetchone()
-                return {
-                    "searches": row["searches"],
-                    "total_listings": row["total_listings"],
-                    "new_today": row["new_today"],
-                }
         finally:
             self._release_conn(conn)
 
