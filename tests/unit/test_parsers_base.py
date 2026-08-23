@@ -35,7 +35,7 @@ from tests.helpers.fakes import fake_storage
 
 # Les seules sources réellement enregistrées par parsers/__init__.py.
 REAL_SOURCES = {"seloger", "laforet", "bienici", "century21", "pap", "orpi",
-                "essetpm", "foncia", "guyhoquet"}
+                "essetpm", "foncia", "guyhoquet", "citya"}
 
 
 def make_parser_class(source_id: str = "", **attributes) -> type[BaseParser]:
@@ -230,6 +230,11 @@ class TestListSources:
         # département/région + autocomplete caché pour les villes) suffit.
         assert by_id["guyhoquet"]["manual_override_label"] == ""
         assert by_id["guyhoquet"]["manual_override_help"] == ""
+        # Citya, elle, propose le repli : son autocomplete exige un slug
+        # exact, faute de quoi le site replie silencieusement sur la France
+        # entière.
+        assert by_id["citya"]["manual_override_label"]
+        assert by_id["citya"]["manual_override_help"]
 
     def test_only_laforet_and_century21_declare_a_url_note(self):
         """URL_NOTE explique dans l'UI pourquoi le lien montré diffère de la
@@ -242,6 +247,8 @@ class TestListSources:
         assert by_id["seloger"]["url_note"] == ""
         assert by_id["bienici"]["url_note"] == ""
         assert by_id["guyhoquet"]["url_note"] == ""
+        # Citya explique sa composition par virgules et ses agrégats solo.
+        assert by_id["citya"]["url_note"]
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +599,7 @@ class TestPackageHelpers:
             "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
             "SeLogerParser", "LaforetParser", "BienIciParser", "Century21Parser",
             "PapParser", "OrpiParser", "EssetPmParser", "FonciaParser",
-            "GuyHoquetParser",
+            "GuyHoquetParser", "CityaParser",
         }
 
 
