@@ -1,10 +1,14 @@
 """Laforet.com listing scraper.
 
-Server-rendered (Symfony/Turbo + UX Live Component) site, no public JSON
-listing API. Location is encoded in the URL path as a human-readable city
-slug + postal code, e.g.:
+Site server-rendered (Symfony/Turbo + UX Live Component), sans API JSON
+publique. Le chemin de l'URL porte le périmètre : pages /ville/ pour les
+communes (slug lisible + code postal), pages canoniques pour les niveaux
+larges — vérifiées en live le 2026-08-23, elles existent et portent tous
+les filtres :
 
     https://www.laforet.com/ville/location-appartement-paris-75018
+    https://www.laforet.com/departement/location-appartement-gironde
+    https://www.laforet.com/region/location-appartement-ile-de-france
 
 Cette page rend toujours deux sections : les vrais résultats, correctement
 cadrés, puis une section « Appartements à proximité de {ville} » alimentée par
@@ -58,7 +62,6 @@ from core.geocode import (
     DEPARTMENT,
     REGION,
     WHOLE_CITY,
-    department_main_city,
     region_departments,
 )
 from core.geocode import (
@@ -129,6 +132,20 @@ def _slugify(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^a-zA-Z0-9]+", "-", ascii_text).strip("-").lower()
+
+
+def _canonical_slug(name: str) -> str:
+    """Le slug tel que le site l'écrit sur ses pages canoniques
+    /departement/ et /region/.
+
+    Différence subtile avec _slugify : Laforêt SUPPRIME l'apostrophe au lieu
+    de la convertir en tiret — « Provence-Alpes-Côte d'Azur » s'écrit
+    provence-alpes-cote-dazur (vérifié en live le 2026-08-23), pas
+    provence-alpes-cote-d-azur, dont la page n'existe pas. Les pages /ville/
+    des communes, elles, continuent de passer par _slugify : leurs slugs
+    fonctionnent tels quels aujourd'hui, inutile de les bousculer.
+    """
+    return _slugify(name.replace("'", "").replace("\u2019", ""))
 
 
 def _transaction(criteria: dict) -> str:
@@ -225,6 +242,40 @@ def _department_codes(location: dict) -> list[str]:
             codes = region_departments(location["code"])
         return codes
     return []
+
+
+# Départements d'outre-mer : le moteur de recherche de Laforêt n'y référence
+# AUCUN bien (vérifié en live le 2026-08-23 : filter[departments][]=974 et
+# filter[cities][]=97411 rendent 0 annonce, même avec des filtres prix). Pire,
+# la page /ville/ d'un CP outre-mer sans filtre redirige vers la recherche
+# nationale. Autant le dire avant le scrape plutôt que laisser un 0 annonce
+# silencieux passer pour un succès.
+DOM_ROM_DEPARTMENTS = ("971", "972", "973", "974", "976")
+
+
+def _dom_rom_departments(locations: list[dict]) -> list[str]:
+    """Les départements d'outre-mer couverts par ces périmètres.
+
+    Déduits de tous les niveaux : code du département, départements d'une
+    région, et — pour une commune ou une ville entière — préfixe des codes
+    postaux et INSEE (« 97400 » -> « 974 »). Aucun code métropole ne commence
+    par « 97 » (Corse comprise : 20xxx), donc le préfixe suffit.
+    """
+    found: list[str] = []
+    for location in locations:
+        candidates = [c for c in _department_codes(location) if c in DOM_ROM_DEPARTMENTS]
+        for value in (
+            location.get("postalCode"),
+            *(location.get("postalCodes") or []),
+            location.get("inseeCode"),
+        ):
+            prefix = str(value)[:3] if value else ""
+            if prefix in DOM_ROM_DEPARTMENTS and prefix not in candidates:
+                candidates.append(prefix)
+        for code in candidates:
+            if code not in found:
+                found.append(code)
+    return found
 
 
 def _extract_genuine_section(html: str) -> str:
@@ -431,7 +482,15 @@ class LaforetParser(BaseParser):
     URL_NOTE = (
         "Laforêt n'a pas de filtre de surface maximale, et son filtre de pièces "
         "est un minimum : ce lien peut donc montrer un peu plus large que la "
-        "recherche. Le scraper applique les critères exacts de son côté."
+        "recherche. Le scraper applique les critères exacts de son côté. "
+        "Laforêt ne scopre qu'à la commune entière : un code postal ne peut pas "
+        "être isolé de ses voisins dans la même commune, le scraper re-filtre "
+        "donc côté serveur — sur une très grosse commune, quelques annonces au-"
+        "delà des 30 premières pages peuvent manquer. Sur la carte du site, "
+        "déplacer ou zoomer peut faire perdre le périmètre (bug connu chez "
+        "l'éditeur) : fiez-vous aux filtres listés dans l'URL, pas à la carte. "
+        "Enfin, les départements d'outre-mer (971, 972, 973, 974 et 976) ne "
+        "sont pas couverts par le moteur de recherche du site."
     )
 
     # has_valid_criteria / cannot_search_reason : pas de surcharge nécessaire,
@@ -447,28 +506,58 @@ class LaforetParser(BaseParser):
         return criteria
 
     def _path_anchor(self, location: dict) -> dict | None:
-        """La ville + code postal servant à construire le chemin de l'URL.
+        """Le tronçon de chemin identifiant le périmètre dans l'URL : un
+        niveau (« ville », « departement », « region ») et le slug qui le suit
+        après la transaction et le type de bien.
 
-        Les pages de Laforet sont organisées par ville. Le chemin n'a aucun
-        effet quand des filtres de périmètre sont présents (vérifié : la même
-        requête depuis /paris-75015 ou /bordeaux-33000 rend le même résultat)
-        mais il doit exister — un chemin inventé renvoie 404. Pour un
-        département ou une région, on prend donc la ville principale du
-        département concerné, ce qui garde l'URL lisible.
+        Les communes passent par les pages /ville/ (slug + code postal) :
+            /ville/location-appartement-paris-75018
+        Un département ou une région passe par sa page canonique — vérifiées
+        en live le 2026-08-23, elles existent pour tous les départements et
+        portent tous les filtres :
+            /departement/location-appartement-gironde
+            /region/location-appartement-ile-de-france
+        L'ancienne ancre « ville principale du département + premier CP » est
+        abandonnée : sur 37 départements sur 101 cette page /ville/ n'existait
+        pas et le site redirigeait (301) — pire, saint-denis-97400 rebasculait
+        vers la recherche NATIONALE, et le repli sans filtres balayait alors
+        tout le stock français pour n'en retenir rien.
+
+        Renvoie None quand rien ne permet d'ancrer l'URL : commune sans code
+        postal exploitable, ou département/région sans nom — le code seul
+        (« /departement/location-appartement-33 ») ne correspond à aucune page
+        réelle du site.
         """
         kind = location.get("kind", CITY)
         if kind == CITY:
-            return {"city": location["city"], "postalCode": location["postalCode"]}
+            return {
+                "level": "ville",
+                "slug": f"{_slugify(location['city'])}-{location['postalCode']}",
+            }
         if kind == WHOLE_CITY:
             postal_codes = location.get("postalCodes") or []
-            return {"city": location["city"], "postalCode": sorted(postal_codes)[0]} if postal_codes else None
-
-        codes = _department_codes(location)
-        return department_main_city(codes[0]) if codes else None
+            if not postal_codes:
+                return None
+            return {
+                "level": "ville",
+                "slug": f"{_slugify(location['city'])}-{sorted(postal_codes)[0]}",
+            }
+        if kind in (DEPARTMENT, REGION):
+            name = (location.get("name") or "").strip()
+            if not name:
+                logger.warning(
+                    f"[Laforet] {_describe(location)} : pas de nom pour "
+                    "construire l'URL canonique, requête impossible"
+                )
+                return None
+            level = "departement" if kind == DEPARTMENT else "region"
+            return {"level": level, "slug": _canonical_slug(name)}
+        # Kind inconnu : pas d'ancre devinée.
+        return None
 
     def _base_path(self, criteria: dict, location: dict) -> str | None:
         """Le chemin de la page de résultats pour cette localisation, ou None
-        si on n'a pas de ville pour l'ancrer.
+        si on n'a pas de page pour l'ancrer.
 
         Le type dans le slug est celui du premier type demandé, mais il n'a
         pas d'effet réel : filter[types][] prime sur lui (vérifié en live).
@@ -479,8 +568,7 @@ class LaforetParser(BaseParser):
         transaction = TRANSACTION_SLUGS[_transaction(criteria)]
         type_slug = TYPE_SLUGS[_property_types(criteria)[0]]
         return (
-            f"{BASE_URL}/ville/{transaction}-{type_slug}-"
-            f"{_slugify(anchor['city'])}-{anchor['postalCode']}"
+            f"{BASE_URL}/{anchor['level']}/{transaction}-{type_slug}-{anchor['slug']}"
         )
 
     def _type_filters(self, criteria: dict) -> list[tuple[str, str]]:
@@ -646,6 +734,18 @@ class LaforetParser(BaseParser):
         # propre requête au lieu d'être silencieusement abandonné.
         filterable, filters, plain = self._split_locations(criteria)
 
+        # Outre-mer : le moteur Laforêt n'y référence rien (voir
+        # DOM_ROM_DEPARTMENTS) — mieux vaut l'annoncer que laisser un 0 annonce
+        # silencieux passer pour un succès.
+        outre_mer = _dom_rom_departments(filterable + plain)
+        if outre_mer:
+            logger.warning(
+                f"[Laforet] Départements d'outre-mer couverts ({', '.join(outre_mer)}) : "
+                "le moteur de recherche de Laforêt n'y référence aucun bien, aucun "
+                "résultat ne pourra en venir (limitation du site, pas un échec du "
+                "scraper)."
+            )
+
         seen: set[str] = set()
         listings: list[Listing] = []
         errors: list[str] = []
@@ -688,7 +788,7 @@ class LaforetParser(BaseParser):
         cumulés — le site les combine en union."""
         base_path = self._base_path(criteria, locations[0])
         if not base_path:
-            raise ValueError("aucune ville pour ancrer l'URL de recherche")
+            raise ValueError("aucune page pour ancrer l'URL de recherche")
 
         base_query = self._type_filters(criteria) + filters + self._criteria_filters(criteria)
 
@@ -702,10 +802,16 @@ class LaforetParser(BaseParser):
             resp.raise_for_status()
             return resp.text
 
-        return self._collect_pages(fetch, criteria, locations, seen, "requête fusionnée")
+        # `filters` ne contient QUE les filtres de périmètre (filter[cities][]/
+        # filter[departments][]) : leur présence seule déclenche l'alerte
+        # « 200 mais rien de parsé » — un repli sans périmètre est supposé
+        # pouvoir rester vide (seuls, les critères prix basculeraient en
+        # recherche nationale, voir le docstring du module).
+        return self._collect_pages(fetch, criteria, locations, seen, "requête fusionnée",
+                                   scope_filtered=bool(filters))
 
     def _collect_pages(self, fetch, criteria: dict, locations: list[dict],
-                       seen: set, label: str) -> list[Listing]:
+                       seen: set, label: str, scope_filtered: bool = False) -> list[Listing]:
         """Parcourt les pages de résultats jusqu'à épuisement, en collectant les
         annonces qui passent les filtres.
 
@@ -723,6 +829,15 @@ class LaforetParser(BaseParser):
 
         MAX_PAGES borne le parcours : une recherche large sans filtre serré
         pourrait sinon enchaîner les requêtes très longtemps.
+
+        `scope_filtered` signale que la requête porte des filtres de périmètre :
+        si ALORS la page rendue n'a AUCUNE carte parsée (aucune depuis le début
+        de la requête), c'est suspect — page « 0 résultat » légitime d'un petit
+        périmètre, ou HTML inattendu après une redirection / un changement du
+        site : impossible de trancher sans voir la page. On alerte bruyamment
+        plutôt que de présenter un succès vide comme une vérité ; à l'inverse,
+        une page vide APRÈS en avoir rendu est une fin légitime de pagination
+        et reste silencieuse.
         """
         listings: list[Listing] = []
         pages_lues = 0
@@ -753,6 +868,17 @@ class LaforetParser(BaseParser):
                     listings.append(listing)
 
             if not nouvelles:
+                # Suspect UNIQUEMENT si rien n'a été parsé depuis le début de
+                # la requête : une page vide après du contenu, c'est une fin
+                # légitime de pagination — le balisage, lui, est bien compris.
+                if not cards and not vues_ici and scope_filtered:
+                    logger.warning(
+                        f"[Laforet] {label} : page {page} en HTTP 200 mais aucune "
+                        "carte parsée — soit ce périmètre n'a vraiment aucun bien, "
+                        "soit la page n'est pas celle attendue (redirection, "
+                        "changement du site). À vérifier avant de conclure à un "
+                        "périmètre vide."
+                    )
                 break
         else:
             logger.warning(
@@ -768,7 +894,7 @@ class LaforetParser(BaseParser):
         be resolved to an INSEE code (or when the merged request failed)."""
         base_search_url = self._base_path(criteria, location)
         if not base_search_url:
-            raise ValueError(f"aucune ville pour ancrer l'URL ({_describe(location)})")
+            raise ValueError(f"aucune page pour ancrer l'URL ({_describe(location)})")
 
         def fetch(page: int) -> str:
             sep = "&" if "?" in base_search_url else "?"
