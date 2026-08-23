@@ -1,0 +1,89 @@
+{#
+  Onglet DASHBOARD du panel admin.
+
+  Chaque partial d'onglet est enveloppé dans #admin-content : c'est la cible
+  HTMX commune (navigation, actions POST, polling) — le serveur renvoie ce
+  fragment en réponse aux requêtes HX, et le même gabarit sert au rendu inline
+  de la page complète. Sans JS, l'inclusion dans admin.html suffit.
+#}
+
+<div id="admin-content">
+    {% include "admin/_stats_zone.html" %}
+
+    <!-- Settings -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h2>⚙️ Paramètres de scraping</h2>
+        <div class="detail-grid">
+        </div>
+    </div>
+
+    {% include "admin/_charts.html" %}
+
+    <!-- Top Users + Top Searches -->
+    <div class="detail-grid">
+        <div class="detail-card">
+            <h3>🏆 Top Utilisateurs</h3>
+            {% if stats.top_users %}
+            {% for u in stats.top_users %}
+            <div class="detail-row">
+                <span class="detail-label">{{ u.username }}</span>
+                <span class="detail-value">{{ u.listing_count }} annonces</span>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p class="text-muted text-sm">Aucune donnée</p>
+            {% endif %}
+        </div>
+        <div class="detail-card">
+            <h3>🔥 Top Recherches</h3>
+            {% if stats.top_searches %}
+            {% for s in stats.top_searches %}
+            <div class="detail-row">
+                <span class="detail-label">{{ s.label }} <span class="text-muted text-sm">({{ s.username }})</span></span>
+                <span class="detail-value">{{ s.listing_count }}</span>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p class="text-muted text-sm">Aucune donnée</p>
+            {% endif %}
+        </div>
+        <div class="detail-card">
+            <h3>📦 Sources</h3>
+            {% if stats.sources_breakdown %}
+            {% for src in stats.sources_breakdown %}
+            <div class="detail-row">
+                <span class="detail-label"><span class="badge badge-source">{{ src.source }}</span></span>
+                <span class="detail-value">{{ src.cnt }} recherches</span>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p class="text-muted text-sm">Aucune donnée</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Quick Actions — pattern action HTMX : data-confirm (modale générique)
+         + hx-post ciblant #admin-content ; sans JS, POST classique avec confirm natif absent. -->
+    <div class="card">
+        <h2>⚡ Actions rapides</h2>
+        <div class="action-bar">
+            <form method="POST" action="{{ url_for('admin.admin_cleanup') }}" class="inline-form"
+                  data-confirm="Supprimer les annonces de plus de 4 jours ?"
+                  hx-post="{{ url_for('admin.admin_cleanup') }}" hx-target="#admin-content" hx-swap="outerHTML">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-primary">🧹 Nettoyer annonces (&gt;4j)</button>
+            </form>
+            {% if stats.orphan_listings > 0 %}
+            <form method="POST" action="{{ url_for('admin.admin_cleanup_orphan') }}" class="inline-form"
+                  data-confirm="Supprimer {{ stats.orphan_listings }} annonce(s) orpheline(s) ?"
+                  hx-post="{{ url_for('admin.admin_cleanup_orphan') }}" hx-target="#admin-content" hx-swap="outerHTML">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger">🗑 Supprimer orphelines ({{ stats.orphan_listings }})</button>
+            </form>
+            {% endif %}
+            <a href="{{ url_for('admin.admin_logs') }}" class="btn btn-ghost"
+               hx-get="{{ url_for('admin.admin_logs') }}" hx-target="#admin-content"
+               hx-swap="outerHTML" hx-push-url="true">📋 Voir les logs</a>
+        </div>
+    </div>
+</div>

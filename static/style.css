@@ -1860,6 +1860,128 @@ Filter Bar
 }
 
 /* ============================================================
+   Admin UX HTMX — toasts flottants, modale, charts (issue #16)
+   ============================================================ */
+
+/* Graphiques Chart.js du dashboard */
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.chart-card h2 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+}
+
+.chart-box {
+    position: relative;
+    height: 240px;
+}
+
+.chart-fallback {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.chart-fallback li {
+    padding: 0.25rem 0;
+}
+
+/* Toasts flottants des réponses HTMX (#admin-toasts) — les flashs classiques
+   restent dans le flux de la page (base.html), ceux-ci survolent l'interface. */
+.admin-toasts {
+    position: fixed;
+    top: 1.25rem;
+    right: 1.25rem;
+    z-index: 1200;
+    width: min(360px, calc(100vw - 2.5rem));
+    pointer-events: none;
+}
+
+.admin-toasts .toast {
+    pointer-events: auto;
+    margin-bottom: 0.75rem;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.toast-warning {
+    background: rgba(255, 159, 10, 0.15);
+    border-color: rgba(255, 159, 10, 0.3);
+    color: var(--orange, #ff9f0a);
+}
+
+.toast.toast-out {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+    transition:
+        opacity 0.3s ease,
+        transform 0.3s ease;
+}
+
+/* Modale de confirmation générique (data-confirm) */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.modal-backdrop[hidden] {
+    display: none;
+}
+
+.modal-card {
+    width: min(420px, 100%);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow:
+        0 24px 64px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 var(--glass-highlight);
+    animation: slideIn 0.25s ease;
+}
+
+.modal-card h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+}
+
+.modal-card p {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin-bottom: 1.25rem;
+    word-break: break-word;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.modal-actions .btn:focus-visible,
+.admin-toasts .toast-close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ============================================================
    Log Viewer
    ============================================================ */
 

@@ -1,0 +1,185 @@
+{# Onglet ANNONCES : liste ou fiche détail selon le contexte fourni.
+   Dates labellisées #12 préservées ; suppression typique en HTMX sans rechargement. #}
+
+<div id="admin-content">
+{% if listing_detail %}
+<!-- Listing Detail View -->
+<a href="{{ url_for('admin.admin_listings') }}" class="back-link"
+   hx-get="{{ url_for('admin.admin_listings') }}" hx-target="#admin-content"
+   hx-swap="outerHTML" hx-push-url="true">← Retour aux annonces</a>
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>🏠 Détails de l'annonce</h3>
+        <div class="detail-row">
+            <span class="detail-label">ID</span>
+            <span class="detail-value" style="font-size: 0.75rem;">{{ listing_detail.listing_id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Titre</span>
+            <span class="detail-value">{{ listing_detail.title or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Prix</span>
+            <span class="detail-value">{{ listing_detail.price or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Surface</span>
+            <span class="detail-value">{{ listing_detail.surface or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Pièces</span>
+            <span class="detail-value">{{ listing_detail.rooms or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Localisation</span>
+            <span class="detail-value">{{ listing_detail.location or '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Source</span>
+            <span class="detail-value"><span class="badge badge-source">{{ listing_detail.source or '—' }}</span></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Agence</span>
+            <span class="detail-value">{{ listing_detail.agency or '—' }}</span>
+        </div>
+        {# Issue #12 : la fiche détail distingue publication source et détection scraper. #}
+        {% from "_macros.html" import date_annonce %}
+        {% set publication = listing_detail.creation_date|parse_iso_date %}
+        {% if publication %}
+        <div class="detail-row">
+            <span class="detail-label">Publiée le</span>
+            <span class="detail-value">{{ (publication|fr_time).strftime('%d/%m/%Y') }}</span>
+        </div>
+        {% endif %}
+        <div class="detail-row">
+            <span class="detail-label">Détectée le</span>
+            <span class="detail-value">{{ (listing_detail.first_seen|fr_time).strftime('%d/%m/%Y %H:%M') if listing_detail.first_seen else '—' }}</span>
+        </div>
+    </div>
+    <div class="detail-card">
+        <h3>🔗 Recherches liées ({{ listing_detail.linked_searches|length }})</h3>
+        {% if listing_detail.linked_searches %}
+        {% for ls in listing_detail.linked_searches %}
+        <div class="detail-row">
+            <span class="detail-label">{{ ls.label }} <span class="text-muted text-sm">({{ ls.username }})</span></span>
+            <span class="detail-value"><span class="badge badge-source">{{ ls.source }}</span></span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <span class="badge badge-warning">Orpheline — aucune recherche liée</span>
+        {% endif %}
+    </div>
+</div>
+
+{% if listing_detail.url %}
+<div class="card">
+    <h2>🔗 URL originale</h2>
+    <a href="{{ listing_detail.url }}" target="_blank" class="btn btn-primary">Voir l'annonce ↗</a>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('admin.admin_delete_listing', listing_id=listing_detail.listing_id) }}" class="inline-form"
+          data-confirm="Supprimer cette annonce ?"
+          hx-post="{{ url_for('admin.admin_delete_listing', listing_id=listing_detail.listing_id) }}"
+          hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger">🗑 Supprimer cette annonce</button>
+    </form>
+</div>
+
+{% else %}
+<!-- Listings List View -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">🏠 Annonces ({{ total }})</h2>
+        <form method="GET" action="{{ url_for('admin.admin_listings') }}"
+              hx-get="{{ url_for('admin.admin_listings') }}" hx-target="#admin-content"
+              hx-swap="outerHTML" hx-push-url="true"
+              style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <input type="text" name="source" placeholder="Source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+            {% if search_term or source_filter %}
+            <a href="{{ url_for('admin.admin_listings') }}" class="btn btn-sm btn-ghost">Reset</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% if orphan_count > 0 %}
+    <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <span class="badge badge-warning">📭 {{ orphan_count }} annonce(s) orpheline(s)</span>
+        <form method="POST" action="{{ url_for('admin.admin_cleanup_orphan') }}" class="inline-form"
+              data-confirm="Supprimer {{ orphan_count }} annonce(s) orpheline(s) ?"
+              hx-post="{{ url_for('admin.admin_cleanup_orphan') }}" hx-target="#admin-content" hx-swap="outerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-danger">Nettoyer orphelines</button>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Titre</th>
+                    <th>Prix</th>
+                    <th>Surface</th>
+                    <th>Localisation</th>
+                    <th>Source</th>
+                    <th>Liée à</th>
+                    <th>Publiée / Détectée le</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for li in listings %}
+                <tr id="annonce-{{ li.listing_id }}">
+                    <td><strong>{{ li.title[:50] if li.title else '—' }}</strong></td>
+                    <td>{{ li.price or '—' }}</td>
+                    <td>{{ li.surface or '—' }}</td>
+                    <td>{{ li.location or '—' }}</td>
+                    <td><span class="badge badge-source">{{ li.source or '—' }}</span></td>
+                    <td>{{ li.linked_searches }} recherche(s)</td>
+                    {# Issue #12 : l.* porte creation_date → label explicite par ligne. #}
+                    {% from "_macros.html" import date_annonce %}
+                    <td class="text-muted">{{ date_annonce(li.creation_date, li.first_seen) }}</td>
+                    <td>
+                        <a href="{{ url_for('admin.admin_listing_detail', listing_id=li.listing_id) }}" class="btn btn-sm btn-ghost"
+                           hx-get="{{ url_for('admin.admin_listing_detail', listing_id=li.listing_id) }}" hx-target="#admin-content"
+                           hx-swap="outerHTML" hx-push-url="true">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_delete_listing', listing_id=li.listing_id) }}" class="inline-form"
+                              data-confirm="Supprimer cette annonce ?"
+                              hx-post="{{ url_for('admin.admin_delete_listing', listing_id=li.listing_id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not listings %}
+                <tr><td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">Aucune annonce trouvée</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('admin.admin_listings', page=page-1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_listings', page=page-1, search=search_term, source=source_filter) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">← Précédent</a>
+        {% endif %}
+        <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('admin.admin_listings', page=page+1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_listings', page=page+1, search=search_term, source=source_filter) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">Suivant →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+</div>

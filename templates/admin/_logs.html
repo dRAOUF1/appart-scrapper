@@ -1,0 +1,91 @@
+{# Onglet LOGS : journal d'audit admin avec filtres et pagination. #}
+
+<div id="admin-content">
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">📋 Logs d'activité ({{ total_logs }})</h2>
+        <form method="POST" action="{{ url_for('admin.admin_purge_logs') }}" class="inline-form"
+              data-confirm="Supprimer les logs de plus de X jours ?"
+              hx-post="{{ url_for('admin.admin_purge_logs') }}" hx-target="#admin-content" hx-swap="outerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="number" name="days" value="30" min="1" max="365" style="width: 70px; padding: 0.3rem 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.8rem;">
+            <button type="submit" class="btn btn-sm btn-danger">Purger anciens logs</button>
+        </form>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" action="{{ url_for('admin.admin_logs') }}"
+          hx-get="{{ url_for('admin.admin_logs') }}" hx-target="#admin-content"
+          hx-swap="outerHTML" hx-push-url="true"
+          style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <select name="action" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <option value="">Toutes les actions</option>
+            <option value="user_deleted" {% if action_filter == 'user_deleted' %}selected{% endif %}>user_deleted</option>
+            <option value="user_created" {% if action_filter == 'user_created' %}selected{% endif %}>user_created</option>
+            <option value="search_deleted" {% if action_filter == 'search_deleted' %}selected{% endif %}>search_deleted</option>
+            <option value="listing_deleted" {% if action_filter == 'listing_deleted' %}selected{% endif %}>listing_deleted</option>
+            <option value="orphan_cleanup" {% if action_filter == 'orphan_cleanup' %}selected{% endif %}>orphan_cleanup</option>
+            <option value="cleanup_executed" {% if action_filter == 'cleanup_executed' %}selected{% endif %}>cleanup_executed</option>
+            <option value="db_query" {% if action_filter == 'db_query' %}selected{% endif %}>db_query</option>
+            <option value="table_truncated" {% if action_filter == 'table_truncated' %}selected{% endif %}>table_truncated</option>
+        </select>
+        <input type="date" name="date_from" value="{{ date_from }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="date" name="date_to" value="{{ date_to }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+        {% if action_filter or date_from or date_to %}
+        <a href="{{ url_for('admin.admin_logs') }}" class="btn btn-sm btn-ghost">Reset</a>
+        {% endif %}
+    </form>
+
+    {% if logs %}
+    {% for log in logs %}
+    <div class="log-entry">
+        <span class="log-icon">
+            {% if 'delete' in log.action %}🗑
+            {% elif 'create' in log.action %}➕
+            {% elif 'reset' in log.action %}🔄
+            {% elif 'cleanup' in log.action or 'purge' in log.action %}🧹
+            {% elif 'query' in log.action %}💻
+            {% elif 'truncate' in log.action %}⚠️
+            {% else %}📝
+            {% endif %}
+        </span>
+        <div class="log-content">
+            <div class="log-action"><span class="badge">{{ log.action }}</span></div>
+            {% if log.details %}
+            <div class="log-details">{{ log.details[:150] }}{% if log.details|length > 150 %}…{% endif %}</div>
+            {% endif %}
+        </div>
+        <div class="log-meta">
+            {% if log.performed_by %}
+            <div>par <strong>{{ log.performed_by }}</strong></div>
+            {% endif %}
+            <div>{{ (log.created_at|fr_time).strftime('%d/%m/%Y %H:%M') if log.created_at else '—' }}</div>
+        </div>
+    </div>
+    {% endfor %}
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('admin.admin_logs', page=page-1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_logs', page=page-1, action=action_filter, date_from=date_from, date_to=date_to) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">← Précédent</a>
+        {% endif %}
+        <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('admin.admin_logs', page=page+1, action=action_filter, date_from=date_from, date_to=date_to) }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_logs', page=page+1, action=action_filter, date_from=date_from, date_to=date_to) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">Suivant →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>Aucun log</h3>
+        <p>Les actions admin apparaîtront ici.</p>
+    </div>
+    {% endif %}
+</div>
+</div>

@@ -1,0 +1,193 @@
+{# Onglet BASE DE DONNÉES : vue d'ensemble, tables, détail de table,
+   connexions actives, éditeur SQL. #}
+
+<div id="admin-content">
+<!-- DB Overview -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">💾</div>
+        <div class="stat-value" style="font-size: 1.5rem;">{{ db_stats.db_size }}</div>
+        <div class="stat-label">Taille totale DB</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📋</div>
+        <div class="stat-value">{{ db_stats.tables|length }}</div>
+        <div class="stat-label">Tables</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔗</div>
+        <div class="stat-value">{{ db_stats.indexes|length }}</div>
+        <div class="stat-label">Index</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🔌</div>
+        <div class="stat-value">{{ connections|length + 1 }}</div>
+        <div class="stat-label">Connexions actives</div>
+    </div>
+</div>
+
+<!-- Tables -->
+<div class="card">
+    <h2>📋 Tables</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Table</th>
+                    <th>Lignes</th>
+                    <th>Taille données</th>
+                    <th>Taille totale</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in db_stats.tables %}
+                <tr>
+                    <td><strong>{{ t.table_name }}</strong></td>
+                    <td>{{ "{:,}".format(t.row_count) }}</td>
+                    <td>{{ t.data_size }}</td>
+                    <td>{{ t.total_size }}</td>
+                    <td>
+                        <a href="{{ url_for('admin.admin_table_detail', table_name=t.table_name) }}" class="btn btn-sm btn-ghost"
+                           hx-get="{{ url_for('admin.admin_table_detail', table_name=t.table_name) }}" hx-target="#admin-content"
+                           hx-swap="outerHTML" hx-push-url="true">Détails</a>
+                        <form method="POST" action="{{ url_for('admin.admin_truncate_table') }}" class="inline-form"
+                              data-confirm="Vider la table « {{ t.table_name }} » ? Cette action est irréversible."
+                              hx-post="{{ url_for('admin.admin_truncate_table') }}" hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="table_name" value="{{ t.table_name }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Vider</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Table Detail -->
+{% if table_details %}
+<div class="card">
+    <h2>📐 Détails de la table « {{ table_name }} »</h2>
+    <div class="detail-grid">
+        <div class="detail-card">
+            <h3>Colonnes ({{ table_details.columns|length }})</h3>
+            <div class="table-wrapper">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>Nom</th><th>Type</th><th>Nullable</th><th>Défaut</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for c in table_details.columns %}
+                        <tr>
+                            <td><strong>{{ c.column_name }}</strong></td>
+                            <td><code>{{ c.data_type }}</code></td>
+                            <td>{{ 'Oui' if c.is_nullable == 'YES' else 'Non' }}</td>
+                            <td class="text-muted">{{ c.column_default or '—' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="detail-card">
+            <h3>Index ({{ table_details.indexes|length }})</h3>
+            {% for idx in table_details.indexes %}
+            <div style="margin-bottom: 0.5rem;">
+                <code class="text-sm">{{ idx.indexname }}</code>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="detail-card">
+            <h3>Contraintes ({{ table_details.constraints|length }})</h3>
+            {% for c in table_details.constraints %}
+            <div style="margin-bottom: 0.5rem;">
+                <strong>{{ c.constraint_name }}</strong> <span class="badge">{{ c.constraint_type }}</span>
+                <div class="text-muted text-sm">{{ c.definition }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="detail-row" style="margin-top: 1rem;">
+        <span class="detail-label">Taille totale</span>
+        <span class="detail-value">{{ table_details.total_size }}</span>
+    </div>
+</div>
+{% endif %}
+
+<!-- Active Connections -->
+{% if connections %}
+<div class="card">
+    <h2>🔌 Connexions actives ({{ connections|length }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>PID</th>
+                    <th>Utilisateur</th>
+                    <th>Application</th>
+                    <th>Client</th>
+                    <th>État</th>
+                    <th>Depuis</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in connections %}
+                <tr>
+                    <td>{{ c.pid }}</td>
+                    <td>{{ c.usename }}</td>
+                    <td>{{ c.application_name or '—' }}</td>
+                    <td>{{ c.client_addr or '—' }}</td>
+                    <td><span class="badge">{{ c.state }}</span></td>
+                    <td class="text-muted">{{ (c.backend_start|fr_time).strftime('%H:%M:%S') if c.backend_start else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- SQL Query Editor -->
+<div class="card">
+    <h2>💻 Exécuter une requête SQL</h2>
+    <p class="text-muted text-sm" style="margin-bottom: 1rem;">Attention : toutes les requêtes sont autorisées (INSERT, UPDATE, DELETE, DROP...). Soyez prudent.</p>
+    <form method="POST" action="{{ url_for('admin.admin_execute_query') }}"
+          hx-post="{{ url_for('admin.admin_execute_query') }}" hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="query-editor">
+            <textarea name="sql" placeholder="SELECT * FROM users LIMIT 10;">{% if query_sql %}{{ query_sql }}{% endif %}</textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">▶ Exécuter</button>
+    </form>
+
+    {% if query_result is defined %}
+    <div class="query-result">
+        <p class="text-muted text-sm" style="margin-bottom: 0.5rem;">{{ query_row_count }} ligne(s) retournée(s)</p>
+        {% if query_result %}
+        <table>
+            <thead>
+                <tr>
+                    {% for key in query_result[0].keys() %}
+                    <th>{{ key }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in query_result %}
+                <tr>
+                    {% for val in row.values() %}
+                    <td>{{ val }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">Aucun résultat</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+</div>
