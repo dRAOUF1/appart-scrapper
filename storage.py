@@ -19,6 +19,7 @@ from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.listing_repo import ListingRepository
+from repositories.orpi_geo_repo import OrpiGeoRepository
 from repositories.pap_geo_repo import PapGeoRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
@@ -42,6 +43,7 @@ class Storage:
         self.bienici_geo = BienIciGeoRepository(database_url)
         self.century21_geo = Century21GeoRepository(database_url)
         self.pap_geo = PapGeoRepository(database_url)
+        self.orpi_geo = OrpiGeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -263,6 +265,18 @@ class Storage:
                     CREATE TABLE IF NOT EXISTS pap_geo_ids (
                         area_key    TEXT PRIMARY KEY,
                         geo_id      TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Même clé de périmètre (`area_key`) que les caches SeLoger,
+                # bienici, century21 et pap — voir services.orpi_geocode.
+                # area_cache_key. `slug_id` est le slug d'URL Orpi renvoyé par
+                # son autocomplete (`rosny-sous-bois`, `gironde`), une valeur
+                # unique comme le slug_id de Century 21.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS orpi_geo_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        slug_id     TEXT,
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)

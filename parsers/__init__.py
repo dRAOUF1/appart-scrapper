@@ -21,6 +21,7 @@ from parsers.base import BaseParser, ParserRegistry
 from parsers.bienici import BienIciParser
 from parsers.century21 import Century21Parser
 from parsers.laforet import LaforetParser
+from parsers.orpi import OrpiParser
 from parsers.pap import PapParser
 from parsers.seloger import SeLogerParser
 
@@ -61,4 +62,5 @@ def list_sources() -> list[dict]:
 __all__ = [
     "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
     "SeLogerParser", "LaforetParser", "BienIciParser", "Century21Parser", "PapParser",
+    "OrpiParser",
 ]

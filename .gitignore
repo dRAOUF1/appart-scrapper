@@ -18,3 +18,17 @@ graphify-out/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# Config locale des agents et outils (jamais dans le dépôt).
+.agents/
+.claude/
+.codex/
+.mcp.json
+.openpackage/
+.playwright-mcp/
+AGENTS.md
+CLAUDE.md
+docs/
+
+# Cache de proxies (données d'exécution locales).
+proxy_cache.json
