@@ -17,7 +17,12 @@ from datetime import datetime
 import pytest
 
 from tests.functional.conftest import make_dashboard_data
-from tests.helpers.factories import make_listing_row, make_search_row, make_user_row
+from tests.helpers.factories import (
+    make_criteria,
+    make_listing_row,
+    make_search_row,
+    make_user_row,
+)
 
 EMPTY_ZIP = b"PK\x05\x06" + b"\x00" * 18
 
@@ -275,6 +280,35 @@ class TestSearchesPage:
         assert resp.status_code == 200
         storage.searches.create_search.assert_not_called()
 
+    def test_a_creation_without_any_location_gets_a_dedicated_message(self, web_client, storage):
+        """#24 : « aucune localisation renseignée » dit exactement le problème,
+        au lieu d'un refus par source (« ville + code postal requis ») qui
+        laisse croire à un bug de l'app."""
+        resp = web_client.post("/searches", data={
+            "label": "Sans lieu", "ntfy_topic": "t", "sources": "seloger",
+            # Aucune ligne de localisation.
+        }, follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert "Aucune localisation renseignée".encode() in resp.data
+        storage.searches.create_search.assert_not_called()
+
+    def test_a_hand_typed_location_without_suggestion_blocks_the_creation(self, web_client, storage):
+        """À la création, rien n'est stocké à réutiliser : un texte libre sans
+        code postal est refusé avec LE message qui dit de choisir dans les
+        suggestions — jamais abandonné en silence."""
+        resp = web_client.post("/searches", data={
+            "label": "X", "ntfy_topic": "t", "sources": "seloger",
+            "location_city": "Lyon toute la ville",
+        }, follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert (
+            "Localisation « Lyon toute la ville » saisie à la main non exploitable"
+            " — choisissez-la dans les suggestions"
+        ).encode() in resp.data
+        storage.searches.create_search.assert_not_called()
+
     def test_manual_overrides_are_remembered_after_creation(self, web_client, storage):
         """Le Place ID SeLoger saisi à la main est mémorisé en cache pour ne pas
         avoir à le redemander au prochain scrape."""
@@ -498,6 +532,99 @@ class TestEditSearch:
         })
 
         assert storage.searches.update_search.call_args.kwargs["sources"] == ["laforet"]
+
+
+# ---------------------------------------------------------------------------
+# Édition des localisations — le scénario de l'issue #24
+# ---------------------------------------------------------------------------
+
+WHOLE_CITY_STORED = {
+    "kind": "whole_city",
+    "city": "Lyon",
+    "postalCodes": ["69001", "69002", "69003"],
+    "inseeCode": "69381",
+}
+WHOLE_CITY_LABEL = "Lyon — toute la ville (3 codes postaux)"
+
+
+@pytest.fixture
+def owned_wide_search(storage, user):
+    """Recherche avec un périmètre large (ville entière), comme dans l'issue :
+    le genre de localisation qu'aucun repli « commune + code postal » ne sait
+    reconstruire."""
+    row = make_search_row(
+        id=1, user_id=user["id"], label="Lyon",
+        criteria=make_criteria(locations=[dict(WHOLE_CITY_STORED)]),
+    )
+    storage.searches.get_search.return_value = row
+    return row
+
+
+class TestEditSearchLocations:
+    def test_a_cosmetic_edit_keeps_the_location_intact(self, web_client, storage, user, owned_wide_search):
+        """Le scénario exact de l'issue : retoucher le champ sans re-choisir la
+        suggestion. Le payload caché arrive intact (comportement JS corrigé) ->
+        enregistrement OK et périmètre inchangé, inseeCode compris."""
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Lyon renommé",
+            "ntfy_topic": "lyon-topic",
+            "sources": "seloger",
+            "location_city": WHOLE_CITY_LABEL,
+            "location_payload": json.dumps({**WHOLE_CITY_STORED, "label": WHOLE_CITY_LABEL}),
+        }, follow_redirects=True)
+
+        assert resp.status_code == 200
+        criteria = storage.searches.update_search.call_args.kwargs["criteria"]
+        assert criteria["locations"] == [WHOLE_CITY_STORED]
+
+    def test_an_emptied_payload_with_the_stored_label_reuses_it(
+        self, web_client, storage, user, owned_wide_search,
+    ):
+        """Filet serveur #24 : le champ caché revient vide (JS désactivé,
+        cache obsolète, POST forgé) mais le texte est LE libellé de la
+        localisation enregistrée -> on réutilise celle-ci plutôt que d'abandonner
+        le périmètre."""
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Lyon",
+            "ntfy_topic": "lyon-topic",
+            "sources": "seloger",
+            "location_city": WHOLE_CITY_LABEL,
+            "location_payload": "",
+        }, follow_redirects=True)
+
+        assert resp.status_code == 200
+        criteria = storage.searches.update_search.call_args.kwargs["criteria"]
+        assert criteria["locations"] == [WHOLE_CITY_STORED]
+        assert criteria["locations"][0]["inseeCode"] == "69381"
+
+    def test_a_hand_typed_text_without_suggestion_gets_a_distinct_french_error(
+        self, web_client, storage, owned_wide_search,
+    ):
+        """Un texte qui ne correspond à rien de stocké ni à aucun payload est
+        refusé avec un message dédié — pas le « ville + code postal requis »
+        par source qui faisait croire à un bug (#24)."""
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Lyon",
+            "ntfy_topic": "lyon-topic",
+            "sources": "seloger",
+            "location_city": "Lyon retapé à la main",
+            "location_payload": "",
+        }, follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert (
+            "Localisation « Lyon retapé à la main » saisie à la main non exploitable"
+            " — choisissez-la dans les suggestions"
+        ).encode() in resp.data
+        storage.searches.update_search.assert_not_called()
+
+    def test_an_edit_without_any_location_is_refused_plainly(self, web_client, storage, owned_wide_search):
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Lyon", "ntfy_topic": "lyon-topic", "sources": "seloger",
+        })
+
+        assert resp.status_code == 200
+        storage.searches.update_search.assert_not_called()
 
 
 class TestScrapeFromWeb:

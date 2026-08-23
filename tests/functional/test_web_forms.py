@@ -20,7 +20,10 @@ from werkzeug.datastructures import MultiDict
 
 from routes.web import (
     _form_list,
+    _location_error_message,
     _location_from_free_text,
+    _matching_stored_location,
+    _normalize_label_spacing,
     _parse_listing_filters,
     _parse_locations_from_form,
     _parse_search_criteria_from_form,
@@ -162,27 +165,31 @@ class TestParseLocationsFromForm:
     def test_a_payload_is_taken_as_a_canonical_location(self):
         """L'autocomplete écrit dans le champ caché une entrée déjà au format
         canonique : elle est reprise telle quelle, sans réinterprétation."""
-        form = _form([json.dumps(PARIS_PAYLOAD)], ["Paris 13e (75013)"])
+        locations, failures = _parse_locations_from_form(_form([json.dumps(PARIS_PAYLOAD)], ["Paris 13e (75013)"]))
 
-        assert _parse_locations_from_form(form) == [
+        assert locations == [
             {"kind": "city", "city": "Paris", "postalCode": "75013", "inseeCode": "75113"}
         ]
+        assert failures == []
 
     def test_the_display_label_is_dropped(self):
         """`label` n'est qu'un texte d'affichage. La normalisation l'écarterait
         de toute façon, mais autant ne pas le transporter jusque-là."""
         form = _form([json.dumps(REGION_PAYLOAD)], ["Nouvelle-Aquitaine (région)"])
+        locations, failures = _parse_locations_from_form(form)
 
-        assert _parse_locations_from_form(form) == [
+        assert locations == [
             {"kind": "region", "code": "75", "name": "Nouvelle-Aquitaine", "departments": ["33", "40"]}
         ]
+        assert failures == []
 
     def test_a_line_without_payload_falls_back_to_the_typed_text(self):
-        form = _form([""], ["Poitiers 86000"])
+        locations, failures = _parse_locations_from_form(_form([""], ["Poitiers 86000"]))
 
-        assert _parse_locations_from_form(form) == [
+        assert locations == [
             {"kind": "city", "city": "Poitiers", "postalCode": "86000"}
         ]
+        assert failures == []
 
     @pytest.mark.parametrize(
         "payload",
@@ -197,16 +204,22 @@ class TestParseLocationsFromForm:
         """Le payload vient du JavaScript : s'il est corrompu, la saisie visible
         de l'utilisateur reste la source de vérité, plutôt que de perdre la
         ligne."""
-        form = _form([payload], ["Poitiers 86000"])
+        locations, failures = _parse_locations_from_form(_form([payload], ["Poitiers 86000"]))
 
-        assert _parse_locations_from_form(form) == [
+        assert locations == [
             {"kind": "city", "city": "Poitiers", "postalCode": "86000"}
         ]
+        assert failures == []
 
     def test_a_line_with_neither_payload_nor_usable_text_is_dropped(self):
         form = _form(["", ""], ["", "Poitiers"])
 
-        assert _parse_locations_from_form(form) == []
+        locations, failures = _parse_locations_from_form(form)
+
+        assert locations == []
+        # « Poitiers » sans code postal ni correspondance stockée est remonté
+        # comme non exploitable : jamais abandonné en silence (#24).
+        assert failures == ["Poitiers"]
 
     def test_several_lines_keep_their_order(self):
         form = _form(
@@ -214,7 +227,9 @@ class TestParseLocationsFromForm:
             ["Paris 13e (75013)", "Poitiers 86000", "Nouvelle-Aquitaine (région)"],
         )
 
-        assert [loc.get("city") or loc.get("name") for loc in _parse_locations_from_form(form)] == [
+        locations, _ = _parse_locations_from_form(form)
+
+        assert [loc.get("city") or loc.get("name") for loc in locations] == [
             "Paris",
             "Poitiers",
             "Nouvelle-Aquitaine",
@@ -226,15 +241,183 @@ class TestParseLocationsFromForm:
         deux, sinon les dernières lignes disparaîtraient sans un mot."""
         form = _form([json.dumps(PARIS_PAYLOAD)], ["Paris 13e (75013)", "Poitiers 86000"])
 
-        assert len(_parse_locations_from_form(form)) == 2
+        locations, _ = _parse_locations_from_form(form)
+
+        assert len(locations) == 2
 
     def test_more_payloads_than_typed_lines_are_all_read(self):
         form = _form([json.dumps(PARIS_PAYLOAD), json.dumps(REGION_PAYLOAD)], ["Paris 13e (75013)"])
 
-        assert len(_parse_locations_from_form(form)) == 2
+        locations, _ = _parse_locations_from_form(form)
+
+        assert len(locations) == 2
 
     def test_an_empty_form_yields_no_location(self):
-        assert _parse_locations_from_form(MultiDict()) == []
+        assert _parse_locations_from_form(MultiDict()) == ([], [])
+
+
+# ---------------------------------------------------------------------------
+# Réutilisation d'une localisation stockée — le filet serveur de l'issue #24
+# ---------------------------------------------------------------------------
+
+STORED_LOCATIONS = [
+    {"kind": "region", "code": "11", "name": "Île-de-France"},
+    {
+        "kind": "whole_city",
+        "city": "Lyon",
+        "postalCodes": ["69001", "69002", "69003"],
+        "inseeCode": "69381",
+    },
+]
+
+
+class TestMatchingStoredLocation:
+    def test_a_label_of_a_stored_location_is_matched_exactly(self):
+        stored = _matching_stored_location("Lyon — toute la ville (3 codes postaux)", STORED_LOCATIONS)
+
+        assert stored == STORED_LOCATIONS[1]
+        assert stored["inseeCode"] == "69381"
+
+    @pytest.mark.parametrize(
+        ("text", "name"),
+        [
+            pytest.param("  Île-de-France   (région)  ", "Île-de-France", id="espaces-superflus"),
+            pytest.param("Île-de-France\n(région)", "Île-de-France", id="retour-a-la-ligne"),
+        ],
+    )
+    def test_superfluous_spacing_does_not_break_the_match(self, text, name):
+        """Un copier-coller peut apporter des espaces ou retours superflus :
+        la comparaison les ignore, mais rien d'autre."""
+        matched = _matching_stored_location(text, [{"kind": "region", "code": "11", "name": name}])
+
+        assert matched is not None
+
+    def test_a_different_text_matches_nothing(self):
+        assert _matching_stored_location("Lyon modifié", STORED_LOCATIONS) is None
+
+    def test_nothing_is_matched_without_stored_locations(self):
+        """À la création, il n'y a rien à réutiliser : la fonction doit le
+        dire sans lever."""
+        assert _matching_stored_location("Lyon — toute la ville (3 codes postaux)", None) is None
+        assert _matching_stored_location("Lyon — toute la ville (3 codes postaux)", []) is None
+
+    def test_the_returned_location_is_a_copy(self):
+        """La recherche existante ne doit pas partager ses dicts avec les
+        nouveaux critères : une mutation en aval ne la toucherait pas."""
+        matched = _matching_stored_location("Lyon — toute la ville (3 codes postaux)", STORED_LOCATIONS)
+        matched["inseeCode"] = "MODIFIÉ"
+
+        assert STORED_LOCATIONS[1]["inseeCode"] == "69381"
+
+
+class TestNormalizeLabelSpacing:
+    @pytest.mark.parametrize(
+        ("text", "normalized"),
+        [
+            pytest.param("Poitiers 86000", "Poitiers 86000", id="deja-propre"),
+            pytest.param("  Poitiers   86000  ", "Poitiers 86000", id="espaces-collapses"),
+            pytest.param("Poitiers\n\t86000", "Poitiers 86000", id="blancs-variés"),
+        ],
+    )
+    def test_spacing_is_collapsed_and_nothing_else(self, text, normalized):
+        assert _normalize_label_spacing(text) == normalized
+
+
+class TestStoredLocationFallbackInForm:
+    """Le filet serveur #24 : un champ retouché cosmétiquement revient sans
+    payload mais avec le libellé d'une localisation déjà enregistrée — on
+    réutilise celle-ci au lieu de perdre le périmètre."""
+
+    def test_an_emptied_payload_with_the_stored_label_reuses_it(self):
+        form = _form([""], ["Lyon — toute la ville (3 codes postaux)"])
+
+        locations, failures = _parse_locations_from_form(form, STORED_LOCATIONS)
+
+        assert locations == [STORED_LOCATIONS[1]]
+        assert failures == []
+
+    def test_the_reused_location_keeps_its_insee_code(self):
+        form = _form([""], ["Lyon — toute la ville (3 codes postaux)"])
+
+        locations, _ = _parse_locations_from_form(form, STORED_LOCATIONS)
+
+        assert locations[0]["inseeCode"] == "69381"
+
+    def test_several_lines_mixing_payloads_and_reuse_keep_their_order(self):
+        form = _form(
+            [json.dumps(PARIS_PAYLOAD), "", ""],
+            ["Paris 13e (75013)", "Île-de-France (région)", "Lyon — toute la ville (3 codes postaux)"],
+        )
+
+        locations, failures = _parse_locations_from_form(form, STORED_LOCATIONS)
+
+        assert locations == [
+            {"kind": "city", "city": "Paris", "postalCode": "75013", "inseeCode": "75113"},
+            STORED_LOCATIONS[0],
+            STORED_LOCATIONS[1],
+        ]
+        assert failures == []
+
+    def test_a_text_that_matches_nothing_still_reports_a_failure_in_edition(self):
+        form = _form([""], ["Lyon modifié à la main"])
+
+        locations, failures = _parse_locations_from_form(form, STORED_LOCATIONS)
+
+        assert locations == []
+        assert failures == ["Lyon modifié à la main"]
+
+    def test_creation_never_reuses_anything(self):
+        """Sans localisations stockées (création), le texte identique à un
+        libellé ne doit pas deviner un périmètre : repli habituel, échec
+        signalé."""
+        form = _form([""], ["Lyon — toute la ville (3 codes postaux)"])
+
+        locations, failures = _parse_locations_from_form(form, None)
+
+        assert locations == []
+        assert failures == ["Lyon — toute la ville (3 codes postaux)"]
+
+    def test_a_valid_payload_wins_over_the_stored_match(self):
+        """Le payload de l'autocomplete reste la source de vérité : la
+        réutilisation n'est qu'un filet pour les lignes qui en sont dépourvues.
+        Ici le texte a changé (« Paris » -> « Lyon ») MAIS le payload est
+        resté celui de Paris... et il gagne : c'est exactement ce qu'on veut,
+        le JS n'ayant pas encore eu le temps de le vider."""
+        lyon_payload = json.dumps({
+            "kind": "whole_city", "city": "Lyon",
+            "postalCodes": ["69001"], "inseeCode": "69381",
+            "label": "Lyon — toute la ville (1 code postal)",
+        })
+        form = _form([lyon_payload], ["Paris 13e (75013)"])
+
+        locations, failures = _parse_locations_from_form(form, [
+            {"kind": "city", "city": "Paris", "postalCode": "75013", "inseeCode": "75113"},
+        ])
+
+        assert locations == [{"kind": "whole_city", "city": "Lyon", "postalCodes": ["69001"], "inseeCode": "69381"}]
+        assert failures == []
+
+    def test_a_stored_match_wins_over_the_free_text_fallback(self):
+        """« Poitiers (86000) » se laisse décomposer en commune + code postal,
+        mais si c'est le libellé d'une localisation déjà stockée, celle-ci porte
+        en plus son inseeCode : la version la plus riche doit gagner."""
+        stored = [{"kind": "city", "city": "Poitiers", "postalCode": "86000", "inseeCode": "86194"}]
+        form = _form([""], ["Poitiers (86000)"])
+
+        locations, failures = _parse_locations_from_form(form, stored)
+
+        assert locations == [stored[0]]
+        assert failures == []
+
+    def test_the_free_text_fallback_survives_when_nothing_is_stored(self):
+        """Le repli « commune + code postal » reste entier à la création ou
+        quand aucun libellé stocké ne correspond."""
+        form = _form([""], ["Poitiers 86000"])
+
+        locations, failures = _parse_locations_from_form(form, STORED_LOCATIONS)
+
+        assert locations == [{"kind": "city", "city": "Poitiers", "postalCode": "86000"}]
+        assert failures == []
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +440,7 @@ class TestParseSearchCriteriaFromForm:
             ("rooms", "3"),
         ])
 
-        criteria = _parse_search_criteria_from_form(form)
+        criteria, failures = _parse_search_criteria_from_form(form)
 
         assert criteria["priceMin"] == 800
         assert criteria["priceMax"] == 1500
@@ -265,32 +448,90 @@ class TestParseSearchCriteriaFromForm:
         assert criteria["rooms"] == [2, 3]
         assert criteria["transaction"] == "rent"
         assert criteria["propertyTypes"] == ["apartment"]
+        assert failures == []
 
     def test_the_transaction_defaults_to_rent(self):
         """Le formulaire a toujours un bouton radio coché, mais un POST forgé
         ou un champ renommé ne doit pas produire une recherche sans
         transaction."""
-        assert _parse_search_criteria_from_form(MultiDict())["transaction"] == "rent"
+        criteria, _ = _parse_search_criteria_from_form(MultiDict())
+
+        assert criteria["transaction"] == "rent"
 
     @pytest.mark.parametrize("field", ["price_min", "price_max", "surface_min", "surface_max"])
     def test_a_blank_numeric_field_is_omitted_not_zeroed(self, field):
         """Un champ vide veut dire « pas de contrainte ». Le transformer en 0
         donnerait « prix maximum 0 € » et zéro résultat."""
-        criteria = _parse_search_criteria_from_form(MultiDict([(field, "   ")]))
+        criteria, _ = _parse_search_criteria_from_form(MultiDict([(field, "   ")]))
 
         assert not any(key.startswith(("price", "surface")) for key in criteria)
 
     def test_an_unparsable_numeric_value_is_dropped_by_normalization(self):
         """« abc » n'est pas un prix : la normalisation l'écarte plutôt que de
         laisser passer une chaîne dans une comparaison numérique."""
-        criteria = _parse_search_criteria_from_form(MultiDict([("price_max", "abc")]))
+        criteria, _ = _parse_search_criteria_from_form(MultiDict([("price_max", "abc")]))
 
         assert "priceMax" not in criteria
 
     def test_locations_are_absent_when_no_line_is_usable(self):
         """La clé n'est pas posée à vide : `locations: []` et l'absence de clé
         ne veulent pas dire la même chose pour les parsers."""
-        assert "locations" not in _parse_search_criteria_from_form(MultiDict())
+        criteria, _ = _parse_search_criteria_from_form(MultiDict())
+
+        assert "locations" not in criteria
+
+    def test_existing_locations_are_passed_to_the_location_parser(self):
+        """L'édition transmet les localisations stockées : un champ revenu sans
+        payload mais avec son libellé exact réutilise le périmètre enregistré
+        (#24)."""
+        form = MultiDict([
+            ("location_payload", ""),
+            ("location_city", "Lyon — toute la ville (3 codes postaux)"),
+        ])
+
+        criteria, failures = _parse_search_criteria_from_form(form, STORED_LOCATIONS)
+
+        assert criteria["locations"] == [STORED_LOCATIONS[1]]
+        assert failures == []
+
+
+# ---------------------------------------------------------------------------
+# _location_error_message — les messages distincts de l'issue #24
+# ---------------------------------------------------------------------------
+
+class TestLocationErrorMessage:
+    def test_a_hand_typed_text_gets_its_own_actionable_message(self):
+        """Le message nomme le texte fautif et dit quoi faire — au lieu d'un
+        « aucune localisation exploitable (ville + code postal requis) » par
+        source, trompeur quand les champs s'affichent remplis."""
+        message = _location_error_message({}, ["Lyon modifié"])
+
+        assert message == (
+            "Localisation « Lyon modifié » saisie à la main non exploitable"
+            " — choisissez-la dans les suggestions"
+        )
+
+    def test_several_hand_typed_texts_are_all_named(self):
+        message = _location_error_message({}, ["Lyon modifié", "Poitiers"])
+
+        assert "Lyon modifié" in message
+        assert "Poitiers" in message
+        assert message.startswith("Localisations ")
+
+    def test_no_location_at_all_is_said_plainly(self):
+        """Ni payload ni texte : la recherche n'a simplement aucune
+        localisation."""
+        assert _location_error_message({"transaction": "rent"}, []) == "Aucune localisation renseignée"
+
+    def test_valid_locations_produce_no_message(self):
+        criteria = {"locations": [{"kind": "city", "city": "Paris", "postalCode": "75013"}]}
+
+        assert _location_error_message(criteria, []) is None
+
+    def test_a_failure_wins_over_the_absence_of_locations(self):
+        """Un texte non exploitable est plus informatif que « aucune
+        localisation renseignée » : il désigne LA ligne fautive."""
+        assert _location_error_message({}, ["texte fautif"]) is not None
 
 
 # ---------------------------------------------------------------------------
