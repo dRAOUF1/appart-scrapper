@@ -34,7 +34,7 @@ from tests.helpers.factories import (
 from tests.helpers.fakes import fake_storage
 
 # Les seules sources réellement enregistrées par parsers/__init__.py.
-REAL_SOURCES = {"seloger", "laforet", "bienici", "century21", "pap", "orpi"}
+REAL_SOURCES = {"seloger", "laforet", "bienici", "century21", "pap", "orpi", "essetpm"}
 
 
 def make_parser_class(source_id: str = "", **attributes) -> type[BaseParser]:
@@ -585,7 +585,7 @@ class TestPackageHelpers:
         assert set(parsers.__all__) == {
             "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
             "SeLogerParser", "LaforetParser", "BienIciParser", "Century21Parser",
-            "PapParser", "OrpiParser",
+            "PapParser", "OrpiParser", "EssetPmParser",
         }
 
 
