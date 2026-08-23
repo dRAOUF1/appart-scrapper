@@ -19,6 +19,7 @@ from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.foncia_geo_repo import FonciaGeoRepository
+from repositories.guyhoquet_geo_repo import GuyHoquetGeoRepository
 from repositories.listing_repo import ListingRepository
 from repositories.orpi_geo_repo import OrpiGeoRepository
 from repositories.pap_geo_repo import PapGeoRepository
@@ -46,6 +47,7 @@ class Storage:
         self.pap_geo = PapGeoRepository(database_url)
         self.orpi_geo = OrpiGeoRepository(database_url)
         self.foncia_geo = FonciaGeoRepository(database_url)
+        self.guyhoquet_geo = GuyHoquetGeoRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -289,6 +291,20 @@ class Storage:
                 # une valeur unique comme le slug_id d'Orpi.
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS foncia_geo_ids (
+                        area_key    TEXT PRIMARY KEY,
+                        slug_id     TEXT,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Même clé de périmètre (`area_key`) que les autres caches
+                # géo — voir services.guyhoquet_geocode.area_cache_key.
+                # `slug_id` est l'identifiant de localisation Guy Hoquet
+                # renvoyé par son autocomplete (`toulouse-31000_c3`,
+                # `lyon-69123_c4`), une valeur unique comme le slug_id de
+                # Century 21. Départements et régions ne sont jamais cachés :
+                # leur slug se dérive du code sans réseau.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS guyhoquet_geo_ids (
                         area_key    TEXT PRIMARY KEY,
                         slug_id     TEXT,
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

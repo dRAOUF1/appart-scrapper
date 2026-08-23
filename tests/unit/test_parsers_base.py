@@ -35,7 +35,7 @@ from tests.helpers.fakes import fake_storage
 
 # Les seules sources réellement enregistrées par parsers/__init__.py.
 REAL_SOURCES = {"seloger", "laforet", "bienici", "century21", "pap", "orpi",
-                "essetpm", "foncia"}
+                "essetpm", "foncia", "guyhoquet"}
 
 
 def make_parser_class(source_id: str = "", **attributes) -> type[BaseParser]:
@@ -226,6 +226,10 @@ class TestListSources:
         assert by_id["century21"]["manual_override_label"]
         assert by_id["century21"]["manual_override_help"]
         assert by_id["laforet"]["manual_override_label"] == ""
+        # Guy Hoquet non plus : sa résolution hybride (dérivation statique
+        # département/région + autocomplete caché pour les villes) suffit.
+        assert by_id["guyhoquet"]["manual_override_label"] == ""
+        assert by_id["guyhoquet"]["manual_override_help"] == ""
 
     def test_only_laforet_and_century21_declare_a_url_note(self):
         """URL_NOTE explique dans l'UI pourquoi le lien montré diffère de la
@@ -237,6 +241,7 @@ class TestListSources:
         assert by_id["century21"]["url_note"]
         assert by_id["seloger"]["url_note"] == ""
         assert by_id["bienici"]["url_note"] == ""
+        assert by_id["guyhoquet"]["url_note"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +592,7 @@ class TestPackageHelpers:
             "BaseParser", "get_parser", "list_sources", "remember_manual_overrides",
             "SeLogerParser", "LaforetParser", "BienIciParser", "Century21Parser",
             "PapParser", "OrpiParser", "EssetPmParser", "FonciaParser",
+            "GuyHoquetParser",
         }
 
 

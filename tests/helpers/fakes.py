@@ -22,6 +22,7 @@ from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.foncia_geo_repo import FonciaGeoRepository
+from repositories.guyhoquet_geo_repo import GuyHoquetGeoRepository
 from repositories.listing_repo import ListingRepository
 from repositories.orpi_geo_repo import OrpiGeoRepository
 from repositories.pap_geo_repo import PapGeoRepository
@@ -43,6 +44,7 @@ _REPOSITORIES = {
     "bienici_geo": BienIciGeoRepository,
     "century21_geo": Century21GeoRepository,
     "foncia_geo": FonciaGeoRepository,
+    "guyhoquet_geo": GuyHoquetGeoRepository,
     "orpi_geo": OrpiGeoRepository,
     "pap_geo": PapGeoRepository,
 }
@@ -83,6 +85,7 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.bienici_geo.get_cached.return_value = None
     storage.century21_geo.get_cached.return_value = None
     storage.foncia_geo.get_cached.return_value = None
+    storage.guyhoquet_geo.get_cached.return_value = None
     storage.orpi_geo.get_cached.return_value = None
     storage.pap_geo.get_cached.return_value = None
 
