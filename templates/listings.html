@@ -206,39 +206,10 @@
 
 {% if listings %}
 <div class="listing-grid" id="listing-grid">
-  {% for li in listings %}
-  <div class="listing-card">
-    {% if li.image_url %}
-    <div class="listing-img" style="background-image: url('{{ li.image_url }}'); background-size: cover; background-position: center; border-radius: var(--radius-sm);"></div>
-    {% else %}
-    <div class="listing-img listing-img-placeholder">🏠</div>
-    {% endif %}
-    <div class="listing-body">
-      <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
-      <div class="listing-title">{{ li.title[:100] if li.title else 'Annonce' }}</div>
-      <div class="listing-details">
-        {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
-        {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
-        {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
-      </div>
-      {% if li.description %}
-      <p class="listing-description">{{ li.description[:200] }}</p>
-      {% endif %}
-      {% if li.agency %}
-      <div class="listing-agency">🏢 {{ li.agency }}</div>
-      {% endif %}
-      <div class="listing-meta">
-        {# Issue #12 : label explicite « Publiée le » / « Détectée le » via la
-        macro partagée — plus de bascule silencieuse entre les deux sémantiques. #}
-        {% from "_macros.html" import date_annonce %}
-        {% if li.creation_date|parse_iso_date or li.found_at %}
-        <span class="text-muted text-sm">{{ date_annonce(li.creation_date, li.found_at) }}</span>
-        {% endif %}
-        <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
+  {# Issue #14 : première tranche rendue par le partial partagé avec
+  l'endpoint fragment /listings/<id>/page — mêmes cartes, même macro de
+  dates (#12). Les tranches suivantes sont insérées par le scroll infini. #}
+  {% include "_listings_slice.html" %}
 </div>
 
 <div id="no-results" class="empty-state" style="display:none">
@@ -247,18 +218,21 @@
   <p>Essayez d'ajuster vos filtres.</p>
 </div>
 
-<!-- Pagination -->
-{% if total_pages > 1 %}
-<div class="pagination">
-  {% if page > 1 %}
-  <a href="{{ url_for('web.listings', search_id=search.id) }}?{{ query_string|safe }}&page={{ page - 1 }}" class="btn btn-sm btn-ghost">← Précédent</a>
-  {% endif %}
-  <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
-  {% if page < total_pages %}
-  <a href="{{ url_for('web.listings', search_id=search.id) }}?{{ query_string|safe }}&page={{ page + 1 }}" class="btn btn-sm btn-ghost">Suivant →</a>
-  {% endif %}
+{# Scroll infini (#14) : sentinelle observée par IntersectionObserver,
+   indicateur de chargement et état « fin de liste ». La pagination
+   classique a été retirée — les tranches s'ajoutent sans rechargement. #}
+<div id="listings-scroll-status" data-search-id="{{ search.id }}" aria-live="polite">
+  <div id="listings-spinner" class="listings-scroll-spinner" hidden>
+    <span class="spinner" aria-hidden="true"></span> Chargement des annonces…
+  </div>
+  <div id="listings-end" class="listings-scroll-end" hidden>
+    ✓ Toutes les annonces affichées ({{ total }})
+  </div>
+  <div id="listings-error" class="listings-scroll-error" hidden>
+    Chargement impossible — continuez à faire défiler pour réessayer.
+  </div>
 </div>
-{% endif %}
+<div id="listings-sentinel" class="listings-sentinel" aria-hidden="true"></div>
 
 {% else %}
 <div class="empty-state">
@@ -272,6 +246,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('web.static', filename='listings_scroll.js') }}" defer></script>
 <script>
 function toggleAdvanced() {
   const el = document.getElementById('filter-advanced');

@@ -1505,9 +1505,60 @@ Filter Bar
     border-top: 1px solid var(--glass-border);
 }
 
-.page-info { 
-    color: var(--text-secondary); 
-    font-size: 0.9rem; 
+.page-info {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+/* ============================================================
+   Scroll infini des annonces (#14)
+   ============================================================ */
+
+/* Le conteneur d'une tranche s'efface de la mise en page : ses cartes
+   participent directement à la grille, au rendu initial comme après
+   insertion dynamique d'un fragment. */
+.listings-slice {
+    display: contents;
+}
+
+.listings-sentinel {
+    height: 1px;
+    width: 100%;
+}
+
+#listings-scroll-status {
+    text-align: center;
+    padding: 1.5rem 0 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.listings-scroll-spinner {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.spinner {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--glass-border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: listingsSpin 0.8s linear infinite;
+}
+
+@keyframes listingsSpin {
+    to { transform: rotate(360deg); }
+}
+
+.listings-scroll-end {
+    color: var(--text-secondary);
+}
+
+.listings-scroll-error {
+    color: #f66d6d;
 }
 
 /* ============================================================

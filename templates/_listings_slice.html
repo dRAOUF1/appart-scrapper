@@ -1,0 +1,59 @@
+{# Tranche d'annonces du scroll infini (#14).
+
+   Rendu à DEUX endroits :
+   - par la vue initiale `/listings/<id>` (première tranche, incluse dans
+     .listing-grid) ;
+   - par l'endpoint fragment `/listings/<id>/page` (tranches suivantes,
+     insérées dans la grille par static/listings_scroll.js).
+
+   Le markup des cartes est EXACTEMENT celui qu'affichait le rendu initial
+   avant #14 — même structure, et toujours la macro partagée `date_annonce`
+   (#12) : aucune date sans son label « Publiée le » / « Détectée le ».
+
+   Le conteneur `.listings-slice` porte l'état que le JS lit pour piloter le
+   chargement :
+   - `data-page` / `data-total-pages` : position dans la liste ;
+   - `data-end-of-list="true"` quand tout est affiché : plus AUCUNE requête
+     n'est alors émise.
+   En CSS il vaut `display: contents` : ses enfants participent directement
+   à la grille, le conteneur lui-même reste invisible pour la mise en page,
+   initiale comme après insertion dynamique. #}
+
+<div class="listings-slice"
+     data-page="{{ page }}"
+     data-total-pages="{{ total_pages }}"
+     {% if not has_more %}data-end-of-list="true"{% endif %}>
+  {% from "_macros.html" import date_annonce %}
+  {% for li in listings %}
+  <div class="listing-card">
+    {% if li.image_url %}
+    <div class="listing-img" style="background-image: url('{{ li.image_url }}'); background-size: cover; background-position: center; border-radius: var(--radius-sm);"></div>
+    {% else %}
+    <div class="listing-img listing-img-placeholder">🏠</div>
+    {% endif %}
+    <div class="listing-body">
+      <div class="listing-price">{{ li.price or 'Prix non renseigné' }}</div>
+      <div class="listing-title">{{ li.title[:100] if li.title else 'Annonce' }}</div>
+      <div class="listing-details">
+        {% if li.surface %}<span>📐 {{ li.surface }}</span>{% endif %}
+        {% if li.rooms %}<span>🚪 {{ li.rooms }}</span>{% endif %}
+        {% if li.location %}<span>📍 {{ li.location }}</span>{% endif %}
+      </div>
+      {% if li.description %}
+      <p class="listing-description">{{ li.description[:200] }}</p>
+      {% endif %}
+      {% if li.agency %}
+      <div class="listing-agency">🏢 {{ li.agency }}</div>
+      {% endif %}
+      <div class="listing-meta">
+        {# Issue #12 : label explicite « Publiée le » / « Détectée le » via la
+        macro partagée — plus de bascule silencieuse entre les deux sémantiques. #}
+        {% if li.creation_date|parse_iso_date or li.found_at %}
+        <span class="text-muted text-sm">{{ date_annonce(li.creation_date, li.found_at) }}</span>
+        {% endif %}
+        <a href="{{ li.url }}" target="_blank" class="btn btn-sm btn-primary">Voir ↗</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>

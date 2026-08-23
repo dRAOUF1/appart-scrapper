@@ -873,6 +873,44 @@ def _parse_listing_filters(args: dict) -> dict:
     return filters
 
 
+_LISTINGS_PER_PAGE = 20
+_DEFAULT_LISTINGS_SORT = "found_at_desc"
+
+
+def _fetch_listing_page(storage, search: dict, args) -> tuple[list, int, int]:
+    """Une tranche d'annonces pour une recherche : `(annonces, total, page)`.
+
+    Filtres, tri et blacklist agences sont reconstruits depuis `args` (la
+    querystring de la requête). La vue initiale ET les tranches du scroll
+    infini (#14) passent par ici : c'est ce qui garantit que le fragment
+    renvoyé par `/listings/<id>/page` montre exactement ce que la page
+    complète aurait montré au même endroit — mêmes filtres, même tri,
+    même exclusion des agences blacklistées en mode « exclude ».
+    """
+    blacklisted = search.get("blacklisted_agencies") or []
+    blacklist_mode = search.get("blacklist_mode", "exclude")
+
+    agencies_to_filter = []
+    if blacklist_mode == "exclude" and blacklisted:
+        agencies_to_filter = blacklisted
+
+    filters = _parse_listing_filters(args)
+    sort = args.get("sort", _DEFAULT_LISTINGS_SORT)
+    page = to_int(args.get("page", 1), 1)
+    offset = (page - 1) * _LISTINGS_PER_PAGE
+
+    rows = storage.listings.get_listings_for_search(
+        search["id"], limit=_LISTINGS_PER_PAGE, offset=offset,
+        blacklisted_agencies=agencies_to_filter,
+        filters=filters, sort=sort,
+    )
+    total = storage.listings.count_listings_for_search(
+        search["id"], blacklisted_agencies=agencies_to_filter,
+        filters=filters,
+    )
+    return rows, total, page
+
+
 @web_bp.route("/listings/<int:search_id>")
 @require_login
 def listings(search_id: int):
@@ -882,30 +920,9 @@ def listings(search_id: int):
         flash("Recherche introuvable", "error")
         return redirect(url_for("web.searches"))
 
-    page = to_int(request.args.get("page", 1), 1)
-    per_page = 20
-    offset = (page - 1) * per_page
-
-    blacklisted = search.get("blacklisted_agencies") or []
-    blacklist_mode = search.get("blacklist_mode", "exclude")
-
-    agencies_to_filter = []
-    if blacklist_mode == "exclude" and blacklisted:
-        agencies_to_filter = blacklisted
-
-    filters = _parse_listing_filters(request.args)
-    sort = request.args.get("sort", "found_at_desc")
-
-    all_listings = storage.listings.get_listings_for_search(
-        search_id, limit=per_page, offset=offset,
-        blacklisted_agencies=agencies_to_filter,
-        filters=filters, sort=sort,
-    )
-    total = storage.listings.count_listings_for_search(
-        search_id, blacklisted_agencies=agencies_to_filter,
-        filters=filters,
-    )
-    total_pages = max(1, (total + per_page - 1) // per_page)
+    all_listings, total, page = _fetch_listing_page(storage, search, request.args)
+    total_pages = max(1, (total + _LISTINGS_PER_PAGE - 1) // _LISTINGS_PER_PAGE)
+    has_more = page < total_pages
 
     available_agencies = storage.listings.get_unique_agencies_for_user(g.user["id"])
     filter_options = storage.listings.get_filter_options(search_id)
@@ -920,12 +937,57 @@ def listings(search_id: int):
         total=total,
         page=page,
         total_pages=total_pages,
+        has_more=has_more,
         available_agencies=available_agencies,
-        blacklist_mode=blacklist_mode,
+        blacklist_mode=search.get("blacklist_mode", "exclude"),
         filter_options=filter_options,
         active_filters=active_filters,
-        sort=sort,
+        sort=request.args.get("sort", _DEFAULT_LISTINGS_SORT),
         query_string=query_string,
+    )
+
+
+@web_bp.route("/listings/<int:search_id>/page")
+@require_login
+def listings_page(search_id: int):
+    """Tranche d'annonces du scroll infini (#14) — fragment HTML.
+
+    Rend EXACTEMENT les mêmes cartes que la vue initiale (même partial
+    `_listings_slice.html`, donc même macro de dates #12), pour la page
+    demandée et avec les mêmes filtres. Le client insère la tranche dans la
+    grille quand il approche du bas de liste ; l'état « fin de liste » est
+    porté par `data-end-of-list` sur le conteneur de la tranche.
+
+    Contrat d'erreur :
+    - recherche inexistante ou d'un autre utilisateur -> 404 (jamais le
+      contenu d'autrui, même en fragment) ;
+    - page absente, illisible ou hors plage -> 400 : le client connaît
+      `data-total-pages` et ne doit jamais demander au-delà, ce contrôle est
+      le filet défensif côté serveur.
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    # Le client connaît toujours le numéro de la tranche voulue : une requête
+    # sans `page`, illisible ou sous 1 n'a pas de sens contractuel -> 400.
+    if to_int(request.args.get("page", ""), 0) < 1:
+        return jsonify({"error": "Page invalide"}), 400
+
+    rows, total, page = _fetch_listing_page(storage, search, request.args)
+    total_pages = max(1, (total + _LISTINGS_PER_PAGE - 1) // _LISTINGS_PER_PAGE)
+
+    if page > total_pages:
+        return jsonify({"error": "Page hors plage"}), 400
+
+    return render_template(
+        "_listings_slice.html",
+        search=search,
+        listings=rows,
+        page=page,
+        total_pages=total_pages,
+        has_more=page < total_pages,
     )
 
 

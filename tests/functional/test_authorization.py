@@ -111,6 +111,7 @@ WEB_ENDPOINTS = [
     pytest.param("GET", f"/searches/{SEARCH_ID}/logs/export", {}, id="GET-logs-export"),
     pytest.param("POST", f"/searches/{SEARCH_ID}/logs/import", UPLOAD, id="POST-logs-import"),
     pytest.param("GET", f"/listings/{SEARCH_ID}", {}, id="GET-listings"),
+    pytest.param("GET", f"/listings/{SEARCH_ID}/page?page=2", {}, id="GET-listings-page"),
 ]
 
 
