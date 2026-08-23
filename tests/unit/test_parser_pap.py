@@ -24,8 +24,10 @@ Invariants figés ici, chacun adossé aux captures réelles du 2026-08-23
   page 26 ne recycle que du déjà-vu -> arrêt + WARNING _DEPTH_CAP_SUSPECT ;
 * le compteur machine de l'attribut `infinite-scroll` (annonces_total /
   annonces_page) fait foi sur les décomptes de chaque page ;
-* une URL PAP ne porte qu'un périmètre ET qu'un type : UNE URL par série,
-  toutes les localisations (jamais seulement la première), jamais de fusion ;
+* les localisations se FUSIONNENT dans UN seul bloc g SANS tiret, ids triés
+  en ordre NUMÉRIQUE croissant (la canonisation 301 du site sinon — capture
+  live 23/08/2026, fix #9) : UNE série par TYPE demandé, le filtrage reçoit
+  l'union des périmètres ;
 * doublon intra-page réel (r401201732 ×2 sur paris filtré p01) et
   chevauchements inter-pages dès p4-p6 : la dédup vues_ici est nécessaire en
   conditions normales, le set seen global absorbe le recouvrement multi-séries.
@@ -292,6 +294,21 @@ def paris_criteria(**overrides) -> dict:
         "priceMin": 1000,
         "priceMax": 2000,
         "sourceOverrides": {"pap": {"geoIds": ["439"]}},
+    }
+    criteria.update(overrides)
+    return criteria
+
+
+def fused_criteria(**overrides) -> dict:
+    """Des critères portant DEUX localisations, leurs ids saisis à la main
+    dans l'ordre des localisations (« 43618 » Rennes puis « 37782 » Paris) :
+    l'ordre du bloc g est l'affaire du parser — le tri NUMÉRIQUE mettra
+    37782 devant 43618 (canonisation 301 du site sinon)."""
+    criteria = {
+        "locations": [RENNES, PARIS_15],
+        "transaction": "rent",
+        "propertyTypes": ["apartment"],
+        "sourceOverrides": {"pap": {"geoIds": ["43618", "37782"]}},
     }
     criteria.update(overrides)
     return criteria
@@ -778,18 +795,20 @@ class TestSeries:
 
         series = PapParser()._series(criteria, [RENNES])
 
-        assert [(geo_id, segment) for _, geo_id, segment in series] == [("43618", "locations")]
+        assert [(geo_ids, segment) for _, geo_ids, segment in series] == [
+            (["43618"], "locations")
+        ]
 
-    def test_one_segment_per_demanded_type_in_requested_order(self):
-        """Une URL PAP ne porte qu'un périmètre ET qu'un type : chaque type
-        demandé a son propre segment de série, dans l'ordre demandé."""
+    def test_one_series_per_demanded_type_in_requested_order(self):
+        """Une série PAR TYPE demandé, dans l'ordre demandé (mono-ville : le
+        bloc g ne porte qu'un id, format identique au mono historique)."""
         criteria = manual_criteria(propertyTypes=["apartment", "house"])
 
         series = PapParser()._series(criteria, [RENNES])
 
-        assert [(geo_id, segment) for _, geo_id, segment in series] == [
-            ("43618", "locations-appartement"),
-            ("43618", "locations-maison"),
+        assert [(geo_ids, segment) for _, geo_ids, segment in series] == [
+            (["43618"], "locations-appartement"),
+            (["43618"], "locations-maison"),
         ]
 
     def test_buy_paths_use_the_site_s_own_plural_forms(self):
@@ -797,9 +816,29 @@ class TestSeries:
 
         series = PapParser()._series(criteria, [RENNES])
 
-        assert [(geo_id, segment) for _, geo_id, segment in series] == [
-            ("43618", "vente-appartements"),
-            ("43618", "vente-parking"),
+        assert [(geo_ids, segment) for _, geo_ids, segment in series] == [
+            (["43618"], "vente-appartements"),
+            (["43618"], "vente-parking"),
+        ]
+
+    def test_every_series_carries_all_locations_sorted_numerically(self):
+        """🔒 Fusion systématique (issue #9) : chaque série porte TOUTES les
+        localisations fusibles — une recherche 2 villes × 1 type produit UNE
+        série, pas deux. Les ids sont dédoublonnés puis triés en ordre
+        NUMÉRIQUE croissant quel que soit l'ordre résolu/saisi (la
+        canonisation 301 du site sinon), et les localisations suivent leur id."""
+        locations = [PARIS_15, RENNES]  # saisie : Paris d'abord, ids en désordre numérique
+        criteria = {
+            "locations": locations,
+            "transaction": "rent",
+            "propertyTypes": ["apartment"],
+            "sourceOverrides": {"pap": {"geoIds": ["37782", "43618"]}},
+        }
+
+        series = PapParser()._series(criteria, locations)
+
+        assert [(fused, geo_ids, segment) for fused, geo_ids, segment in series] == [
+            ([PARIS_15, RENNES], ["37782", "43618"], "locations-appartement")
         ]
 
     def test_a_type_without_any_rent_segment_is_refused_not_widened(self, logged):
@@ -820,7 +859,9 @@ class TestSeries:
 
         series = PapParser()._series(criteria, [RENNES])
 
-        assert [(geo_id, segment) for _, geo_id, segment in series] == [("43618", "locations-appartement")]
+        assert [(geo_ids, segment) for _, geo_ids, segment in series] == [
+            (["43618"], "locations-appartement")
+        ]
         assert any(level == "WARNING" and "ignorés : land" in message for level, message in logged)
 
 
@@ -904,31 +945,67 @@ class TestPairs:
 
 
 # ===========================================================================
-# P1 — build_search_urls : une URL par série, toutes les localisations
+# P1 — build_search_urls : une URL par type, localisations fusionnées
 # ===========================================================================
 
 
 class TestBuildSearchUrls:
-    def test_one_url_per_location_all_of_them_never_only_the_first(self):
-        """UNE URL PAR LOCALISATION — toutes, pas la première : une URL PAP
-        ne porte qu'un périmètre, une recherche multi-villes produit autant
-        de séries. Les deux URLs sont celles des captures réelles."""
+    def test_two_cities_are_fused_into_one_url_with_a_sorted_geo_block(self):
+        """🔒 Fusion systématique (issue #9) : 2 villes × 1 type = UNE seule
+        URL portant les DEUX ids CONCATÉNÉS dans un seul bloc g, trié en
+        ordre NUMÉRIQUE croissant quel que soit l'ordre saisi — vérifié en
+        direct le 23/08/2026 (g439g43267 -> canonisé puis 200 avec les
+        annonces des deux périmètres). Le slug suit la localisation du
+        PREMIER id du bloc (Paris ici : 37782 < 43618)."""
+        urls = PapParser().build_search_urls(fused_criteria())
+
+        assert urls == [f"{BASE_URL}/annonce/locations-appartement-paris-g37782g43618"]
+        assert len(urls) == 1, "une seule série fusionnée, plus une URL par localisation"
+
+    def test_the_geo_block_is_numeric_sorted_not_lexical(self):
+        """« 10000 » < « 439 » lexicalement mais 439 < 10000 numériquement :
+        un tri lexical émettrait g10000g439 et déclencherait la 301 de
+        canonisation du site."""
         criteria = {
-            "locations": [RENNES, PARIS_15],
-            "transaction": "rent",
-            "propertyTypes": ["apartment"],
-            "sourceOverrides": {"pap": {"geoIds": ["43618", "37782"]}},
+            "locations": [RENNES, PARIS_WHOLE],
+            "transaction": "buy",
+            "propertyTypes": [],
+            "sourceOverrides": {"pap": {"geoIds": ["10000", "439"]}},
         }
 
-        urls = PapParser().build_search_urls(criteria)
+        url = PapParser().build_search_urls(criteria)[0]
 
-        # Le slug de lieu dérive du nom de VILLE (« Paris »), jamais de
-        # l'arrondissement : seul -g{id} porte la précision.
+        assert url == f"{BASE_URL}/annonce/vente-immobiliere-paris-g439g10000"
+
+    def test_no_dash_inside_the_fused_block(self):
+        """La forme -gA-gB (tiret entre blocs) ne porte que le PREMIER
+        périmètre (redirection vérifiée en direct) : elle est interdite par
+        construction — verrou négatif explicite."""
+        url = PapParser().build_search_urls(fused_criteria())[0]
+
+        assert "-g37782-g43618" not in url
+        assert "-g43618-g37782" not in url
+
+    def test_two_types_stay_two_fused_urls(self):
+        """La fusion regroupe les PÉRIMÈTRES dans chaque série, jamais les
+        types : 2 types demandés restent 2 URLs, chacune portant toutes les
+        localisations."""
+        urls = PapParser().build_search_urls(
+            fused_criteria(propertyTypes=["apartment", "house"])
+        )
+
         assert urls == [
-            f"{BASE_URL}/annonce/locations-appartement-rennes-g43618",
-            f"{BASE_URL}/annonce/locations-appartement-paris-g37782",
+            f"{BASE_URL}/annonce/locations-appartement-paris-g37782g43618",
+            f"{BASE_URL}/annonce/locations-maison-paris-g37782g43618",
         ]
-        assert len(urls) == len(criteria["locations"]), "toutes les localisations, pas seulement la première"
+
+    def test_a_single_location_keeps_the_historical_mono_format(self):
+        """Non-régression mono-localisation (issue #9, exigence 2) : UN seul
+        périmètre produit le bloc g à un seul id — le format d'avant la
+        fusion, celui des captures réelles, reste byte-for-byte valide."""
+        urls = PapParser().build_search_urls(manual_criteria())
+
+        assert urls == [f"{BASE_URL}/annonce/{_RENNES_SERIE}"]
 
     def test_the_rent_series_url_matches_the_real_capture_byte_for_byte(self):
         """Critères Rennes <= 900 € : l'URL construite est EXACTEMENT celle
@@ -1202,19 +1279,31 @@ class TestScrapeGuards:
         """Une série en échec (404) n'annule pas les autres : les annonces des
         séries saines sont gardées, l'échec est tracé."""
         def handler(url):
-            if "-g99999" in url:
+            if "locations-maison-" in url:
                 return FakeResponse("", status_code=404)
             return FakeResponse(RENNES_P1)
 
         session = FakeSession(handler=handler)
-        criteria = manual_criteria(propertyTypes=["apartment"])
-        criteria["locations"] = [RENNES, PARIS_15]
-        criteria["sourceOverrides"] = {"pap": {"geoIds": ["43618", "99999"]}}
+        criteria = manual_criteria(propertyTypes=["apartment", "house"])
 
         listings = run_scrape(criteria, session)
 
         assert [li.legacy_id for li in listings] == RENNES_UIDS
-        assert any(level == "WARNING" and "Paris (75015) (g99999)" in message for level, message in logged)
+        assert any(level == "WARNING" and "Rennes (35000) (g43618)" in message for level, message in logged)
+
+    def test_a_failed_fused_series_reports_every_perimeter_of_the_block(self, logged):
+        """Quand LA série fusionnée échoue (404), le message trace TOUS les
+        périmètres du bloc g — plus une seule localisation (issue #9)."""
+        session = FakeSession([FakeResponse("", status_code=404)])
+
+        with pytest.raises(ValueError, match="localisation invalide"):
+            run_scrape(fused_criteria(), session)
+
+        assert any(
+            level == "WARNING"
+            and "Paris (75015), Rennes (35000) (g37782g43618)" in message
+            for level, message in logged
+        )
 
     def test_it_raises_only_when_every_series_fails(self):
         session = FakeSession(handler=lambda url: FakeResponse("", status_code=404))
@@ -1269,6 +1358,16 @@ class TestPagination:
         run_scrape(manual_criteria(), session)
 
         base = f"{BASE_URL}/annonce/{_RENNES_SERIE}"
+        assert session.urls == [base, f"{base}-2"]
+
+    def test_the_pagination_suffix_applies_to_the_fused_url(self):
+        """La pagination -2/-3 s'applique normalement aux URLs fusionnées
+        (vérifié en direct, issue #9) : le suffixe suit le bloc g COMPLET."""
+        session = FakeSession([page(card(uid="111")), EMPTY_PAGE_HTML])
+
+        run_scrape(fused_criteria(), session)
+
+        base = f"{BASE_URL}/annonce/locations-appartement-paris-g37782g43618"
         assert session.urls == [base, f"{base}-2"]
 
     def test_the_inter_page_delay_is_paid_once_per_extra_page(self, slept):
@@ -1422,27 +1521,44 @@ class TestScrapeFilters:
 
         assert [li.legacy_id for li in listings] == ["464800808", "441302329"]
 
+    def test_a_fused_series_filters_against_every_perimeter_of_the_block(self):
+        """La série fusionnée sert TOUS les périmètres du bloc g : les cartes
+        de Rennes ET de Paris 15e passent, une carte hors des deux est
+        écartée — _passes_filters reçoit l'union complète (issue #9 : rien n'a
+        changé côté filtrage, seule l'émission des URLs a fusionné)."""
+        cards = page(
+            card(uid="111", line="Rennes (35000)"),
+            card(uid="222", line="Paris 15E (75015)"),
+            card(uid="333", line="Vanves (92170)"),
+        )
+        session = FakeSession([cards])
+
+        listings = run_scrape(fused_criteria(), session)
+
+        assert [li.zip_code for li in listings] == ["35000", "75015"]
+
 
 class TestMultiSeriesDedup:
-    def test_a_uid_scraped_by_one_series_is_never_relisted_by_another(self):
+    def test_a_uid_scraped_by_one_type_series_is_never_relisted_by_another(self):
         """Double dédup : vues_ici déduplique À L'INTÉRIEUR d'une série, le
-        set seen GLOBAL absorbe le recouvrement ENTRE séries (deux périmètres
-        qui se recouvrent, ex. ville et ville entière du même secteur)."""
-        serie_37782 = page(card(uid="111"), card(uid="222"))
-        serie_439 = page(card(uid="222"), card(uid="333"))
+        set seen GLOBAL absorbe le recouvrement ENTRE séries — depuis la
+        fusion (#9) les séries se distinguent par TYPE (les localisations,
+        elles, vivent ensemble dans un seul bloc g)."""
+        serie_appartement = page(card(uid="111"), card(uid="222"))
+        serie_maison = page(card(uid="222"), card(uid="333"))
 
         def handler(url):
-            if "-g37782" in url:
-                return FakeResponse(serie_37782)
-            return FakeResponse(serie_439)
+            if "locations-maison-" in url:
+                return FakeResponse(serie_maison)
+            return FakeResponse(serie_appartement)
 
         session = FakeSession(handler=handler)
-        criteria = {
-            "locations": [PARIS_15, make_whole_city_location("Paris", ("75015",), "75115")],
-            "transaction": "rent",
-            "propertyTypes": ["apartment"],
-            "sourceOverrides": {"pap": {"geoIds": ["37782", "439"]}},
-        }
+        criteria = manual_criteria(
+            geo_id="439",
+            propertyTypes=["apartment", "house"],
+            priceMax=None,
+        )
+        criteria["locations"] = [PARIS_WHOLE]
 
         listings = run_scrape(criteria, session)
 
