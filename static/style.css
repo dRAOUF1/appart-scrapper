@@ -601,6 +601,42 @@ code {
     display: flex;
     gap: 0.6rem;
     align-items: center;
+    /* Le message d'erreur passe sous la ligne plutôt que de la déformer. */
+    flex-wrap: wrap;
+    position: relative;
+}
+
+/* Ligne dont le texte a été modifié sans re-choisir la suggestion (#24) :
+ * signalée tout de suite, pas à l'enregistrement. */
+.location-row.has-error input[data-location-input] {
+    border-color: var(--red);
+    box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.18);
+}
+
+.location-row-error-message {
+    order: 1;
+    width: 100%;
+    color: var(--red);
+    font-size: 0.8rem;
+}
+
+.location-row-error-message[hidden] {
+    display: none;
+}
+
+/* Message bloquant de soumission, injecté au-dessus de la liste. */
+.location-submit-error {
+    margin-bottom: 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--red);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 69, 58, 0.1);
+    color: var(--red);
+    font-size: 0.9rem;
+}
+
+.location-submit-error[hidden] {
+    display: none;
 }
 
 .location-row input {

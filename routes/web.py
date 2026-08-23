@@ -24,6 +24,7 @@ from flask import (
 )
 from loguru import logger
 
+from core.criteria import location_label
 from core.geocode import CITY
 from core.web_utils import to_int
 from parsers import list_sources, remember_manual_overrides
@@ -68,7 +69,35 @@ def _location_from_free_text(text: str) -> dict | None:
     return {"kind": CITY, "city": city, "postalCode": match.group(1)}
 
 
-def _parse_locations_from_form(form_data: dict) -> list[dict]:
+def _normalize_label_spacing(text: str) -> str:
+    """Un libellé comparé à espaces superflus près : retours à la ligne,
+    doubles espaces d'un copier-coller ne doivent pas faire échouer la
+    correspondance avec une localisation déjà stockée."""
+    return " ".join(text.split())
+
+
+def _matching_stored_location(text: str, stored_locations: list[dict] | None) -> dict | None:
+    """La localisation stockée dont le libellé est exactement `text`.
+
+    Filet de l'issue #24 : en édition, un champ retouché cosmétiquement (ou un
+    POST dont le payload caché a été perdu) réaffiche le libellé d'une
+    localisation déjà enregistrée. Si ce texte est identique à son libellé,
+    c'est la MÊME localisation : on la réutilise — avec son inseeCode — au lieu
+    de l'abandonner en silence. Copie défensive : la recherche existante ne
+    doit jamais partager ses dicts avec les nouveaux critères.
+    """
+    if not stored_locations:
+        return None
+    wanted = _normalize_label_spacing(text)
+    for location in stored_locations:
+        if _normalize_label_spacing(location_label(location)) == wanted:
+            return dict(location)
+    return None
+
+
+def _parse_locations_from_form(
+    form_data: dict, existing_locations: list[dict] | None = None
+) -> tuple[list[dict], list[str]]:
     """Les périmètres de recherche saisis, un par ligne du formulaire.
 
     Chaque ligne n'a qu'un seul champ visible, doublé d'un champ caché
@@ -78,13 +107,21 @@ def _parse_locations_from_form(form_data: dict) -> list[dict]:
     choisi) : il n'y a donc ni champ par niveau, ni champ par attribut, et le
     code postal n'a pas à être ressaisi puisque la suggestion le porte déjà.
 
-    Une ligne tapée à la main, sans suggestion, n'a pas de payload : son texte
-    est alors interprété comme une commune (voir _location_from_free_text).
+    Une ligne sans payload exploitable est résolue dans cet ordre :
+    1. le texte comme libellé d'une localisation déjà stockée (édition :
+       on réutilise celle-ci — inseeCode compris — plutôt que de perdre le
+       périmètre, #24),
+    2. le texte comme commune + code postal (_location_from_free_text).
+
+    Retourne `(locations, textes_non_exploitables)` : les textes restés sans
+    résolution sont remontés à la route pour un message explicite, jamais
+    abandonnés en silence.
     """
     payloads = _form_list(form_data, "location_payload")
     typed = _form_list(form_data, "location_city")
 
     locations = []
+    hand_typed_failures = []
     for index in range(max(len(payloads), len(typed))):
         payload = payloads[index].strip() if index < len(payloads) else ""
         if payload:
@@ -99,14 +136,27 @@ def _parse_locations_from_form(form_data: dict) -> list[dict]:
                 continue
 
         text = typed[index].strip() if index < len(typed) else ""
-        if text:
-            location = _location_from_free_text(text)
-            if location:
-                locations.append(location)
-    return locations
+        if not text:
+            continue
+        # La correspondance stockée AVANT le repli libre : « Poitiers (86000) »
+        # se laisse interpréter comme commune + code postal, mais si c'est le
+        # libellé d'une localisation déjà enregistrée, celle-ci porte en plus
+        # son inseeCode — la version la plus riche doit gagner (#24).
+        location = _matching_stored_location(text, existing_locations)
+        if location:
+            locations.append(location)
+            continue
+        location = _location_from_free_text(text)
+        if location:
+            locations.append(location)
+            continue
+        hand_typed_failures.append(text)
+    return locations, hand_typed_failures
 
 
-def _parse_search_criteria_from_form(form_data: dict) -> dict:
+def _parse_search_criteria_from_form(
+    form_data: dict, existing_locations: list[dict] | None = None
+) -> tuple[dict, list[str]]:
     """Construit des critères au vocabulaire canonique depuis le formulaire.
 
     Un seul formulaire pour toutes les sources : l'utilisateur décrit ce
@@ -115,8 +165,15 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
     BaseParser.to_native). Le formulaire ne connaît donc le vocabulaire
     d'aucune source en particulier.
 
-    Seule exception assumée : le champ de saisie libre qu'une source peut
-    déclarer comme repli (`override_<source>`, voir
+    `existing_locations` (édition) permet de réutiliser une localisation déjà
+    stockée quand sa ligne revient sans payload mais avec son libellé exact —
+    voir _parse_locations_from_form.
+
+    Retourne `(critères, textes_non_exploitables)`, les seconds alimentant un
+    message d'erreur dédié dans la route (_location_error_message).
+
+    Seule exception assumée au vocabulaire canonique : le champ de saisie
+    libre qu'une source peut déclarer comme repli (`override_<source>`, voir
     BaseParser.MANUAL_OVERRIDE_LABEL). Ce qui y est saisi est rangé dans
     `sourceOverrides`, jamais mélangé aux critères.
     """
@@ -124,7 +181,7 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
 
     criteria: dict = {}
 
-    locations = _parse_locations_from_form(form_data)
+    locations, hand_typed_failures = _parse_locations_from_form(form_data, existing_locations)
     if locations:
         criteria["locations"] = locations
 
@@ -154,7 +211,30 @@ def _parse_search_criteria_from_form(form_data: dict) -> dict:
 
     # La normalisation fait le reste : types convertis, valeurs illisibles
     # écartées, vocabulaire garanti canonique avant stockage.
-    return normalize_criteria(criteria)
+    return normalize_criteria(criteria), hand_typed_failures
+
+
+def _location_error_message(criteria: dict, hand_typed_failures: list[str]) -> str | None:
+    """Le message dédié à ce qui n'a pas pu être résolu comme localisation.
+
+    Deux cas bien distincts au lieu d'un « aucune localisation exploitable
+    (ville + code postal requis) » par source, trompeur quand les champs
+    s'affichent remplis (#24) :
+    - un texte saisi à la main que ni le payload ni une localisation stockée
+      n'expliquent -> dire de choisir dans les suggestions ;
+    - aucune localisation du tout -> le dire tel quel.
+    """
+    if hand_typed_failures:
+        if len(hand_typed_failures) == 1:
+            return (
+                f"Localisation « {hand_typed_failures[0]} » saisie à la main non exploitable"
+                " — choisissez-la dans les suggestions"
+            )
+        quoted = ", ".join(f"« {text} »" for text in hand_typed_failures)
+        return f"Localisations {quoted} saisies à la main non exploitables — choisissez-les dans les suggestions"
+    if not criteria.get("locations"):
+        return "Aucune localisation renseignée"
+    return None
 
 
 def _parse_source_overrides_from_form(form_data: dict) -> dict:
@@ -284,7 +364,12 @@ def searches():
         selected_sources = request.form.getlist("sources") or [request.form.get("source", "seloger").strip()]
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
-        criteria = _parse_search_criteria_from_form(request.form)
+        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form)
+
+        location_error = _location_error_message(criteria, hand_typed_failures)
+        if location_error:
+            flash(location_error, "error")
+            return redirect(url_for("web.searches"))
 
         validation = _validate_sources_criteria(selected_sources, criteria)
         if not all(r["ok"] for r in validation):
@@ -473,7 +558,19 @@ def edit_search(search_id: int):
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
         selected_sources = request.form.getlist("sources") or search.get("sources") or [search.get("source", "seloger")]
 
-        criteria = _parse_search_criteria_from_form(request.form)
+        # Filet #24 : une ligne dont le payload caché a été perdu mais dont le
+        # texte est le libellé exact d'une localisation déjà enregistrée
+        # réutilise celle-ci (inseeCode compris) au lieu d'être abandonnée.
+        existing_locations = (search.get("criteria") or {}).get("locations") or []
+        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
+
+        location_error = _location_error_message(criteria, hand_typed_failures)
+        if location_error:
+            flash(location_error, "error")
+            stats = storage.scrape_logs.get_scrape_stats(search_id)
+            return render_template(
+                "search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow
+            )
 
         validation = _validate_sources_criteria(selected_sources, criteria)
         if not all(r["ok"] for r in validation):

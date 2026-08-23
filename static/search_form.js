@@ -40,6 +40,11 @@
 
         let timer = null;
         let controller = null;
+        // Le périmètre choisi (libellé + JSON), mémorisé à part du champ
+        // caché : tant que le champ visible affiche exactement ce libellé,
+        // le payload reste valide — même si l'utilisateur entre dans le champ
+        // et tape un caractère sans choisir de suggestion (#24).
+        let chosen = null;
 
         function hide() {
             list.hidden = true;
@@ -52,6 +57,8 @@
             // pour un département ou une région.
             input.value = suggestion.label;
             if (payload) payload.value = JSON.stringify(suggestion);
+            chosen = { label: suggestion.label, json: JSON.stringify(suggestion) };
+            setRowError(row, false);
             hide();
         }
 
@@ -89,10 +96,21 @@
         }
 
         input.addEventListener('input', function () {
-            // Une saisie retapée à la main invalide le périmètre choisi
-            // précédemment : le vider évite de conserver celui de l'ancienne
-            // sélection, qui ferait chercher au mauvais endroit.
+            // Retomber exactement sur le libellé choisi (effacer la lettre
+            // parasite qui avait invalidé la ligne) restaure le périmètre :
+            // c'est encore LA MÊME localisation, pas une saisie neuve.
+            if (chosen && input.value === chosen.label) {
+                if (payload) payload.value = chosen.json;
+                setRowError(row, false);
+                hide();
+                return;
+            }
+            // Une vraie modification invalide le périmètre choisi : le vider
+            // et le dire tout de suite (contour rouge), au lieu d'un refus
+            // incompréhensible à l'enregistrement.
+            chosen = null;
             if (payload) payload.value = '';
+            setRowError(row, input.value.trim().length > 0);
 
             const query = input.value.trim();
             clearTimeout(timer);
@@ -117,6 +135,24 @@
         });
     }
 
+    /* --- Marquage visuel d'une ligne sans périmètre -----------------------
+     * Une ligne dont le texte a été modifié sans re-choisir de suggestion n'a
+     * plus de payload : contour rouge + message sous la ligne, dès la frappe.
+     */
+    const ROW_ERROR_CLASS = 'has-error';
+
+    function setRowError(row, hasError) {
+        row.classList.toggle(ROW_ERROR_CLASS, hasError);
+        let hint = row.querySelector('.location-row-error-message');
+        if (!hint) {
+            hint = document.createElement('small');
+            hint.className = 'location-row-error-message';
+            hint.textContent = 'Choisissez la localisation dans les suggestions';
+            row.appendChild(hint);
+        }
+        hint.hidden = !hasError;
+    }
+
     /* --- Lignes de localisation répétables ------------------------------- */
     function setupLocationList(list) {
         const addBtn = list.parentElement.querySelector('[data-add-location]');
@@ -135,6 +171,7 @@
             if (!e.target.classList.contains('location-remove-btn')) return;
             if (list.querySelectorAll('.location-row').length <= 1) return;
             e.target.closest('.location-row').remove();
+            clearListError(list);
             refreshRemoveButtons();
         });
 
@@ -149,13 +186,86 @@
                 newRow.querySelectorAll('[data-location-payload]').forEach(function (el) {
                     el.value = '';
                 });
+                // Le clone hériterait de l'état d'erreur du modèle : une
+                // nouvelle ligne démarre proprement.
+                newRow.classList.remove(ROW_ERROR_CLASS);
+                newRow.querySelectorAll('.location-row-error-message').forEach(function (el) {
+                    el.remove();
+                });
                 list.appendChild(newRow);
                 attachAutocomplete(newRow);
                 refreshRemoveButtons();
             });
         }
 
+        // Garde de soumission : bloquer un départ qui échouerait côté serveur.
+        const form = list.closest('form');
+        if (form) {
+            form.addEventListener('submit', function (e) {
+                if (!validateBeforeSubmit(list)) e.preventDefault();
+            });
+        }
+
         refreshRemoveButtons();
+    }
+
+    /* --- Garde de soumission ----------------------------------------------
+     * Une ligne modifiée sans re-choisir sa suggestion n'a plus de payload :
+     * le serveur refuserait la recherche. On bloque avant le départ, avec un
+     * message qui dit quoi faire — plutôt qu'un toast par source (#24).
+     */
+    function validateBeforeSubmit(list) {
+        const rows = Array.from(list.querySelectorAll('.location-row'));
+        let firstInvalidInput = null;
+
+        rows.forEach(function (row) {
+            const input = row.querySelector('[data-location-input]');
+            const payload = row.querySelector('[data-location-payload]');
+            const hasText = Boolean(input && input.value.trim());
+            const hasPayload = Boolean(payload && payload.value.trim());
+            setRowError(row, hasText && !hasPayload);
+            if (hasText && !hasPayload && !firstInvalidInput) firstInvalidInput = input;
+        });
+
+        if (firstInvalidInput) {
+            showListError(
+                list,
+                'Une ou plusieurs localisations ont été modifiées sans être choisies dans les'
+                + ' suggestions : sélectionnez-les dans la liste puis enregistrez à nouveau.'
+            );
+            firstInvalidInput.focus();
+            return false;
+        }
+
+        const anyFilled = rows.some(function (row) {
+            const input = row.querySelector('[data-location-input]');
+            const payload = row.querySelector('[data-location-payload]');
+            return Boolean((input && input.value.trim()) || (payload && payload.value.trim()));
+        });
+        if (!anyFilled) {
+            showListError(list, 'Renseignez au moins une localisation.');
+            return false;
+        }
+
+        clearListError(list);
+        return true;
+    }
+
+    function showListError(list, message) {
+        let box = list.parentElement.querySelector('[data-location-submit-error]');
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'location-submit-error';
+            box.setAttribute('role', 'alert');
+            list.parentElement.insertBefore(box, list);
+        }
+        box.textContent = message;
+        box.hidden = false;
+    }
+
+    function clearListError(list) {
+        const box = list.parentElement.querySelector('[data-location-submit-error]');
+        if (box) box.hidden = true;
     }
 
     /* --- Avertissement de capacités --------------------------------------
