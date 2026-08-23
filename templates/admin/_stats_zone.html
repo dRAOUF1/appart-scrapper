@@ -1,0 +1,68 @@
+{#
+  Zone vivante du dashboard : cartes de statistiques + alertes (issue #16).
+
+  C'est le PATTERN DE RÉFÉRENCE du polling/auto-refresh du socle HTMX —
+  les sous-issues (#17 et suivantes) le réutiliseront tel quel :
+      <div id="..." hx-get="{{ url_for(..., fragment='...') }}"
+           hx-trigger="every Xs" hx-swap="outerHTML"> ... </div>
+  Trois propriétés voulues :
+  - l'attribut de polling vit SUR l'élément échangé : après chaque swap,
+    le serveur renvoie un nouvel élément qui relance lui-même le cycle ;
+  - changer d'onglet remplace #admin-content, donc la zone quitte le DOM et
+    le polling s'arrête tout seul — aucun timer JS à nettoyer ;
+  - le GET vise un fragment minimal (`?fragment=stats`), pas la page entière :
+    ni les graphiques Chart.js, ni le reste du dashboard ne sont re-rendus.
+#}
+
+<div class="admin-stats-zone" id="admin-stats-zone"
+     hx-get="{{ url_for('admin.admin', tab='dashboard', fragment='stats') }}"
+     hx-trigger="every 30s" hx-swap="outerHTML">
+    <!-- Global Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">👥</div>
+            <div class="stat-value">{{ stats.users }}</div>
+            <div class="stat-label">Utilisateurs</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔍</div>
+            <div class="stat-value">{{ stats.searches }}</div>
+            <div class="stat-label">Recherches</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🏠</div>
+            <div class="stat-value">{{ stats.total_listings }}</div>
+            <div class="stat-label">Annonces totales</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">✨</div>
+            <div class="stat-value">{{ stats.new_today }}</div>
+            <div class="stat-label">Nouvelles aujourd'hui</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-value">{{ stats.avg_listings_per_search }}</div>
+            <div class="stat-label">Moy. annonces/recherche</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔗</div>
+            <div class="stat-value">{{ stats.search_listings }}</div>
+            <div class="stat-label">Liens recherche-annonce</div>
+        </div>
+    </div>
+
+    <!-- Alerts -->
+    {% if stats.orphan_listings > 0 or stats.users_without_searches > 0 %}
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h2>⚠️ Alertes</h2>
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+            {% if stats.orphan_listings > 0 %}
+            <span class="badge badge-warning">📭 {{ stats.orphan_listings }} annonce(s) orpheline(s)</span>
+            {% endif %}
+            {% if stats.users_without_searches > 0 %}
+            <span class="badge">👤 {{ stats.users_without_searches }} utilisateur(s) sans recherche</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>

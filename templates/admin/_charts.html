@@ -1,0 +1,84 @@
+{#
+  Graphiques Chart.js du dashboard (issue #16).
+
+  Contrat du socle : les données sont EMBARQUÉES dans la page via un
+  <script type="application/json" data-chart-cible="#id" data-chart-type="...">,
+  lu par static/admin.js au chargement et après chaque swap HTMX. Aucun appel
+  réseau supplémentaire, aucun endpoint JSON : tout ce que le template connaît
+  déjà reste dans le template.
+
+  Pour ajouter un graphique dans une sous-issue : poser un canvas + ce script
+  JSON à côté, rien d'autre. Les types gérés par admin.js sont « bar » et
+  « doughnut » (étendre `CONFIGURATIONS` côté JS si besoin).
+
+  Sans JS, le canvas affiche son contenu alternatif (<noscript>) : les chiffres
+  restent lisibles, les stats numériques étant aussi présentes en cartes.
+#}
+
+{% set labels_activite = [] %}
+{% set valeurs_activite = [] %}
+{% if stats.activity_7d %}
+    {% for day in stats.activity_7d %}
+        {% set _ = labels_activite.append((day.day|fr_time).strftime('%d/%m') if day.day else '—') %}
+        {% set _ = valeurs_activite.append(day.count) %}
+    {% endfor %}
+{% endif %}
+
+{% set labels_sources = [] %}
+{% set valeurs_sources = [] %}
+{% if stats.sources_breakdown %}
+    {% for src in stats.sources_breakdown %}
+        {% set _ = labels_sources.append(src.source) %}
+        {% set _ = valeurs_sources.append(src.cnt) %}
+    {% endfor %}
+{% endif %}
+
+<div class="charts-grid">
+    <div class="card chart-card">
+        <h2>📈 Activité — 7 derniers jours</h2>
+        {% if stats.activity_7d %}
+        <div class="chart-box">
+            <canvas id="chart-activite-7j" role="img"
+                    aria-label="Histogramme des nouvelles annonces détectées par jour sur 7 jours"></canvas>
+            <script type="application/json" data-chart-cible="#chart-activite-7j" data-chart-type="bar">{{ {
+                "labels": labels_activite,
+                "datasets": [{"label": "Nouvelles annonces", "data": valeurs_activite}],
+                "titre": "Nouvelles annonces détectées par jour"
+            } | tojson }}</script>
+        </div>
+        <noscript>
+            <ul class="chart-fallback text-sm text-muted">
+                {% for day in stats.activity_7d %}
+                <li>{{ (day.day|fr_time).strftime('%d/%m') if day.day else '—' }} : {{ day.count }} nouvelle(s) annonce(s)</li>
+                {% endfor %}
+            </ul>
+        </noscript>
+        {% else %}
+        <p class="text-muted text-sm">Aucune activité récente</p>
+        {% endif %}
+    </div>
+
+    <div class="card chart-card">
+        <h2>🥧 Recherches par source</h2>
+        {% if stats.sources_breakdown %}
+        <div class="chart-box">
+            <canvas id="chart-sources" role="img"
+                    aria-label="Répartition des recherches par source immobilière"></canvas>
+            <script type="application/json" data-chart-cible="#chart-sources" data-chart-type="doughnut">{{ {
+                "labels": labels_sources,
+                "datasets": [{"label": "Recherches", "data": valeurs_sources}],
+                "titre": "Recherches par source"
+            } | tojson }}</script>
+        </div>
+        <noscript>
+            <ul class="chart-fallback text-sm text-muted">
+                {% for src in stats.sources_breakdown %}
+                <li><span class="badge badge-source">{{ src.source }}</span> : {{ src.cnt }} recherche(s)</li>
+                {% endfor %}
+            </ul>
+        </noscript>
+        {% else %}
+        <p class="text-muted text-sm">Aucune donnée</p>
+        {% endif %}
+    </div>
+</div>

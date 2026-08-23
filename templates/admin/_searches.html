@@ -1,0 +1,216 @@
+{# Onglet RECHERCHES : liste ou fiche détail selon le contexte fourni.
+   Les badges ntfy (#10) et les dates labellisées (#12) sont préservés. #}
+
+<div id="admin-content">
+{% if search_detail %}
+<!-- Search Detail View -->
+<a href="{{ url_for('admin.admin_searches') }}" class="back-link"
+   hx-get="{{ url_for('admin.admin_searches') }}" hx-target="#admin-content"
+   hx-swap="outerHTML" hx-push-url="true">← Retour aux recherches</a>
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>🔍 Détails de la recherche</h3>
+        <div class="detail-row">
+            <span class="detail-label">ID</span>
+            <span class="detail-value">#{{ search_detail.id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Label</span>
+            <span class="detail-value">{{ search_detail.label }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Source</span>
+            <span class="detail-value"><span class="badge badge-source">{{ search_detail.source }}</span></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Topic ntfy</span>
+            <span class="detail-value">
+                {{ search_detail.ntfy_topic }}
+                {% if not search_detail.notify_enabled %}
+                <span class="badge badge-muted">🔕 Notifications désactivées</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Utilisateur</span>
+            <span class="detail-value">{{ search_detail.username }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Annonces liées</span>
+            <span class="detail-value">{{ search_detail.total_listings }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Créée le</span>
+            <span class="detail-value">{{ (search_detail.created_at|fr_time).strftime('%d/%m/%Y %H:%M') if search_detail.created_at else '—' }}</span>
+        </div>
+        {% if search_detail.scrape_interval %}
+        <div class="detail-row">
+            <span class="detail-label">Intervalle scrape</span>
+            <span class="detail-value">{{ search_detail.scrape_interval }} minutes</span>
+        </div>
+        {% endif %}
+        {% if search_detail.last_scraped %}
+        <div class="detail-row">
+            <span class="detail-label">Dernier scrape</span>
+            <span class="detail-value">{{ (search_detail.last_scraped|fr_time).strftime('%d/%m/%Y %H:%M') if search_detail.last_scraped else '—' }}</span>
+        </div>
+        {% endif %}
+    </div>
+    {% if search_detail.criteria %}
+    <div class="detail-card">
+        <h3>📋 Critères</h3>
+        <pre style="font-size: 0.75rem; margin-top: 0.5rem;"><code>{{ search_detail.criteria | tojson(indent=2) }}</code></pre>
+    </div>
+    {% endif %}
+</div>
+
+{% if search_detail.recent_listings %}
+<div class="card">
+    <h2>🏠 Dernières annonces ({{ search_detail.recent_listings|length }} / {{ search_detail.total_listings }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Titre</th>
+                    <th>Prix</th>
+                    <th>Surface</th>
+                    <th>Localisation</th>
+                    <th>Publiée / Détectée le</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for li in search_detail.recent_listings %}
+                <tr>
+                    <td>{{ li.title[:60] if li.title else '—' }}</td>
+                    <td>{{ li.price or '—' }}</td>
+                    <td>{{ li.surface or '—' }}</td>
+                    <td>{{ li.location or '—' }}</td>
+                    {# Issue #12 : l.* porte creation_date → « Publiée le » si exploitable, sinon « Détectée le » (found_at). #}
+                    {% from "_macros.html" import date_annonce %}
+                    <td class="text-muted">{{ date_annonce(li.creation_date, li.found_at) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=search_detail.id) }}" class="inline-form"
+          data-confirm="Lancer le scraping maintenant ?"
+          hx-post="{{ url_for('admin.admin_scrape_search', search_id=search_detail.id) }}"
+          hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-success">🔄 Scrapper maintenant</button>
+    </form>
+    <form method="GET" action="{{ url_for('admin.admin_export_search_logs', search_id=search_detail.id) }}" class="inline-form">
+        <button type="submit" class="btn btn-ghost">⬇ Exporter logs (.zip)</button>
+    </form>
+    {# Import d'archive : upload de fichier, volontairement SANS hx-* — htmx gère
+       mal les uploads multipart sans extension, et la navigation classique avec
+       flash reste la voie la plus sûre ici (dégradation gracieuse assumée). #}
+    <form method="POST" action="{{ url_for('admin.admin_import_search_logs', search_id=search_detail.id) }}" class="inline-form" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="file" name="log_archive" accept=".zip" required>
+        <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.85rem;">
+            <input type="checkbox" name="allow_override" value="true">
+            Override si search_id diff
+        </label>
+        <button type="submit" class="btn btn-ghost">⬆ Importer logs</button>
+    </form>
+    <form method="POST" action="{{ url_for('admin.admin_delete_search', search_id=search_detail.id) }}" class="inline-form"
+          data-confirm="Supprimer la recherche « {{ search_detail.label }} » ?"
+          hx-post="{{ url_for('admin.admin_delete_search', search_id=search_detail.id) }}"
+          hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger">🗑 Supprimer cette recherche</button>
+    </form>
+</div>
+
+{% else %}
+<!-- Searches List View -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">🔍 Recherches ({{ search_count }})</h2>
+        <form method="GET" action="{{ url_for('admin.admin_searches') }}"
+              hx-get="{{ url_for('admin.admin_searches') }}" hx-target="#admin-content"
+              hx-swap="outerHTML" hx-push-url="true"
+              style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <input type="text" name="user" placeholder="Par utilisateur..." value="{{ user_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <input type="text" name="source" placeholder="Par source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+            {% if user_filter or source_filter %}
+            <a href="{{ url_for('admin.admin_searches') }}" class="btn btn-sm btn-ghost">Reset</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Label</th>
+                    <th>Utilisateur</th>
+                    <th>Source</th>
+                    <th>Annonces</th>
+                    <th>Topic ntfy</th>
+                    <th>Intervalle</th>
+                    <th>Dernier scrape</th>
+                    <th>Créée le</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in searches %}
+                <tr>
+                    <td class="text-muted">#{{ s.id }}</td>
+                    <td><strong>{{ s.label }}</strong></td>
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-avatar" style="width: 28px; height: 28px; font-size: 0.7rem;">{{ s.username[0].upper() }}</div>
+                            {{ s.username }}
+                        </div>
+                    </td>
+                    <td><span class="badge badge-source">{{ s.source }}</span></td>
+                    <td>{{ s.listing_count }}</td>
+                    <td>
+                        <code class="token-mini">{{ s.ntfy_topic }}</code>
+                        {% if not s.notify_enabled %}
+                        <span class="badge badge-muted" title="Notifications ntfy désactivées — le scraping continue">🔕 off</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge">{{ s.scrape_interval or 5 }}min</span></td>
+                    <td class="text-muted">{{ (s.last_scraped|fr_time).strftime('%H:%M') if s.last_scraped else '—' }}</td>
+                    <td class="text-muted">{{ (s.created_at|fr_time).strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
+                    <td>
+                        <a href="{{ url_for('admin.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost"
+                           hx-get="{{ url_for('admin.admin_search_detail', search_id=s.id) }}" hx-target="#admin-content"
+                           hx-swap="outerHTML" hx-push-url="true">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=s.id) }}" class="inline-form"
+                              data-confirm="Lancer le scraping maintenant ?"
+                              hx-post="{{ url_for('admin.admin_scrape_search', search_id=s.id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-success">🔄</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin.admin_delete_search', search_id=s.id) }}" class="inline-form"
+                              data-confirm="Supprimer « {{ s.label }} » ?"
+                              hx-post="{{ url_for('admin.admin_delete_search', search_id=s.id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not searches %}
+                <tr><td colspan="10" class="text-muted" style="text-align: center; padding: 2rem;">Aucune recherche trouvée</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+</div>

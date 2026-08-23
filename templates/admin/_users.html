@@ -1,0 +1,172 @@
+{# Onglet UTILISATEURS : liste ou fiche détail selon le contexte fourni. #}
+
+<div id="admin-content">
+{% if user_detail %}
+<!-- User Detail View -->
+<a href="{{ url_for('admin.admin_users') }}" class="back-link"
+   hx-get="{{ url_for('admin.admin_users') }}" hx-target="#admin-content"
+   hx-swap="outerHTML" hx-push-url="true">← Retour aux utilisateurs</a>
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>👤 Informations</h3>
+        <div class="detail-row">
+            <span class="detail-label">ID</span>
+            <span class="detail-value">#{{ user_detail.id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Username</span>
+            <span class="detail-value">{{ user_detail.username }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Inscrit le</span>
+            <span class="detail-value">{{ (user_detail.created_at|fr_time).strftime('%d/%m/%Y %H:%M') if user_detail.created_at else '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Recherches</span>
+            <span class="detail-value">{{ user_detail.search_count }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Annonces</span>
+            <span class="detail-value">{{ user_detail.listing_count }}</span>
+        </div>
+    </div>
+</div>
+
+{% if user_detail.searches %}
+<div class="card">
+    <h2>🔍 Recherches ({{ user_detail.searches|length }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Label</th>
+                    <th>Source</th>
+                    <th>Annonces</th>
+                    <th>Créée le</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in user_detail.searches %}
+                <tr>
+                    <td class="text-muted">#{{ s.id }}</td>
+                    <td><strong>{{ s.label }}</strong></td>
+                    <td><span class="badge badge-source">{{ s.source }}</span></td>
+                    <td>{{ s.listing_count }}</td>
+                    <td class="text-muted">{{ (s.created_at|fr_time).strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if user_detail.recent_listings %}
+<div class="card">
+    <h2>🏠 Dernières annonces ({{ user_detail.recent_listings|length }})</h2>
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Titre</th>
+                    <th>Prix</th>
+                    <th>Localisation</th>
+                    <th>Recherche</th>
+                    <th>Détectée le</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for li in user_detail.recent_listings %}
+                <tr>
+                    <td>{{ li.title[:60] if li.title else '—' }}</td>
+                    <td>{{ li.price or '—' }}</td>
+                    <td>{{ li.location or '—' }}</td>
+                    <td><span class="badge">{{ li.search_label }}</span></td>
+                    {# Issue #12 : ces lignes ne portent que first_seen (pas de creation_date dans la requête) → toujours « Détectée le ». #}
+                    {% from "_macros.html" import date_annonce %}
+                    <td class="text-muted">{{ date_annonce(li.creation_date, li.first_seen) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top: 1.5rem;">
+    <form method="POST" action="{{ url_for('admin.admin_delete_user', user_id=user_detail.id) }}" class="inline-form"
+          data-confirm="Supprimer définitivement cet utilisateur et toutes ses données ?"
+          hx-post="{{ url_for('admin.admin_delete_user', user_id=user_detail.id) }}"
+          hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger">🗑 Supprimer cet utilisateur</button>
+    </form>
+</div>
+
+{% else %}
+<!-- Users List View -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">👥 Utilisateurs ({{ user_count }})</h2>
+        <form method="GET" action="{{ url_for('admin.admin_users') }}"
+              hx-get="{{ url_for('admin.admin_users') }}" hx-target="#admin-content"
+              hx-swap="outerHTML" hx-push-url="true"
+              style="display: flex; gap: 0.5rem;">
+            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+        </form>
+    </div>
+
+    <!-- Create User -->
+    <details style="margin-bottom: 1rem;">
+        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.4rem 0;">+ Créer un utilisateur</summary>
+        <form method="POST" action="{{ url_for('admin.admin_create_user') }}"
+              hx-post="{{ url_for('admin.admin_create_user') }}" hx-target="#admin-content" hx-swap="outerHTML"
+              style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="text" name="username" placeholder="Nom d'utilisateur" required style="padding: 0.5rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem; flex: 1; max-width: 300px;">
+            <button type="submit" class="btn btn-sm btn-primary">Créer</button>
+        </form>
+    </details>
+
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Username</th>
+                    <th>Recherches</th>
+                    <th>Annonces</th>
+                    <th>Inscrit le</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td><div class="user-avatar">{{ u.username[0].upper() }}</div></td>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td>{{ u.search_count }}</td>
+                    <td>{{ u.listing_count }}</td>
+                    <td class="text-muted">{{ (u.created_at|fr_time).strftime('%d/%m/%Y') if u.created_at else '—' }}</td>
+                    <td>
+                        <a href="{{ url_for('admin.admin_user_detail', user_id=u.id) }}" class="btn btn-sm btn-ghost"
+                           hx-get="{{ url_for('admin.admin_user_detail', user_id=u.id) }}" hx-target="#admin-content"
+                           hx-swap="outerHTML" hx-push-url="true">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_delete_user', user_id=u.id) }}" class="inline-form"
+                              data-confirm="Supprimer {{ u.username }} ?"
+                              hx-post="{{ url_for('admin.admin_delete_user', user_id=u.id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Suppr.</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+</div>
