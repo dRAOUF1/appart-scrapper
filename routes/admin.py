@@ -59,20 +59,6 @@ def admin_delete_user(user_id):
     return redirect(url_for("admin.admin_users"))
 
 
-@admin_bp.route("/admin/users/<int:user_id>/reset-token", methods=["POST"])
-@require_admin
-def admin_reset_token(user_id):
-    storage = current_app.storage
-    user = storage.users.get_user_detail(user_id)
-    if user:
-        new_token = storage.users.reset_user_token(user_id)
-        storage.admin.log_admin_action(
-            "user_token_reset", f"Token reset for '{user['username']}' (ID:{user_id})", g.user["username"]
-        )
-        flash(f"Nouveau token pour '{user['username']}': {new_token}", "success")
-    return redirect(url_for("admin.admin_user_detail", user_id=user_id))
-
-
 @admin_bp.route("/admin/users/create", methods=["POST"])
 @require_admin
 def admin_create_user():
@@ -85,7 +71,7 @@ def admin_create_user():
         current_app.storage.admin.log_admin_action(
             "user_created", f"User '{username}' (ID:{user['id']}) created", g.user["username"]
         )
-        flash(f"Utilisateur '{username}' créé. Token: {user['api_token']}", "success")
+        flash(f"Utilisateur '{username}' créé.", "success")
     except ValueError as e:
         flash(str(e), "error")
     return redirect(url_for("admin.admin_users"))
