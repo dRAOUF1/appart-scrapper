@@ -122,6 +122,8 @@ def make_search_row(**overrides) -> dict:
         "last_scraped": None,
         "created_at": datetime(2026, 1, 1, 12, 0, 0),
         "is_active": True,
+        # Issue #10 : les recherches notifient par défaut.
+        "notify_enabled": True,
         "blacklisted_agencies": [],
         "blacklist_mode": "exclude",
     }

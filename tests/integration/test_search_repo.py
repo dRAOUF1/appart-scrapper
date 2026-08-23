@@ -467,3 +467,71 @@ class TestDeleteSearch:
 
     def test_deleting_an_unknown_search_returns_false(self, storage):
         assert storage.searches.delete_search(999_999) is False
+
+
+# ---------------------------------------------------------------------------
+# Notifications par recherche (issue #10)
+# ---------------------------------------------------------------------------
+
+class TestNotifyEnabled:
+    def test_a_creation_without_the_flag_notifies_by_default(self, storage, user):
+        """Rétrocompat : `create_search` sans mention du flag crée une recherche
+        qui notifie — la colonne porte elle-même DEFAULT TRUE."""
+        created = insert_search(storage, user["id"], "Par défaut")
+        fetched = storage.searches.get_search(created["id"])
+
+        assert fetched["notify_enabled"] is True
+
+    @pytest.mark.parametrize("read", ["get_search", "get_user_searches", "get_all_searches", "get_search_detail"])
+    def test_an_explicit_false_survives_every_read_path(self, storage, user, read):
+        """Le flag est dans TOUS les SELECT explicites : chaque lecture doit le
+        restituer — sinon l'écran et le pipeline divergent silencieusement."""
+        muted = insert_search(storage, user["id"], "Silencieuse", notify_enabled=False)
+
+        if read == "get_user_searches":
+            rows = storage.searches.get_user_searches(user["id"])
+            value = {r["label"]: r["notify_enabled"] for r in rows}["Silencieuse"]
+        elif read == "get_all_searches":
+            rows = storage.searches.get_all_searches()
+            value = {r["label"]: r["notify_enabled"] for r in rows}["Silencieuse"]
+        elif read == "get_search_detail":
+            value = storage.searches.get_search_detail(muted["id"])["notify_enabled"]
+        else:
+            value = storage.searches.get_search(muted["id"])["notify_enabled"]
+
+        assert value is False
+
+    def test_update_search_can_mute_and_unmute(self, storage, user):
+        search = insert_search(storage, user["id"], "Paris 13e")
+
+        assert storage.searches.update_search(
+            search["id"], user["id"], notify_enabled=False,
+        ) is True
+        assert storage.searches.get_search(search["id"])["notify_enabled"] is False
+
+        assert storage.searches.update_search(
+            search["id"], user["id"], notify_enabled=True,
+        ) is True
+        assert storage.searches.get_search(search["id"])["notify_enabled"] is True
+
+    def test_toggle_notifications_flips_the_value_and_returns_it(self, storage, user):
+        search = insert_search(storage, user["id"], "À basculer")
+
+        assert storage.searches.toggle_search_notifications(search["id"]) is False
+        assert storage.searches.get_search(search["id"])["notify_enabled"] is False
+        assert storage.searches.toggle_search_notifications(search["id"]) is True
+        assert storage.searches.get_search(search["id"])["notify_enabled"] is True
+
+    def test_toggling_notifications_of_an_unknown_search_is_none(self, storage):
+        assert storage.searches.toggle_search_notifications(999_999) is None
+
+    def test_toggling_does_not_touch_scraping_activity(self, storage, user):
+        """Le flag #10 pilote l'envoi ntfy uniquement : `is_active` doit sortir
+        intact d'une bascule de notifications."""
+        search = insert_search(storage, user["id"], "Active")
+
+        storage.searches.toggle_search_notifications(search["id"])
+
+        fetched = storage.searches.get_search(search["id"])
+        assert fetched["is_active"] is True
+        assert fetched["notify_enabled"] is False

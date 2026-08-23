@@ -88,6 +88,7 @@ class TestCsrfExemption:
             ("/login", {"username": "bob"}),
             ("/cleanup", {"days": "4"}),
             ("/searches/1/delete", {}),
+            ("/searches/1/toggle-notify", {}),
             ("/admin/database/truncate", {"table_name": "users"}),
         ],
     )
@@ -99,6 +100,7 @@ class TestCsrfExemption:
         assert storage.users.create_user.call_args_list == []
         assert storage.listings.delete_old_listings.call_args_list == []
         assert storage.searches.delete_search.call_args_list == []
+        assert storage.searches.toggle_search_notifications.call_args_list == []
         assert storage.admin.truncate_table.call_args_list == []
 
     def test_web_post_succeeds_with_a_valid_csrf_token(self, client, storage):
