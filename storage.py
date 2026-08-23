@@ -132,7 +132,6 @@ class Storage:
                     CREATE TABLE IF NOT EXISTS users (
                         id          SERIAL PRIMARY KEY,
                         username    TEXT UNIQUE NOT NULL,
-                        api_token   TEXT UNIQUE NOT NULL,
                         created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -437,6 +436,12 @@ class Storage:
                     ALTER TABLE search_listings
                         ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE;
                 """)
+                # Le token API (X-API-Token) a été supprimé (issue #30) :
+                # plus d'API pilotée par script, l'authentification passe par
+                # les sessions Flask. La colonne devient morte ; les entrées
+                # d'audit « user_token_reset » historiques restent en base
+                # (pas de migration de données).
+                cur.execute("ALTER TABLE users DROP COLUMN IF EXISTS api_token;")
                 phase_start = _log_phase("alter_other")
 
                 conn.commit()

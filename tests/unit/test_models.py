@@ -470,41 +470,20 @@ def test_search_to_dict_returns_a_detached_copy_of_the_nested_criteria():
 
 
 # ===========================================================================
-# User — l'invariant de sécurité
+# User — sérialisation
 # ===========================================================================
 
 
-def test_public_dict_never_exposes_the_api_token():
-    """INVARIANT DE SÉCURITÉ. `api_token` est le seul secret d'authentification
-    de l'API : il ne doit apparaître dans aucune réponse HTTP. Ce test est là
-    pour échouer bruyamment si `public_dict` est un jour réécrit à partir de
-    `asdict` sans le `pop`."""
-    user = User(**make_user_row(api_token="secret-tres-sensible"))
+def test_to_dict_serializes_id_username_and_created_at():
+    """`to_dict` est la sérialisation interne de l'utilisateur ; il ne porte
+    plus aucun secret depuis la suppression du token API (#30)."""
+    user = User(**make_user_row())
 
-    public = user.public_dict()
-
-    assert "api_token" not in public
-    assert "secret-tres-sensible" not in json.dumps(public, default=str)
-
-
-def test_public_dict_still_carries_everything_the_front_needs():
-    """Retirer le jeton ne doit pas retirer l'identité : le front affiche le nom
-    d'utilisateur et la date d'inscription."""
-    user = User(id=7, username="alice", api_token="token", created_at=datetime(2026, 1, 1, 12, 0, 0))
-
-    assert user.public_dict() == {
-        "id": 7,
+    assert user.to_dict() == {
+        "id": make_user_row()["id"],
         "username": "alice",
         "created_at": "2026-01-01T12:00:00",
     }
-
-
-def test_to_dict_keeps_the_token_because_it_is_the_internal_serialization():
-    """La distinction entre les deux méthodes est tout l'objet de la classe :
-    `to_dict` sert en interne (session, journalisation), `public_dict` sort."""
-    user = User(**make_user_row(api_token="token-alice"))
-
-    assert user.to_dict()["api_token"] == "token-alice"
 
 
 @pytest.mark.parametrize(
@@ -515,27 +494,9 @@ def test_to_dict_keeps_the_token_because_it_is_the_internal_serialization():
     ],
 )
 def test_user_to_dict_only_converts_a_real_datetime(created_at, expected):
-    user = User(id=1, username="alice", api_token="token", created_at=created_at)
+    user = User(id=1, username="alice", created_at=created_at)
 
     assert user.to_dict()["created_at"] == expected
-
-
-def test_public_dict_is_safe_to_call_on_a_user_without_a_creation_date():
-    """Un utilisateur créé par script peut ne pas avoir de `created_at` : la
-    protection du jeton ne doit pas dépendre de ce champ."""
-    user = User(id=1, username="alice", api_token="secret")
-
-    assert user.public_dict() == {"id": 1, "username": "alice", "created_at": None}
-
-
-def test_public_dict_returns_a_copy_so_popping_does_not_damage_the_user():
-    user = User(id=1, username="alice", api_token="secret")
-
-    user.public_dict()
-
-    assert user.api_token == "secret"
-    assert user.to_dict()["api_token"] == "secret"
-
 
 # ===========================================================================
 # ScrapeLog

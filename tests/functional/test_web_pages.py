@@ -4,10 +4,8 @@ Le contrôle de propriété de chaque route est vérifié ailleurs, en un balaya
 systématique (test_authorization.py) : ici on teste ce que fait la route quand
 l'accès est légitime, et ce qu'elle affiche quand la saisie est mauvaise.
 
-Deux comportements sont documentés comme des problèmes plutôt que testés comme
-des fonctionnalités : la connexion sans mot de passe (TestLogin) et la
-divergence de validation de l'intervalle entre le web et l'API
-(TestUpdateInterval).
+La connexion sans mot de passe est documentée comme un problème plutôt que
+testée comme une fonctionnalité (TestLogin).
 """
 
 from __future__ import annotations
@@ -75,17 +73,14 @@ class TestLogin:
     def test_an_existing_username_alone_grants_full_access(self, app_without_csrf, storage):
         """# BUG (sécurité, le plus grave du dépôt) : `/login` ne demande AUCUN
         mot de passe. Le formulaire n'a qu'un champ « nom d'utilisateur », et le
-        connaître suffit à obtenir la session complète du compte — donc son
-        jeton d'API, ses recherches et ses annonces.
-
-        Aggravant : `POST /api/users/login` répond pour tout nom existant, ce
-        qui permet de les énumérer sans être authentifié.
+        connaître suffit à obtenir la session complète du compte — donc ses
+        recherches et ses annonces.
 
         Test figeant le comportement ACTUEL. Le corriger demande d'ajouter une
         authentification (mot de passe ou lien magique), ce qui est un choix
         produit, pas un correctif de test.
         """
-        row = make_user_row(id=1, username="alice", api_token="token-alice")
+        row = make_user_row(id=1, username="alice")
         storage.users.get_user_by_username.return_value = row
         client = app_without_csrf.test_client()
 
@@ -94,7 +89,9 @@ class TestLogin:
         assert resp.status_code in (302, 303)
         with client.session_transaction() as sess:
             assert sess["user_id"] == 1
-            assert sess["api_token"] == "token-alice"
+            assert sess["username"] == "alice"
+            # Plus aucun secret dans la session depuis la fin du token (#30).
+            assert set(sess) == {"user_id", "username"}
 
     def test_an_unknown_username_silently_creates_the_account(self, app_without_csrf, storage):
         """Conséquence du point ci-dessus : il n'y a pas d'inscription
@@ -148,21 +145,22 @@ class TestLogin:
         """
         client = app_without_csrf.test_client()
         with client.session_transaction() as sess:
-            sess["user_id"] = user["id"]
-            sess["api_token"] = user["api_token"]  # pas de `username`
+            sess["user_id"] = user["id"]  # pas de `username`
 
         with pytest.raises(Exception, match="no element 0"):
             client.get("/dashboard")
 
-    def test_a_revoked_token_invalidates_the_session(self, app_without_csrf, storage, user):
-        """`require_login` revalide le jeton de session contre la base à chaque
-        requête : réinitialiser le jeton d'un utilisateur doit le déconnecter
-        partout, y compris sur une session déjà ouverte."""
+    def test_a_session_whose_user_was_deleted_loses_the_page(self, app_without_csrf, storage, user):
+        """`require_login` revalide l'existence du compte en base à chaque
+        requête : supprimer l'utilisateur doit déconnecter sa session ouverte,
+        pas servir des pages à un fantôme."""
+        storage.users.get_user_by_id.side_effect = None
+        storage.users.get_user_by_id.return_value = None
+
         client = app_without_csrf.test_client()
         with client.session_transaction() as sess:
             sess["user_id"] = user["id"]
             sess["username"] = user["username"]
-            sess["api_token"] = "ancien-jeton-revoque"
 
         resp = client.get("/dashboard")
 
@@ -183,6 +181,18 @@ class TestDashboard:
         assert resp.status_code == 200
         storage.users.get_dashboard_data.assert_called_once_with(user["id"])
 
+    def test_no_api_token_is_rendered_anywhere_on_the_page(self, web_client):
+        """La Token Card a été retirée avec l'API (#30) : ni la variable
+        `api_token`, ni la carte, ni le JS `copyToken` ne doivent apparaître.
+        (`csrf_token`, lui, est légitime et sans rapport.)"""
+        resp = web_client.get("/dashboard")
+
+        assert resp.status_code == 200
+        page = resp.data
+        assert b"api_token" not in page
+        assert b"copyToken" not in page
+        assert b"Token API" not in page
+
     def test_only_the_ten_most_recent_listings_are_shown(self, web_client, storage):
         # `search_label` et `found_at` viennent de la jointure, pas du modèle
         # Listing : ils sont ajoutés au dict de ligne, comme le fait le repo.
@@ -196,14 +206,6 @@ class TestDashboard:
         resp = web_client.get("/dashboard")
 
         assert resp.status_code == 200
-
-    def test_the_api_token_is_exposed_on_the_page(self, web_client, user):
-        """Le jeton est affiché volontairement (c'est ainsi que l'utilisateur le
-        récupère pour l'API). Ce test le fige : le retirer casserait l'usage,
-        mais il faut savoir que la page en contient un secret."""
-        resp = web_client.get("/dashboard")
-
-        assert user["api_token"].encode() in resp.data
 
 
 class TestSearchesPage:
@@ -381,13 +383,13 @@ class TestUpdateInterval:
 
         storage.searches.update_scrape_interval.assert_called_once_with(1, stored)
 
-    def test_the_web_form_accepts_an_interval_the_api_would_reject(
+    def test_the_web_form_accepts_a_huge_interval_without_an_upper_bound(
         self, web_client, storage, owned_search
     ):
-        """# BUG (divergence) : le web ne borne que le minimum, alors que l'API
-        impose 1..1440 (`core/schemas.validate_scrape_interval`). Un intervalle
-        de 100 000 minutes est donc acceptable par le formulaire et refusé par
-        l'API pour la même recherche — deux règles pour une même donnée."""
+        """# BUG (borne manquante) : le web ne borne que le minimum. Un
+        intervalle de 100 000 minutes est donc acceptable par le formulaire —
+        environ 69 jours entre deux scrapes, ce qui n'a probablement pas le
+        sens voulu par l'utilisateur."""
         web_client.post("/searches/1/interval", data={"scrape_interval": "100000"})
 
         storage.searches.update_scrape_interval.assert_called_once_with(1, 100000)

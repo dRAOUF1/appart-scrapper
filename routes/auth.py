@@ -8,29 +8,13 @@ from functools import wraps
 from flask import current_app, flash, g, redirect, session, url_for
 
 
-def require_token(f):
-    """Decorator: require valid X-API-Token header for API endpoints."""
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        from flask import jsonify, request
-        token = request.headers.get("X-API-Token", "")
-        if not token:
-            return jsonify({"error": "Header X-API-Token manquant"}), 401
-        user = current_app.storage.users.get_user_by_token(token)
-        if not user:
-            return jsonify({"error": "Token invalide"}), 401
-        g.user = user
-        return f(*args, **kwargs)
-    return wrapper
-
-
 def require_login(f):
     """Decorator: require logged-in user via session for web endpoints."""
     @wraps(f)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("web.login"))
-        user = current_app.storage.users.get_user_by_token(session.get("api_token", ""))
+        user = current_app.storage.users.get_user_by_id(session["user_id"])
         if not user:
             session.clear()
             return redirect(url_for("web.login"))
@@ -45,7 +29,7 @@ def require_admin(f):
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("web.login"))
-        user = current_app.storage.users.get_user_by_token(session.get("api_token", ""))
+        user = current_app.storage.users.get_user_by_id(session["user_id"])
         if not user:
             session.clear()
             return redirect(url_for("web.login"))

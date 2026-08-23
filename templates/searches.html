@@ -343,12 +343,9 @@ setTimeout(() => btn.textContent = 'Copier', 2000);
 
 async function openSearchUrlsModal(searchId) {
 try {
-const apiToken = sessionStorage.getItem('api_token') || '{{ api_token }}';
-const response = await fetch(`/api/searches/${searchId}/urls`, {
-headers: {
-'X-API-Token': apiToken
-}
-});
+// Route web de session : le modal « Voir l'URL » lit les liens reconstruits
+// sans header dédié (l'authentification passe par le cookie de session).
+const response = await fetch(`/searches/${searchId}/urls`);
 
 if (!response.ok) {
 throw new Error('Erreur lors de la récupération de l\'URL');

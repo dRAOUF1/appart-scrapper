@@ -31,21 +31,6 @@
     </div>
 </div>
 
-<!-- API Token -->
-<div class="card">
-    <h2>🔑 Votre Token API</h2>
-    <p class="text-muted">Utilisez ce token dans vos scripts pour interagir avec l'API.</p>
-    <div class="token-display">
-        <div class="token-content">
-            <span class="token-prefix">sk_live_</span>
-            <span class="token-visible">{{ api_token[:8] }}</span>
-            <span class="token-hidden">••••••••</span>
-            <span class="token-visible">{{ api_token[-4:] if api_token|length >= 4 else '' }}</span>
-        </div>
-        <button class="btn btn-sm btn-ghost" onclick="copyToken()">Copier</button>
-    </div>
-</div>
-
 <!-- Cleanup -->
 <div class="card">
     <h2>🧹 Nettoyage des annonces</h2>
@@ -105,14 +90,4 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-    function copyToken() {
-        const token = '{{ api_token }}';
-        navigator.clipboard.writeText(token).then(() => {
-            const btn = event.target;
-            btn.textContent = 'Copié ✓';
-            setTimeout(() => btn.textContent = 'Copier', 2000);
-        });
-    }
-</script>
 {% endblock %}

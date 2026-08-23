@@ -161,7 +161,7 @@ def sql(storage, clean_db):
 # ---------------------------------------------------------------------------
 
 def insert_user(storage, username: str = "alice") -> dict:
-    """Un utilisateur, via le repo (donc avec un vrai token aléatoire)."""
+    """Un utilisateur, via le repo."""
     return storage.users.create_user(username)
 
 

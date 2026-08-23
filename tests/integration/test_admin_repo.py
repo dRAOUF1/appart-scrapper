@@ -40,7 +40,7 @@ WRITE_ATTEMPTS = [
     pytest.param("DELETE FROM users", id="delete"),
     pytest.param("DELETE FROM users WHERE username = 'alice'", id="delete-cible"),
     pytest.param("UPDATE users SET username = 'pirate'", id="update"),
-    pytest.param("INSERT INTO users (username, api_token) VALUES ('pirate', 'tok')", id="insert"),
+    pytest.param("INSERT INTO users (username) VALUES ('pirate')", id="insert"),
     pytest.param("TRUNCATE users CASCADE", id="truncate"),
     pytest.param("DROP TABLE search_listings", id="drop-table"),
     pytest.param("CREATE TABLE porte_derobee (a int)", id="create-table"),
@@ -63,12 +63,12 @@ WRITE_ATTEMPTS = [
 class TestExecuteQueryIsReallyReadOnly:
     def test_a_select_returns_dict_rows_a_row_count_and_no_error(self, storage, user):
         rows, row_count, error = storage.admin.execute_query(
-            "SELECT username, api_token FROM users ORDER BY username",
+            "SELECT username FROM users ORDER BY username",
         )
 
         assert error is None
         assert row_count == 1
-        assert rows == [{"username": "alice", "api_token": user["api_token"]}]
+        assert rows == [{"username": "alice"}]
         assert isinstance(rows[0], dict), "RealDictRow doit être converti en dict pur"
 
     @pytest.mark.parametrize("sql_text", WRITE_ATTEMPTS)
@@ -104,7 +104,7 @@ class TestExecuteQueryIsReallyReadOnly:
         réussi ne valide rien non plus."""
         storage.admin.execute_query("DELETE FROM users")
         storage.admin.execute_query("SELECT COUNT(*) FROM users")
-        storage.admin.execute_query("INSERT INTO users (username, api_token) VALUES ('x', 'y')")
+        storage.admin.execute_query("INSERT INTO users (username) VALUES ('x')")
 
         assert sql.all("SELECT username FROM users") == [("alice",)]
 
@@ -211,15 +211,6 @@ class TestWhatReadOnlyDoesNotProtect:
     totale et sans budget de ressources. Ces tests figent le périmètre réel pour
     que personne ne prenne `READ ONLY` pour un bac à sable.
     """
-
-    def test_every_api_token_of_every_user_is_readable(self, storage, user, other_user):
-        """Les `api_token` authentifient les appels d'API : les lire, c'est
-        pouvoir se faire passer pour n'importe quel utilisateur. Aucune colonne
-        n'est masquée, aucun filtrage par utilisateur n'est appliqué."""
-        rows, _, error = storage.admin.execute_query("SELECT username, api_token FROM users")
-
-        assert error is None
-        assert {row["api_token"] for row in rows} == {user["api_token"], other_user["api_token"]}
 
     def test_another_users_searches_and_listings_are_readable(self, storage, other_search):
         """Aucune notion de propriétaire : la console ignore le `user_id` que
@@ -686,7 +677,7 @@ class TestTableDetails:
         details = storage.admin.get_table_details("users")
 
         columns = {row["column_name"]: row for row in details["columns"]}
-        assert list(columns) == ["id", "username", "api_token", "created_at"], "ordinal_position"
+        assert list(columns) == ["id", "username", "created_at"], "ordinal_position"
         assert columns["username"]["data_type"] == "text"
         assert columns["username"]["is_nullable"] == "NO"
         assert columns["created_at"]["column_default"] == "CURRENT_TIMESTAMP"

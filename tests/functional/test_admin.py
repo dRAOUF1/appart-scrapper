@@ -1,8 +1,7 @@
 """Tests de `routes/admin.py` — la surface la plus privilégiée du projet.
 
-Ce blueprint n'avait aucun test. Il permet pourtant de supprimer n'importe quel
-utilisateur, réinitialiser son jeton, vider une table et exécuter du SQL
-arbitraire. Deux choses comptent ici plus que le reste :
+Ce blueprint permet de supprimer n'importe quel utilisateur, vider une table
+et exécuter du SQL arbitraire. Deux choses comptent ici plus que le reste :
 
 1. **le mur `@require_admin`** — testé sur la liste complète des URLs, pas sur
    un échantillon : une route ajoutée sans le décorateur est une élévation de
@@ -33,7 +32,6 @@ ADMIN_URLS = [
     pytest.param("GET", "/admin/users", id="users"),
     pytest.param("GET", "/admin/users/1", id="user-detail"),
     pytest.param("POST", "/admin/users/1/delete", id="user-delete"),
-    pytest.param("POST", "/admin/users/1/reset-token", id="user-reset-token"),
     pytest.param("POST", "/admin/users/create", id="user-create"),
     pytest.param("GET", "/admin/searches", id="searches"),
     pytest.param("GET", "/admin/searches/1", id="search-detail"),
@@ -142,7 +140,6 @@ class TestAdminAccessControl:
         with client.session_transaction() as sess:
             sess["user_id"] = admin_user["id"]
             sess["username"] = admin_user["username"]
-            sess["api_token"] = admin_user["api_token"]
 
         resp = client.get("/admin")
 
@@ -243,30 +240,23 @@ class TestAdminUsers:
 
         storage.users.delete_user.assert_called_once_with(admin_user["id"])
 
-    def test_a_reset_token_is_shown_in_a_flash_message(self, admin_client, storage):
-        """# BUG (exposition) : le nouveau jeton est passé en `flash`, donc
-        stocké dans le cookie de session signé et rendu en clair dans le HTML
-        de la page suivante — où il finit dans l'historique et les caches."""
-        storage.users.get_user_detail.return_value = make_user_row(id=5, username="bob")
-        storage.users.reset_user_token.return_value = "nouveau-jeton-secret"
-
-        resp = admin_client.post("/admin/users/5/reset-token", follow_redirects=True)
-
-        assert b"nouveau-jeton-secret" in resp.data
-
-    def test_resetting_the_token_of_an_unknown_user_does_nothing(self, admin_client, storage):
-        storage.users.get_user_detail.return_value = None
-
-        admin_client.post("/admin/users/404/reset-token")
-
-        storage.users.reset_user_token.assert_not_called()
-
     def test_creating_a_user_normalizes_the_username(self, admin_client, storage):
         storage.users.create_user.return_value = make_user_row(id=7, username="charlie")
 
         admin_client.post("/admin/users/create", data={"username": "  CHARLIE  "})
 
         storage.users.create_user.assert_called_once_with("charlie")
+
+    def test_creating_a_user_announces_no_token(self, admin_client, storage):
+        """Le flash de création n'affiche plus aucun jeton (#30) : un secret
+        dans un `flash` finit dans le cookie de session signé et dans le HTML
+        de la page suivante (historique, caches)."""
+        storage.users.create_user.return_value = make_user_row(id=8, username="dave")
+
+        resp = admin_client.post("/admin/users/create", data={"username": "dave"}, follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert b"Token" not in resp.data
 
     def test_creating_a_user_without_a_name_is_refused(self, admin_client, storage):
         admin_client.post("/admin/users/create", data={"username": "   "})

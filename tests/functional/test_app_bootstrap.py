@@ -1,9 +1,9 @@
 """Câblage de `main.create_app()` : ce que l'app garantit avant toute route.
 
 Aucun de ces tests n'existait, alors que c'est ici que vivent les décisions les
-plus structurantes : le fail-fast sur `SECRET_KEY`, l'exemption CSRF de l'API
-(et *seulement* de l'API), l'emprunt/restitution de connexion à chaque requête,
-et les filtres de date que tous les templates utilisent.
+plus structurantes : le fail-fast sur `SECRET_KEY`, l'absence de toute mutation
+sous `/api/*` à exempter du CSRF, l'emprunt/restitution de connexion à chaque
+requête, et les filtres de date que tous les templates utilisent.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class TestStartup:
     @pytest.mark.parametrize(
         ("endpoint", "expected_rule"),
         [
-            ("api.get_sources", "/api/sources"),
+            ("api.search_locations_endpoint", "/api/locations"),
             ("web.dashboard", "/dashboard"),
             ("admin.admin", "/admin"),
         ],
@@ -66,20 +66,21 @@ class TestStartup:
 
 
 class TestCsrfExemption:
-    """`csrf.exempt(api_bp)` ne doit couvrir QUE l'API.
+    """La protection CSRF ne doit couvrir QUE ce qui en a besoin.
 
-    Une régression qui exempterait `web_bp` rendrait toutes les mutations web
-    (suppression de recherche, création de compte, purge d'annonces) déclenchables
-    depuis n'importe quel site tiers. Les deux sens sont donc testés.
+    L'API n'expose plus aucune mutation depuis la suppression du token (#30) :
+    sa seule route est un GET d'autocomplete, hors du périmètre CSRF. Le cœur
+    du test reste le refus des POST web/admin sans jeton, avec la contre-épreuve
+    qui prouve que le refus vient bien du jeton et pas d'une route cassée.
     """
 
-    def test_api_post_succeeds_without_csrf_token(self, client, storage):
-        storage.users.create_user.return_value = {"id": 7, "username": "bob", "api_token": "tok-bob"}
+    def test_the_api_surface_has_no_mutation_to_exempt(self, client, storage):
+        """Un POST sur l'unique blueprint API ne touche rien : il n'existe
+        aucune route mutante sous `/api/*` à protéger ou à exempter."""
+        resp = client.post("/api/locations")
 
-        resp = client.post("/api/users", json={"username": "bob"})
-
-        assert resp.status_code == 201
-        storage.users.create_user.assert_called_once_with("bob")
+        assert resp.status_code == 405
+        storage.users.create_user.assert_not_called()
 
     @pytest.mark.parametrize(
         ("path", "data"),
@@ -106,7 +107,7 @@ class TestCsrfExemption:
         Le jeton est repris du formulaire réel, comme le ferait un navigateur —
         c'est le seul moyen d'avoir un jeton cohérent avec le cookie de session.
         """
-        storage.users.create_user.return_value = {"id": 7, "username": "bob", "api_token": "tok-bob"}
+        storage.users.create_user.return_value = {"id": 7, "username": "bob"}
         page = client.get("/login").get_data(as_text=True)
         token = re.search(r'name="csrf_token" value="([^"]+)"', page).group(1)
 
@@ -119,7 +120,7 @@ class TestCsrfExemption:
 class TestConnectionLifecycle:
     """`before_request` emprunte une connexion, `teardown_request` la rend."""
 
-    @pytest.mark.parametrize("path", ["/health", "/api/sources", "/login", "/nope-404"])
+    @pytest.mark.parametrize("path", ["/health", "/api/locations?q=x", "/login", "/nope-404"])
     def test_every_request_borrows_and_returns_one_connection(self, client, storage, path):
         conn = object()
         storage._get_conn.return_value = conn
@@ -133,10 +134,15 @@ class TestConnectionLifecycle:
         """Une vue qui explose ne doit pas fuir la connexion du pool."""
         conn = object()
         storage._get_conn.return_value = conn
-        storage.users.get_user_by_token.side_effect = RuntimeError("boom")
+        storage.users.get_user_by_id.side_effect = RuntimeError("boom")
         app.config.update(TESTING=False, PROPAGATE_EXCEPTIONS=False)
 
-        resp = app.test_client().get("/api/stats", headers={"X-API-Token": "x"})
+        client = app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = 1
+            sess["username"] = "alice"
+
+        resp = client.get("/dashboard")
 
         assert resp.status_code == 500
         storage.release_to_pool.assert_called_once_with(conn)

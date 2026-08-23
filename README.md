@@ -82,47 +82,12 @@ Sur la page **Annonces**, consultez toutes les annonces trouvées avec prix, sur
 
 Si votre compte correspond à `ADMIN_USERNAME`, la page `/admin` donne accès au dashboard global, à la gestion des utilisateurs/recherches/annonces, à une console SQL (lecture seule — toute tentative d'écriture est rejetée par Postgres) et à la purge des logs.
 
-## API Endpoints
+## API
 
-Auth via header : `X-API-Token: <token>`
-
-### Utilisateurs
-
-| Endpoint | Méthode | Auth | Description |
-|----------|---------|------|-------------|
-| `/api/users` | POST | — | Créer un utilisateur |
-| `/api/users/login` | POST | — | Se connecter (ne renvoie pas le token) |
-| `/api/sources` | GET | — | Lister les sources disponibles et leurs capacités |
-| `/api/locations?q=` | GET | — | Autocomplete de ville (ville, code postal, code INSEE) |
-| `/api/stats` | GET | token | Statistiques du compte |
-
-### Recherches
-
-| Endpoint | Méthode | Auth | Description |
-|----------|---------|------|-------------|
-| `/api/searches` | POST | token | Créer une recherche |
-| `/api/searches` | GET | token | Lister ses recherches |
-| `/api/searches/<id>` | DELETE | token | Supprimer une recherche |
-| `/api/searches/<id>/urls` | GET | token | URL de recherche reconstruite pour la source |
-| `/api/searches/<id>/criteria` | PUT | token | Modifier les critères / l'intervalle |
-| `/api/searches/<id>/toggle-active` | POST | token | Activer/désactiver une recherche |
-| `/api/searches/<id>/blacklist-mode` | PUT | token | Mode de filtrage des agences (`exclude` / `no_notify`) |
-| `/api/searches/<id>/blacklist-agencies` | PUT | token | Liste des agences filtrées |
-
-### Scraping & annonces
-
-| Endpoint | Méthode | Auth | Description |
-|----------|---------|------|-------------|
-| `/api/scrape/<search_id>` | POST | token | Déclencher un scraping manuel |
-| `/api/listings/<search_id>` | GET | token | Consulter les annonces (filtres, pagination, tri) |
-| `/api/cleanup` | POST | token | Supprimer les annonces plus vieilles que N jours |
-
-### Logs de scrape
-
-| Endpoint | Méthode | Auth | Description |
-|----------|---------|------|-------------|
-| `/api/searches/<id>/logs/export` | GET | token | Exporter l'historique des scrapes en `.zip` |
-| `/api/searches/<id>/logs/import` | POST | token | Réimporter un historique exporté |
+L'API JSON publique pilotée par token (`X-API-Token`) a été retirée (#30) :
+l'interface web couvre déjà tous ces usages via les sessions Flask, et cette
+surface exposait un secret en clair dans l'UI. Seule subsiste l'autocomplete
+interne `GET /api/locations`, consommée par le formulaire de recherche.
 
 ## Tests
 

@@ -22,6 +22,7 @@ from flask import (
     session,
     url_for,
 )
+from loguru import logger
 
 from core.geocode import CITY
 from core.web_utils import to_int
@@ -242,14 +243,13 @@ def login():
         if not user:
             try:
                 user = current_app.storage.users.create_user(username)
-                flash(f"Compte créé ! Votre token API : {user['api_token']}", "success")
+                flash("Compte créé !", "success")
             except ValueError:
                 flash("Erreur lors de la création du compte", "error")
                 return render_template("login.html")
 
         session["user_id"] = user["id"]
         session["username"] = user["username"]
-        session["api_token"] = user["api_token"]
         return redirect(url_for("web.dashboard"))
 
     return render_template("login.html")
@@ -270,7 +270,6 @@ def dashboard():
         stats=data["stats"],
         searches=data["searches"],
         recent=data["recent"][:10],
-        api_token=session.get("api_token"),
         now=datetime.utcnow,
     )
 
@@ -308,7 +307,6 @@ def searches():
     return render_template(
         "searches.html",
         searches=all_searches,
-        api_token=session.get("api_token"),
         base_url=base_url,
         sources=sources,
         now=datetime.utcnow,
@@ -336,6 +334,62 @@ def scrape_search_web(search_id: int):
     ok, msg = _submit_scrape(search_id, g.user["id"])
     flash(msg, "success" if ok else "warning")
     return redirect(url_for("web.searches"))
+
+
+@web_bp.route("/searches/<int:search_id>/urls")
+@require_login
+def search_urls_web(search_id: int):
+    """URLs de recherche reconstruites pour chaque source de la recherche.
+
+    Reprise de l'ex-endpoint API `/api/searches/<id>/urls`, supprimé avec le
+    token (issue #30) : le modal « Voir l'URL » de la page Recherches l'appelle
+    désormais en fetch authentifié par le cookie de session.
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    sources = search.get("sources") or [search.get("source", "seloger")]
+    criteria = search.get("criteria", {})
+
+    from parsers import get_parser
+    results = []
+    for source in sources:
+        try:
+            parser = get_parser(source, storage=current_app.storage)
+        except ValueError as e:
+            results.append({"source": source, "url": None, "error": str(e)})
+            continue
+        # Reconstruire une URL peut demander un appel réseau (résolution du
+        # lieu propre à la source) et échouer : une erreur ici ne doit pas
+        # renvoyer un 500 pour toute la page, seulement priver cette source
+        # de son lien.
+        try:
+            urls = parser.build_search_urls(criteria)
+            error = None if urls else "URL reconstruction non disponible pour cette source"
+        except Exception as e:
+            logger.warning(f"[search:{search_id}] URL non reconstructible ({source}): {e}")
+            urls, error = [], f"URL non reconstructible : {e}"
+
+        results.append({
+            "source": source,
+            "url": urls[0] if urls else None,
+            "urls": urls,
+            "source_name": parser.SOURCE_NAME,
+            "error": error,
+            "note": parser.URL_NOTE or None,
+        })
+
+    # Les champs de premier niveau reflètent la première source (comportement
+    # hérité de l'API, conservé pour le front).
+    first = results[0] if results else {}
+    return jsonify({
+        "source": first.get("source"),
+        "url": first.get("url"),
+        "source_name": first.get("source_name"),
+        "sources": results,
+    }), 200
 
 
 @web_bp.route("/searches/<int:search_id>/interval", methods=["POST"])

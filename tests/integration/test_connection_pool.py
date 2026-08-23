@@ -177,7 +177,7 @@ class TestReleaseOfADirtyConnection:
         conn = storage._get_conn()
         pid = conn.get_backend_pid()
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO users (username, api_token) VALUES ('fantome', 'tok_fantome')")
+            cur.execute("INSERT INTO users (username) VALUES ('fantome')")
         assert conn.get_transaction_status() == INTRANS
 
         storage.release_to_pool(conn)

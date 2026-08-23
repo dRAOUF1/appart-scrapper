@@ -112,7 +112,7 @@ def _round_trip_whole_schema(url: str) -> None:
     storage = Storage(url)
 
     user = storage.users.create_user("migrated")
-    assert storage.users.get_user_by_token(user["api_token"])["username"] == "migrated"
+    assert storage.users.get_user_by_id(user["id"])["username"] == "migrated"
 
     criteria = make_criteria(rooms=[2, 3], surfaceMin=45)
     search = storage.searches.create_search(
@@ -285,7 +285,7 @@ def test_init_db_passes_as_soon_as_the_users_table_exists(blank_db):
     premier INSERT sur une colonne manquante.
     """
     url = blank_db()
-    _exec(url, "CREATE TABLE users (id SERIAL PRIMARY KEY, username TEXT, api_token TEXT)")
+    _exec(url, "CREATE TABLE users (id SERIAL PRIMARY KEY, username TEXT)")
 
     storage = Storage(url)  # ne lève pas, alors que searches/listings n'existent pas
 
@@ -347,6 +347,31 @@ def test_migration_removes_the_dead_use_bff_api_setting(blank_db):
 
     assert storage.settings.get_setting("use_bff_api", default="absent") == "absent"
     assert storage.settings.get_setting("notify_enabled") == "true"
+
+
+def test_migration_drops_the_legacy_api_token_column(blank_db):
+    """Le token API a été supprimé (#30) : la colonne doit disparaître des
+    bases créées avant, sans toucher aux données qui comptent — et rejouer
+    les migrations ne doit rien casser (`DROP COLUMN IF EXISTS`)."""
+    url = blank_db()
+    _exec(url, """
+        CREATE TABLE users (
+            id         SERIAL PRIMARY KEY,
+            username   TEXT UNIQUE NOT NULL,
+            api_token  TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    _exec(url, "INSERT INTO users (username, api_token) VALUES ('alice', 'jeton-heritage')")
+
+    Storage.run_migrations(url)
+
+    assert "api_token" not in _columns_of(url, "users")
+    assert _query(url, "SELECT username FROM users") == [("alice",)]
+
+    # Idempotence : un second passage ne lève pas et n'efface rien.
+    Storage.run_migrations(url)
+    assert _query(url, "SELECT COUNT(*) FROM users")[0][0] == 1
 
 
 def test_migration_renames_legacy_insee_code_column_keeping_cached_resolutions(blank_db):
