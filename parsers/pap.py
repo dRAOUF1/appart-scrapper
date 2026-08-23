@@ -341,6 +341,12 @@ def _parse_cards(html: str) -> list[dict]:
             continue
         uid = m.group(1)
 
+        # Les cartes partenaires pointent une URL déjà ABSOLUE (r33480 ->
+        # https://www.acceslogement.fr/..., capture réelle) : la garder telle
+        # quelle, ne JAMAIS préfixer (et surtout pas jeter la carte — le
+        # comptage des fiches doit rester identique).
+        card_url = href if href.startswith("http") else f"{BASE_URL}{href}"
+
         line = _clean_text(link.select_one(".h1").get_text(" ", strip=True)) \
             if link.select_one(".h1") else ""
         if _PROXIMITY_RE.search(line):
@@ -378,7 +384,7 @@ def _parse_cards(html: str) -> list[dict]:
 
         results.append({
             "uid": uid,
-            "url": f"{BASE_URL}{href}",
+            "url": card_url,
             "title": line,
             "price_text": price_text,
             "price_value": _parse_price(price_text),
