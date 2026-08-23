@@ -218,10 +218,13 @@ def _search_body(location: dict) -> dict:
     """Le corps POST pour UN périmètre : localisation seule, tous les autres
     filtres à false (voir la docstring du module pour le pourquoi)."""
     kind = location.get("kind", CITY)
+    # Jamais location["code"] direct : un département/région sans code doit
+    # tomber sur le garde « sans code exploitable » ci-dessous, pas lever
+    # KeyError avant lui.
     if kind == DEPARTMENT:
-        scope = {"typeLieu": "d", "codeLieu": str(location["code"])}
+        scope = {"typeLieu": "d", "codeLieu": str(location.get("code") or "")}
     elif kind == REGION:
-        scope = {"typeLieu": "r", "codeLieu": str(location["code"])}
+        scope = {"typeLieu": "r", "codeLieu": str(location.get("code") or "")}
     elif kind in (CITY, WHOLE_CITY):
         # Un code postal par requête : le site modélise lui-même ses lieux
         # comme des couples (ville, code postal) — jamais de liste.

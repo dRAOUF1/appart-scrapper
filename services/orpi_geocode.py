@@ -249,9 +249,14 @@ def _resolve_uncached(location: dict) -> str | None:
                 return None
             if code.upper() in _CORSE_DEPARTMENT_NAMES:
                 # La Corse n'a aucune entrée par code (« 2A » -> [], vérifié
-                # en direct) : requête par le nom du département.
-                results = _query_autocomplete(_CORSE_DEPARTMENT_NAMES[code.upper()])
-                return _pick_department(results, code)
+                # en direct) : requête par le NOM du département, et c'est CE
+                # nom qui désambiguise dans _pick_department — lui passer le
+                # code (« 2B ») ne matcherait jamais un libellé et ferait
+                # retomber sur « première entrée » (périmètre faux silencieux
+                # quand le site liste les deux départements).
+                name = _CORSE_DEPARTMENT_NAMES[code.upper()]
+                results = _query_autocomplete(name)
+                return _pick_department(results, name)
             results = _query_autocomplete(code)
             return _pick_department(results, location.get("name") or "")
         if kind == REGION:
