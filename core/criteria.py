@@ -24,6 +24,16 @@ Le vocabulaire :
                   et sont ce qui permet à chaque source de retrouver son
                   propre identifiant de lieu. Une entrée sans `kind` vaut
                   "city" : c'est le format d'avant les périmètres larges.
+    transit       une liste de sélections de transports en commun (issue #28,
+                  façon Jinka) :
+                    {mode: "tram"|"metro"|"rer"|"train",
+                     line_id: "<route_id GTFS>",
+                     stop_ids: ["<station GTFS>", ...],
+                     radius_m: 500|1000|2000}
+                  `stop_ids` vide signifie « toute la ligne ». Cette clé reste
+                  au vocabulaire NEUTRE : aucun parser ne la lit jamais — le
+                  service d'expansion (services/transit_expansion.py) la
+                  convertit en localisations classiques AVANT to_native().
     transaction   "rent" | "buy"
     propertyTypes ["apartment", "house", "parking", "land"]
     priceMin/Max  entiers, en euros (loyer mensuel ou prix de vente selon
@@ -94,6 +104,16 @@ _PROPERTY_TYPE_ALIASES = {
 # Clés de l'ancien format qui sont en réalité propres à SeLoger : elles
 # partent dans sourceOverrides["seloger"] au lieu d'être perdues.
 _SELOGER_OWN_KEYS = ("placeIds", "locationsInBuildingExcluded")
+
+# --- Transports en commun (issue #28) --------------------------------------
+# Les modes ferrés du référentiel GTFS francilien (voir scripts/import_transit).
+TRANSIT_MODES = ("tram", "metro", "rer", "train")
+# Rayons proposés à la saisie (à vol d'oiseau depuis la station). Tout rayon
+# illisible ou hors liste retombe sur le défaut : le formulaire ne propose
+# que ces valeurs, mais un payload retouché à la main ne doit jamais produire
+# un périmètre fantaisiste.
+TRANSIT_RADII = (500, 1000, 2000)
+TRANSIT_RADIUS_DEFAULT = 1000
 
 
 def _as_list(value) -> list:
@@ -305,6 +325,70 @@ def _normalize_counts(values) -> list[int]:
     return sorted(counts)
 
 
+def _normalize_transit(criteria: dict) -> list[dict]:
+    """Les sélections de transports en commun, normalisées.
+
+    Une entrée valide porte au minimum `line_id` : sans elle, rien n'est
+    exploitable ni chez nous ni dans le GTFS — l'entrée est écartée, jamais
+    devinée. Les champs secondaires sont assouplis :
+      - mode illisible -> clé simplement omise (la ligne reste cherchable) ;
+      - rayon hors liste -> fallback TRANSIT_RADIUS_DEFAULT (comportement
+        demandé par l'issue, documenté à la saisie) ;
+      - stop_ids coercés en chaînes non vides, dédoublonnés et triés (une
+        station cochée deux fois ne doit pas produire deux périmètres).
+    Deux entrées portant la même ligne sont dédupliquées (première gagnante) :
+    le formulaire ne peut pas les produire, mais un payload édité à la main
+    si — une seule sélection par ligne garde le canonique prévisible.
+    """
+    entries: list[dict] = []
+    seen_lines: set[str] = set()
+    for entry in _as_list(criteria.get("transit")):
+        if not isinstance(entry, dict):
+            continue
+        line_id = str(entry.get("line_id") or "").strip()
+        if not line_id or line_id in seen_lines:
+            continue
+        seen_lines.add(line_id)
+
+        normalized: dict = {"line_id": line_id}
+
+        mode = entry.get("mode")
+        if isinstance(mode, str) and mode.strip().lower() in TRANSIT_MODES:
+            normalized["mode"] = mode.strip().lower()
+
+        stop_ids = sorted({
+            str(stop).strip()
+            for stop in _as_list(entry.get("stop_ids"))
+            if str(stop).strip()
+        })
+        if stop_ids:
+            normalized["stop_ids"] = stop_ids
+
+        radius = _to_int(entry.get("radius_m"))
+        normalized["radius_m"] = radius if radius in TRANSIT_RADII else TRANSIT_RADIUS_DEFAULT
+
+        entries.append(normalized)
+    return entries
+
+
+def normalize_transit(criteria: dict | None) -> list[dict]:
+    """Les sélections `transit` des critères, normalisées — [] si absentes.
+
+    Point d'entrée public pour tout ce qui lit cette clé (expansion,
+    formulaire, hydratation) : personne d'autre ne doit interpréter le brut.
+    """
+    if not criteria or not isinstance(criteria, dict):
+        return []
+    return _normalize_transit(criteria)
+
+
+def has_transit(criteria: dict | None) -> bool:
+    """Au moins une sélection de transport valide ? Sert au contrat « une
+    recherche transit-seule est valide » (issue #28) : les sources recevront
+    des localisations classiques après expansion."""
+    return bool(normalize_transit(criteria))
+
+
 def _normalize_source_overrides(criteria: dict) -> dict:
     """Les surcharges par source, depuis `sourceOverrides` ou depuis les
     clés SeLoger de l'ancien format restées au premier niveau."""
@@ -342,6 +426,15 @@ def normalize_criteria(criteria: dict | None) -> dict:
     locations = normalize_locations(criteria)
     if locations:
         normalized["locations"] = locations
+
+    # Issue #28 : les sélections transit sont normalisées mais la clé n'est
+    # AJOUTÉE que si non vide — comme les autres clés, une absence ne devient
+    # jamais un champ vide en base (rétrocompatibilité totale des critères
+    # existants, idempotence garantie). La lecture passe par
+    # normalize_transit(), qui renvoie [] sur l'absence.
+    transit = _normalize_transit(criteria)
+    if transit:
+        normalized["transit"] = transit
 
     transaction = _normalize_transaction(criteria)
     if transaction:

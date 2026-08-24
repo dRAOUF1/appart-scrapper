@@ -16,6 +16,7 @@ from core.criteria import (
     PROPERTY_TYPES,
     TRANSACTION_LABELS,
     TRANSACTIONS,
+    has_transit,
     normalize_locations,
 )
 from models.listing import Listing
@@ -242,8 +243,15 @@ class BaseParser(ABC):
         is the universal location contract — every source is expected to
         work from this, en résolvant elle-même son propre identifiant de
         lieu depuis la localisation canonique (voir to_native).
+
+        Issue #28 : une recherche « transit-seule » est aussi valide. Les
+        parsers ne lisent jamais `transit` (l'expansion en fait des
+        localisations classiques avant to_native, voir
+        services/transit_expansion) : l'accepter ici ne leur fait rien voir,
+        ça garantit juste qu'une telle recherche n'est pas rejetée à la
+        création/planification alors que le pipeline saura la servir.
         """
-        return bool(get_locations(criteria))
+        return bool(get_locations(criteria)) or has_transit(criteria)
 
     def unsupported_criteria(self, criteria: dict) -> list[str]:
         """Les critères demandés que cette source ne sait pas honorer, en
