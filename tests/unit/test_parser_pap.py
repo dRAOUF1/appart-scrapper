@@ -977,6 +977,52 @@ class TestBuildSearchUrls:
 
         assert url == f"{BASE_URL}/annonce/vente-immobiliere-paris-g439g10000"
 
+    def test_a_non_numeric_geo_id_sorts_after_the_numeric_ones_without_raising(self):
+        """Écart audit n°2 : un identifiant saisi à la main NON numérique
+        (faute de frappe, format inattendu) est aberrant mais ne doit PAS faire
+        lever le tri int() : il passe après tous les numériques, et l'URL reste
+        émise — c'est le site qui la refusera le cas échéant, pas le parser."""
+        criteria = {
+            "locations": [RENNES, PARIS_WHOLE],
+            "transaction": "buy",
+            "propertyTypes": [],
+            "sourceOverrides": {"pap": {"geoIds": ["nawak", "439"]}},
+        }
+
+        url = PapParser().build_search_urls(criteria)[0]
+
+        assert url == f"{BASE_URL}/annonce/vente-immobiliere-paris-g439gnawak"
+
+    def test_several_non_numeric_geo_ids_keep_their_insertion_order(self):
+        """Écart audit n°2 (suite) : entre ids aberrants la clé de tri ne
+        départage rien (tous « non numériques ») — le tri Python stable garde
+        l'ordre de saisie, donc l'URL reste DÉTERMINISTE d'un run à l'autre."""
+        criteria = {
+            "locations": [RENNES, PARIS_15],
+            "transaction": "buy",
+            "propertyTypes": [],
+            "sourceOverrides": {"pap": {"geoIds": ["zz", "aa"]}},
+        }
+
+        url = PapParser().build_search_urls(criteria)[0]
+
+        assert url == f"{BASE_URL}/annonce/vente-immobiliere-rennes-gzzgaa"
+
+    def test_duplicate_geo_ids_are_deduplicated_before_sorting(self):
+        """Écart audit n°2 (fin) : deux périmètres portant le MÊME identifiant
+        (saisie en double) n'émettent qu'un seul bloc ; setdefault garde la
+        PREMIÈRE localisation, dont le nom alimente le slug."""
+        criteria = {
+            "locations": [RENNES, PARIS_WHOLE],
+            "transaction": "buy",
+            "propertyTypes": [],
+            "sourceOverrides": {"pap": {"geoIds": ["43618", "43618"]}},
+        }
+
+        url = PapParser().build_search_urls(criteria)[0]
+
+        assert url == f"{BASE_URL}/annonce/vente-immobiliere-rennes-g43618"
+
     def test_no_dash_inside_the_fused_block(self):
         """La forme -gA-gB (tiret entre blocs) ne porte que le PREMIER
         périmètre (redirection vérifiée en direct) : elle est interdite par
