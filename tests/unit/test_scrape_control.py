@@ -22,7 +22,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 import pytest
 
-from core.scrape_control import submit_scrape
+import core.scrape_control as core_scrape_control
+from core.scrape_control import file_dattente, submit_scrape
 
 ALREADY_RUNNING = "Scraping déjà en cours pour cette recherche"
 STARTED = "Scraping démarré en arrière-plan"
@@ -296,3 +297,113 @@ def test_concurrent_submissions_for_distinct_searches_all_go_through(app, scrape
     for search_id in search_ids:
         app._scrape_futures[search_id].result(timeout=10)
     assert sorted(scrape_service.calls) == [(sid, 3) for sid in search_ids]
+
+
+# ---------------------------------------------------------------------------
+# Vue file d'attente (#17) — file_dattente
+# ---------------------------------------------------------------------------
+
+
+class TestFileDAttente:
+    """Le snapshot lu par le fragment admin « File d'attente des scrapes ».
+
+    Contrats : rangs séquentiels selon l'ordre de soumission (executor
+    max_workers=1 ⇒ FIFO), âges en secondes depuis la soumission, marquage
+    des futures terminés, purge mémoire des entrées disparues — et JAMAIS
+    d'exception ni d'accès base (le fragment est pollé toutes les 5 s).
+    """
+
+    def test_an_empty_queue_is_an_empty_list(self, app):
+        assert file_dattente(app) == []
+
+    def test_pending_futures_are_ranked_in_submission_order(self, app, scrape_service):
+        """Rang 1 = scrape présumé en cours, rangs suivants = en attente :
+        c'est exactement ce que produit max_workers=1 (exécution FIFO).
+        La gate maintient les trois jobs vivants pendant la lecture."""
+        scrape_service.gate = threading.Event()
+        submit_scrape(app, search_id=7, user_id=3)
+        submit_scrape(app, search_id=9, user_id=3)
+        submit_scrape(app, search_id=2, user_id=3)
+
+        entrees = file_dattente(app)
+
+        assert [e["search_id"] for e in entrees] == [7, 9, 2]
+        assert [e["rang"] for e in entrees] == [1, 2, 3]
+        assert all(not e["termine"] for e in entrees)
+
+    def test_a_terminated_future_is_flagged_not_dropped(self, app, scrape_service):
+        """Un future terminé mais pas encore purgé de _scrape_futures reste
+        visible avec termine=True : la vue peut afficher sa trace sans le
+        compter comme actif."""
+        submit_scrape(app, search_id=7, user_id=3)  # tourne puis se termine…
+        app._scrape_futures[7].result(timeout=5)
+        submit_scrape(app, search_id=9, user_id=3)  # …et 9 part derrière
+
+        entrees = file_dattente(app)
+
+        par_id = {e["search_id"]: e for e in entrees}
+        assert par_id[7]["termine"] is True
+        assert par_id[9]["termine"] is False
+        assert par_id[9]["rang"] == 2, "le rang reflète l'ordre du dict, pas l'activité"
+
+    def test_the_age_counts_seconds_since_submission(self, app, scrape_service, monkeypatch):
+        """age_s est calculé sur time.monotonic (insensible aux changements
+        d'horloge système), capturé AU MOMENT de la soumission."""
+        horloge = [1000.0]
+        monkeypatch.setattr("core.scrape_control.time.monotonic", lambda: horloge[0])
+
+        submit_scrape(app, search_id=7, user_id=3)
+        assert file_dattente(app)[0]["age_s"] == 0
+
+        horloge[0] += 42.6
+        assert file_dattente(app)[0]["age_s"] == 42
+
+    def test_a_future_submitted_before_this_feature_has_a_zero_age(self, app):
+        """Compat : un future présent dans _scrape_futures sans timestamp
+        (déployé avant #17, ou injecté par un tiers) ne fait pas lever le
+        snapshot — il affiche un âge neutre."""
+        app._scrape_futures[11] = _pending_future()
+
+        entree = file_dattente(app)[0]
+
+        assert entree["search_id"] == 11
+        assert entree["age_s"] == 0
+        assert entree["termine"] is False
+
+    def test_timestamps_of_purged_futures_are_cleaned_up(self, app, scrape_service):
+        """Sans purge, _soumissions croîtrait pour toute la vie du process :
+        chaque recherche jamais scrapée y laisserait une entrée."""
+        submit_scrape(app, search_id=7, user_id=3)
+        app._scrape_futures[7].result(timeout=5)
+        del app._scrape_futures[7]
+
+        file_dattente(app)
+
+        assert 7 not in core_scrape_control._soumissions
+
+    def test_the_snapshot_never_touches_storage_or_raises(self, app, scrape_service):
+        """Le fragment est pollé toutes les 5 s : aucun accès base, aucune
+        exception possible même sur un état interne inattendu."""
+        app._scrape_futures[13] = None  # valeur absurde : le code doit survivre
+
+        entrees = file_dattente(app)
+
+        assert [e["search_id"] for e in entrees] == [13]
+        assert entrees[0]["termine"] is False
+
+    def test_manual_submission_works_while_the_scheduler_is_paused(self, app, scrape_service):
+        """Critère #17 : la pause globale filtre le TICK planifié (main.py),
+        pas les soumissions manuelles — submit_scrape ne consulte AUCUN
+        réglage, même quand la clé vaut 'true'."""
+        from unittest.mock import MagicMock
+
+        app.storage = MagicMock()
+        app.storage.settings.get_setting.return_value = "true"  # pause ACTIVE
+
+        submitted, message = submit_scrape(app, search_id=21, user_id=4)
+
+        assert (submitted, message) == (True, STARTED)
+        assert scrape_service.calls == [(21, 4)]
+        app.storage.settings.get_setting.assert_not_called(), (
+            "la soumission manuelle ne doit même pas lire l'état de pause"
+        )

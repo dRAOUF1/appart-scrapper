@@ -527,26 +527,34 @@ class TestSettingsRepository:
         assert "ON CONFLICT" in conn.sql[0]
         assert conn.commits == 1
 
-    def test_this_repository_has_no_caller_in_production(self):
-        """Aucun appel à `settings.get_setting`/`set_setting` dans le code de
-        production : ce repository est du code mort candidat. Il reste testé
-        (il est instancié par `Storage`), mais ce test signale qu'il pourrait
-        disparaître — et échouera le jour où quelqu'un s'en sert, invitant à
-        le retirer d'ici.
+    def test_the_scheduler_and_admin_consume_this_repository(self):
+        """Garde INVERSÉ par l'issue #17 : jusqu'ici `settings_repo` était du
+        code mort candidat (l'ancien test exigeait ZÉRO appelant en production).
+        La pause globale du scheduler lui donne désormais deux consommateurs :
+        le tick planifié (`main.py`) et l'UI admin (`routes/admin.py`).
+
+        Le garde vérifie qu'aucun AUTRE fichier n'y touche : une fuite de la
+        clé de pause vers un tiers module (au lieu des deux points d'entrée
+        voulus) doit rester visible.
         """
         import pathlib
 
         root = pathlib.Path(__file__).resolve().parents[2]
-        callers = []
+        attendus = {"main.py", "admin.py"}
+        autres: list[str] = []
         for path in root.rglob("*.py"):
             parts = set(path.parts)
             if parts & {"venv", "tests", "_legacy", "graphify-out"}:
                 continue
             text = path.read_text(encoding="utf-8")
             if "settings.get_setting" in text or "settings.set_setting" in text:
-                callers.append(path.name)
+                if path.name not in attendus:
+                    autres.append(path.name)
 
-        assert callers == []
+        assert autres == [], (
+            "settings.get_setting/set_setting appelé hors des points d'entrée "
+            f"attendus (#17) : {sorted(autres)}"
+        )
 
 
 class TestSelogerGeoRepository:

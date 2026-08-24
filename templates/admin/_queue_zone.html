@@ -1,0 +1,75 @@
+{#
+  Zone vivante « File d'attente des scrapes » (issue #17).
+
+  Réutilise le PATTERN DE POLLING du socle (#16, cf. admin/_stats_zone.html) :
+  l'attribut hx-trigger vit SUR l'élément échangé, le serveur renvoie un
+  nouvel élément qui relance lui-même le cycle, et changer d'onglet arrête
+  le polling (la zone quitte le DOM — aucun timer JS à nettoyer). Le GET vise
+  un fragment minimal (`?fragment=queue`), rendu par `_contexte_file`.
+
+  Contenu : scrapes en cours / en attente avec leur RANG EN FILE (rang 1 =
+  en cours, executor max_workers=1 donc file séquentielle), occupation de
+  l'executor, prochain passage planifié, détenteur du verrou consultatif,
+  état de la pause globale.
+#}
+
+<div class="card admin-queue-zone" id="admin-queue-zone"
+     hx-get="{{ url_for('admin.admin', tab='dashboard', fragment='queue') }}"
+     hx-trigger="every 5s" hx-swap="outerHTML">
+    <h2>🚦 File d'attente des scrapes</h2>
+
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+        {% if scheduler_paused %}
+        <span class="badge badge-warning">⏸️ Planification en pause</span>
+        {% else %}
+        <span class="badge badge-active">▶ Planification active</span>
+        {% endif %}
+        <span class="badge">Executor : {{ nb_actifs }}/{{ capacite_executor }} scrape simultané max</span>
+        {% if prochain_passage %}
+        <span class="badge">Prochain passage planifié :
+            {{- ' ' }}{{ prochain_passage.strftime('%H:%M:%S') }}</span>
+        {% elif not scheduler_paused %}
+        <span class="badge badge-muted">Scheduler non actif dans ce process</span>
+        {% endif %}
+        {% if verrou_detenu_par %}
+        <span class="badge" title="Verrou consultatif Postgres clé {{ 727271 }}">🔒 Verrou : {{ verrou_detenu_par }}</span>
+        {% else %}
+        <span class="badge badge-muted" title="Verrou consultatif Postgres clé {{ 727271 }}">🔓 Verrou non détenu ici</span>
+        {% endif %}
+    </div>
+
+    {% if file_entrees %}
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Rang en file</th>
+                    <th>Recherche</th>
+                    <th>Source</th>
+                    <th>État</th>
+                    <th>Soumis il y a</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in file_entrees %}
+                <tr>
+                    <td><span class="badge">{{ e.rang }}</span></td>
+                    <td><strong>{{ e.label }}</strong></td>
+                    <td><span class="badge badge-source">{{ e.source }}</span></td>
+                    <td>
+                        {% if e.rang == 1 %}<span class="badge badge-active">🔄 En cours</span>
+                        {% else %}<span class="badge badge-warning">⏳ En attente (rang {{ e.rang }})</span>{% endif %}
+                    </td>
+                    <td class="text-muted">il y a {{ e.age_s }} s</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-muted text-sm">
+        Aucun scrape en cours ni en attente.
+        {%- if nb_termines_non_purges %} ({{ nb_termines_non_purges }} scrape(s) terminé(s) pas encore purgé(s) de la mémoire){% endif -%}
+    </p>
+    {% endif %}
+</div>
