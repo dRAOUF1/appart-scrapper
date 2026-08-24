@@ -30,6 +30,7 @@ from core.web_utils import to_int
 from parsers import list_sources, remember_manual_overrides
 from parsers._coords import coordonnee_valide
 from routes.auth import require_login
+from services import poi_overpass
 
 web_bp = Blueprint(
     "web", __name__,
@@ -1136,6 +1137,51 @@ def delete_pin(pin_id: int):
     if not deleted:
         return jsonify({"error": "Repère introuvable"}), 404
     return jsonify({"status": "supprimé"})
+
+
+# ---------------------------------------------------------------------------
+# Couches POI contextuelles de la carte (issue #27)
+#
+# Proxy serveur vers Overpass (OpenStreetMap) : pas de CORS, cache par bbox,
+# timeout court. Session-only comme le reste du web_bp. Aucun échec upstream
+# ne devient un 500 : la couche revient vide avec `degrade=True`, la carte
+# reste utilisable sans la couche.
+# ---------------------------------------------------------------------------
+
+
+@web_bp.route("/listings/poi")
+@require_login
+def poi_catalogue():
+    """Catalogue des couches POI — le front construit son contrôle Calques
+    depuis ce JSON : ajouter une couche côté serveur ne demande RIEN d'autre."""
+    couches = [
+        {"id": identifiant, "label": couche["label"], "icone": couche["icone"]}
+        for identifiant, couche in poi_overpass.COUCHES_POI.items()
+    ]
+    return jsonify({"couches": couches})
+
+
+@web_bp.route("/listings/poi/<couche>")
+@require_login
+def poi_couche(couche: str):
+    """Points d'une couche dans la bbox visible (`bbox=sud,ouest,nord,est`).
+
+    bbox invalide -> 400 explicite ; couche inconnue -> 404 ; échec Overpass
+    -> 200 avec `points: []` et `degrade: true` (jamais d'erreur interne pour
+    un problème chez le fournisseur).
+    """
+    if couche not in poi_overpass.COUCHES_POI:
+        return jsonify({"error": "Couche inconnue"}), 404
+
+    bbox = poi_overpass.parse_bbox(request.args.get("bbox"))
+    if bbox is None:
+        return jsonify(
+            {"error": "bbox invalide : attendu sud,ouest,nord,est "
+                      f"(floats ordonnés, amplitude ≤ {poi_overpass.AMPLITUDE_MAX_DEGRES}°)"}
+        ), 400
+
+    points, degrade = poi_overpass.recuperer_poi(couche, bbox)
+    return jsonify({"couche": couche, "degrade": degrade, "points": points})
 
 
 @web_bp.route("/cleanup", methods=["POST"])
