@@ -37,6 +37,7 @@ from tests.helpers.factories import (
     make_city_location,
     make_department_location,
     make_search_row,
+    make_transit_selection,
 )
 
 # ---------------------------------------------------------------------------
@@ -285,6 +286,86 @@ class TestEditionAdmin:
         page = resp.data.decode()
         assert f'/admin/searches/{RECHERCHE_ETRANGERE_ID}/edit' in page
         assert f'/admin/searches/{RECHERCHE_ETRANGERE_ID}/duplicate' in page
+
+
+# ---------------------------------------------------------------------------
+# Bloc Transports dans l'édition admin (#28)
+# ---------------------------------------------------------------------------
+
+TRANSIT_M14 = make_transit_selection()
+
+
+class TestTransitEditionAdmin:
+    """Le bloc Transports de l'édition admin (constats M2/M3 de la revue).
+
+    Avant correctif, le formulaire admin n'embarquait NI le bloc
+    [data-transit-block] NI le champ caché transit_payload : un POST d'édition
+    écrasait les sélections stockées avec [] — perte silencieuse, et une
+    recherche transit-seule devenait invalide au tick (donc jamais scrapée).
+    Et faute de filet ValueError, un transit_payload corrompu remontait un 500
+    au lieu du fragment d'erreur des routes utilisateur.
+    """
+
+    @pytest.fixture
+    def recherche_avec_transit(self, storage):
+        """La recherche de bob, portant locations + filtres + transit stockés."""
+        critères = {
+            "locations": [dict(PARIS_PAYLOAD)],
+            "transaction": "rent",
+            "propertyTypes": ["apartment"],
+            "priceMax": 1400,
+            "transit": [TRANSIT_M14],
+        }
+        row = recherche_possession_etrange(criteria=critères)
+        detail = make_search_detail(
+            id=row["id"], user_id=row["user_id"], username="bob",
+            total_listings=0, recent_listings=[], criteria=critères,
+        )
+        storage.searches.get_search.side_effect = lambda sid: row if sid == row["id"] else None
+        storage.searches.get_search_detail.side_effect = lambda sid: detail if sid == row["id"] else None
+        return critères
+
+    def test_le_formulaire_admin_rend_le_bloc_transit_hydrate(
+        self, admin_client, recherche_avec_transit
+    ):
+        resp = admin_client.get(f"/admin/searches/{RECHERCHE_ETRANGERE_ID}/edit")
+
+        page = resp.data.decode()
+        assert resp.status_code == 200
+        assert 'data-transit-block' in page
+        assert 'name="transit_payload"' in page, \
+            "sans ce champ caché, le POST écraserait les sélections stockées"
+        assert TRANSIT_M14["line_id"] in page, \
+            "le champ caché doit être hydraté depuis les critères stockés"
+        assert TRANSIT_M14["stop_ids"][0] in page
+
+    def test_un_post_qui_ne_change_que_le_label_presolve_toutes_les_cles_canoniques(
+        self, admin_client, storage, recherche_avec_transit
+    ):
+        # Ce que le navigateur poste quand l'admin ne touche qu'au label :
+        # les champs cachés repartent tels quels, transit compris.
+        data = formulaire_edition(label="Seul le label change")
+        data["transit_payload"] = json.dumps([TRANSIT_M14])
+
+        admin_client.post(f"/admin/searches/{RECHERCHE_ETRANGERE_ID}/edit", data=data)
+
+        _, kwargs = storage.searches.update_search.call_args
+        assert kwargs["criteria"] == recherche_avec_transit, \
+            "les critères canoniques doivent repartir identiques, transit inclus"
+
+    def test_un_payload_transit_corrompu_repond_en_erreur_sans_ecrire(
+        self, admin_client, storage, recherche_avec_transit
+    ):
+        resp = admin_client.post(
+            f"/admin/searches/{RECHERCHE_ETRANGERE_ID}/edit",
+            data={**formulaire_edition(), "transit_payload": "{corrompu"},
+            follow_redirects=True,
+        )
+
+        assert resp.status_code == 200, "jamais un 500 : même filet que les routes utilisateur"
+        assert "corrompues" in resp.data.decode(), "le message français du parseur doit être affiché"
+        # La recherche doit rester INTACTE en base.
+        storage.searches.update_search.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

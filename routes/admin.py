@@ -1231,12 +1231,6 @@ def admin_edit_search(search_id):
         )
 
         existing_locations = (search.get("criteria") or {}).get("locations") or []
-        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
-
-        location_error = _location_error_message(criteria, hand_typed_failures)
-        validation = _validate_sources_criteria(selected_sources, criteria)
-        if not location_error and not all(r["ok"] for r in validation):
-            location_error = _validation_error_message(validation)
 
         def _retour_formulaire() -> dict:
             """Le formulaire réaffiché avec la saisie en cours ; si la fiche
@@ -1248,6 +1242,19 @@ def admin_edit_search(search_id):
                 )
                 or _CONTEXTE_ONGLETS["searches"](storage)
             )
+
+        try:
+            criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
+        except ValueError as e:
+            # Payload transit corrompu (#28) : même filet que les routes
+            # utilisateur (web.py) — message français explicite et retour au
+            # formulaire, jamais un 500.
+            return _reponse_rendue(str(e), "error", "searches", **_retour_formulaire())
+
+        location_error = _location_error_message(criteria, hand_typed_failures)
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not location_error and not all(r["ok"] for r in validation):
+            location_error = _validation_error_message(validation)
 
         if location_error:
             return _reponse_rendue(location_error, "error", "searches", **_retour_formulaire())
@@ -1533,10 +1540,28 @@ def _cellule_publication(creation_date) -> str:
         return str(creation_date)
 
 
+def _neutraliser_formule_csv(cellule: str) -> str:
+    """Neutralise l'injection de formule CSV (CWE-1236, recommandation OWASP).
+
+    Une cellule qui commence par « = », « + », « - » ou « @ » est évaluée
+    comme une formule par Excel/LibreOffice à l'ouverture de l'export :
+    exfiltration de données (HYPERLINK), exécution de commandes (cmd). Les
+    cellules viennent du SCRAPING — un titre malveillant est possible. Le
+    préfixe apostrophe rend la cellule inerte tout en restant lisible.
+    """
+    if cellule.startswith(("=", "+", "-", "@")):
+        return f"'{cellule}"
+    return cellule
+
+
 def _cellules_csv_annonce(li: dict) -> list[str]:
-    """Une ligne d'annonce → les colonnes françaises de l'export (#20)."""
+    """Une ligne d'annonce → les colonnes françaises de l'export (#20).
+
+    Chaque cellule passe par _neutraliser_formule_csv : le contenu vient du
+    scraping et n'est jamais de confiance.
+    """
     premiere_detection = li.get("first_seen")
-    return [
+    brutes = [
         str(li.get("listing_id") or ""),
         li.get("title") or "",
         li.get("source") or "",
@@ -1548,6 +1573,7 @@ def _cellules_csv_annonce(li: dict) -> list[str]:
         li.get("city") or "",
         li.get("url") or "",
     ]
+    return [_neutraliser_formule_csv(cellule) for cellule in brutes]
 
 
 @admin_bp.route("/admin/listings/export")
