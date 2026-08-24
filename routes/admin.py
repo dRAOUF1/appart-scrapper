@@ -15,8 +15,15 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+try:  # module standard sous Unix ; absent sous Windows → repli RSS sur None
+    import resource
+except ImportError:  # pragma: no cover - plateforme sans /proc ni resource
+    resource = None
 
 from flask import (
     Blueprint,
@@ -33,9 +40,20 @@ from flask import (
 )
 from loguru import logger
 
+from core.reglages import (
+    CLE_PURGE_LOGS_AUDIT,
+    CLE_RETENTION_ANNONCES,
+    DEFAUT_PURGE_LOGS_AUDIT,
+    DEFAUT_RETENTION_ANNONCES,
+    lire_jours,
+    valider_jours,
+)
+from core.scrape_control import dernier_tick
 from core.web_utils import format_criteria_lisible, to_int
 from parsers import list_sources, remember_manual_overrides
 from parsers._dates import DATE_INCONNUE
+from repositories.admin_repo import CACHES_GEO
+from repositories.base import statistiques_pool
 from repositories.listing_repo import _borne_date_comparee
 from routes.auth import require_admin
 from routes.web import (
@@ -51,7 +69,7 @@ admin_bp = Blueprint("admin", __name__)
 # Onglets servis par la vue principale. Le nom du partial rendu dépend de cette
 # allowlist : une valeur inconnue de `?tab=` est ramenée au dashboard, jamais
 # passée telle quelle au loader de templates.
-_TABS = ("dashboard", "users", "searches", "listings", "scrapes", "database", "logs")
+_TABS = ("dashboard", "users", "searches", "listings", "scrapes", "systeme", "database", "logs")
 
 # Issue #20 — export CSV des annonces : plafond documenté de lignes. Au-delà,
 # le fichier est tronqué (et le dit dans son en-tête de commentaire) : un
@@ -264,6 +282,11 @@ def _contexte_dashboard(storage) -> dict:
     ctx = {"stats": storage.admin.get_enhanced_admin_stats()}
     ctx.update(_contexte_file(application))
     ctx.update(_sources_actives(storage))
+    # Issue #21 : la valeur du réglage pilote le libellé du bouton « Nettoyer
+    # annonces » — le formulaire ne poste PAS de `days`, c'est donc bien ce
+    # réglage (relu à chaque usage) que l'action appliquera.
+    ctx["retention_listings_days"] = lire_jours(storage.settings.get_setting, CLE_RETENTION_ANNONCES,
+                                                DEFAUT_RETENTION_ANNONCES)
     return ctx
 
 
@@ -404,7 +427,11 @@ def _contexte_logs(storage) -> dict:
     total = storage.admin.count_admin_logs(action_filter=action_filter, date_from=date_from, date_to=date_to)
     return {"logs": logs, "total_logs": total, "page": page,
             "total_pages": max(1, (total + per_page - 1) // per_page),
-            "action_filter": action_filter, "date_from": date_from, "date_to": date_to}
+            "action_filter": action_filter, "date_from": date_from, "date_to": date_to,
+            # Issue #21 : la purge des logs n'embarque plus de champ `days` —
+            # elle applique le réglage relu à l'usage ; l'affiche en conséquence.
+            "purge_logs_days": lire_jours(storage.settings.get_setting, CLE_PURGE_LOGS_AUDIT,
+                                          DEFAUT_PURGE_LOGS_AUDIT)}
 
 
 def _contexte_scrapes(storage) -> dict:
@@ -497,6 +524,155 @@ def _contexte_scrape_log_detail(storage, log_id: int) -> dict | None:
     return {"scrape_log_detail": entree, "scrape_log_recherche": recherche}
 
 
+# ---------------------------------------------------------------------------
+# Santé du process, caches géo et paramètres (issue #21) — tab « Système »
+#
+# Règle commune : chaque lecture périphérique (env, /proc, pool, base) est
+# best-effort et dégrade en valeur neutre — l'onglet est pollé toutes les
+# 30 s, il ne doit JAMAIS rendre 500, même base muette ou conteneur sans
+# /proc. C'est le même contrat que la file d'attente (#17).
+# ---------------------------------------------------------------------------
+
+def _sha_deploye() -> str:
+    """SHA git déployé : RENDER_GIT_COMMIT (Render), puis GIT_COMMIT, sinon
+    'local'. Une variable présente mais vide compte pour absente."""
+    for cle in ("RENDER_GIT_COMMIT", "GIT_COMMIT"):
+        valeur = (os.environ.get(cle) or "").strip()
+        if valeur:
+            return valeur
+    return "local"
+
+
+def _uptime_secondes(application) -> float | None:
+    """Secondes écoulées depuis le boot (time.monotonic posé par create_app).
+
+    Absent de la config (app construite hors create_app) → None : l'affichage
+    retombe sur un état neutre au lieu de deviner.
+    """
+    demarrage = application.config.get("BOOT_MONOTONIC")
+    if demarrage is None:
+        return None
+    return max(0.0, time.monotonic() - float(demarrage))
+
+
+def _format_duree(secondes: float | None) -> str | None:
+    """Durée lisible « 2 j 03:04:05 » (le jour n'est affiché que si présent)."""
+    if secondes is None:
+        return None
+    total = max(0, int(secondes))
+    jours, reste = divmod(total, 86400)
+    heures, reste = divmod(reste, 3600)
+    minutes, secondes = divmod(reste, 60)
+    prefixe = f"{jours} j " if jours else ""
+    return f"{prefixe}{heures:02d}:{minutes:02d}:{secondes:02d}"
+
+
+def _memoire_rss_ko() -> int | None:
+    """Mémoire RSS courante en kB — lecture pure, fallback gracieux.
+
+    1re voie : /proc/self/status (VmRSS = RSS *courant*, Linux/containers).
+    Repli : resource.getrusage (ru_maxrss = PIC RSS sous Linux, suffisant
+    comme indicateur de santé). Aucune des deux disponibles → None.
+    """
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            for ligne in status:
+                if ligne.startswith("VmRSS:"):
+                    return int(ligne.split()[1])
+    except Exception:
+        pass
+    try:
+        if resource is not None:
+            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except Exception:
+        pass
+    return None
+
+
+def _format_mo(ko: int | None) -> str | None:
+    """kB → Mo arrondi, None si la mesure n'a pas été possible."""
+    if ko is None:
+        return None
+    return f"{ko / 1024:.0f} Mo"
+
+
+def _format_age(secondes: int | None) -> str | None:
+    """Âge lisible court : « il y a 42 s », « il y a 5 min », « il y a 2 h »."""
+    if secondes is None:
+        return None
+    if secondes < 60:
+        return f"il y a {secondes} s"
+    if secondes < 3600:
+        return f"il y a {secondes // 60} min"
+    return f"il y a {secondes // 3600} h"
+
+
+def _contexte_sante(application) -> dict:
+    """Cartes de santé du process (#21), chaque pièce fail-open.
+
+    Le tick scheduler vient de core.scrape_control (état PROCESS LOCAL : seul
+    le process qui détient le verrou consultatif tick — un process sans
+    scheduler montre « aucun passage », ce qui est la vérité). Les stats du
+    pool lisent le pool partagé de CE process via statistiques_pool().
+    """
+    try:
+        tick = dernier_tick()
+    except Exception as e:
+        logger.error(f"Impossible de lire le dernier tick du scheduler: {e}")
+        tick = None
+    try:
+        pool = statistiques_pool(application.storage.database_url)
+    except Exception as e:
+        logger.error(f"Impossible de lire l'état du pool de connexions: {e}")
+        pool = None
+
+    sha = _sha_deploye()
+    return {
+        "sha": sha,
+        "sha_court": sha if sha == "local" or len(sha) <= 7 else sha[:7],
+        "uptime_lisible": _format_duree(_uptime_secondes(application)),
+        "rss_lisible": _format_mo(_memoire_rss_ko()),
+        "dernier_tick": tick,
+        "tick_age_lisible": _format_age(tick["age_s"]) if tick else None,
+        "pool": pool,
+    }
+
+
+def _contexte_systeme(storage) -> dict:
+    """Contexte de l'onglet SYSTÈME (#21) : santé + caches géo + réglages."""
+    application = current_app._get_current_object()
+    try:
+        bruts = storage.admin.get_geo_cache_stats() or []
+    except Exception as e:
+        logger.error(f"Impossible de lire les stats des caches géo: {e}")
+        bruts = []
+
+    caches = []
+    for brut in bruts:
+        ligne = dict(brut)
+        if ligne.get("suivi_echecs"):
+            entrees = int(ligne.get("entrees") or 0)
+            manquees = int(ligne.get("manquees") or 0)
+            ligne["manquees_lisible"] = (
+                f"{manquees} ({round(100 * manquees / entrees)} %)" if entrees else "0"
+            )
+        else:
+            # Sans échec mémorisé (commune_centres), un taux serait mensonger.
+            ligne["manquees_lisible"] = "—"
+        caches.append(ligne)
+
+    return {
+        **_contexte_sante(application),
+        "caches_geo": caches,
+        # Réglages lus à CHAQUE rendu (pattern #17) : le formulaire montre
+        # toujours ce qu'une routine appliquerait maintenant.
+        "retention_listings_days": lire_jours(storage.settings.get_setting, CLE_RETENTION_ANNONCES,
+                                              DEFAUT_RETENTION_ANNONCES),
+        "purge_logs_days": lire_jours(storage.settings.get_setting, CLE_PURGE_LOGS_AUDIT,
+                                      DEFAUT_PURGE_LOGS_AUDIT),
+    }
+
+
 # Onglet → constructeur de son contexte de vue.
 _CONTEXTE_ONGLETS = {
     "dashboard": _contexte_dashboard,
@@ -504,6 +680,7 @@ _CONTEXTE_ONGLETS = {
     "searches": _contexte_recherches,
     "listings": _contexte_annonces,
     "scrapes": _contexte_scrapes,
+    "systeme": _contexte_systeme,
     "database": lambda storage: _contexte_base(storage),
     "logs": _contexte_logs,
 }
@@ -522,6 +699,9 @@ def admin():
     if tab == "dashboard" and request.args.get("fragment") == "queue":
         # Zone vivante (#17) : file d'attente des scrapes, pollée toutes les 5 s.
         return render_template("admin/_queue_zone.html", **_contexte_file(current_app._get_current_object()))
+    if tab == "systeme" and request.args.get("fragment") == "sante":
+        # Zone vivante (#21) : santé du process, pollée toutes les 30 s.
+        return render_template("admin/_sante_zone.html", **_contexte_sante(current_app._get_current_object()))
     return _render_admin_tab(tab, **_CONTEXTE_ONGLETS[tab](storage))
 
 
@@ -606,6 +786,119 @@ def admin_bulk_scrape():
     return _reponse_action(
         message, categorie,
         url_for("admin.admin"), "dashboard", **_CONTEXTE_ONGLETS["dashboard"](storage),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Système : santé process, caches géo, paramètres de scraping (issue #21)
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/admin/system")
+@require_admin
+def admin_system():
+    """Onglet SYSTÈME (#21) : santé du process, caches géo, paramètres."""
+    return _render_admin_tab("systeme", **_CONTEXTE_ONGLETS["systeme"](current_app.storage))
+
+
+def _entrees_cache(storage, table: str) -> int | None:
+    """Compteur d'entrées actuelles d'un cache géo (pour l'audit avant/après).
+
+    None si la lecture échoue : l'audit mentionne « n/a » plutôt que de
+    masquer la purge pour un compteur indisponible.
+    """
+    try:
+        for cache in storage.admin.get_geo_cache_stats() or []:
+            if cache["table"] == table:
+                return int(cache.get("entrees") or 0)
+    except Exception as e:
+        logger.error(f"Compteur indisponible pour le cache {table}: {e}")
+    return None
+
+
+@admin_bp.route("/admin/system/caches-geo/purge", methods=["POST"])
+@require_admin
+def admin_purge_geo_cache():
+    """Purge d'UN cache géo (#21), scoping par table du registre CACHES_GEO.
+
+    Le compte AVANT/APRÈS est relu en base (pas déduit) : il alimente le
+    toast ET le journal d'audit `geo_cache_purged` — une purge sans compteur
+    serait invérifiable après coup.
+    """
+    storage = current_app.storage
+    table = request.form.get("table", "").strip()
+
+    registre = {c["table"]: c["source"] for c in CACHES_GEO}
+    if table not in registre:
+        return _reponse_action(
+            f"Cache géo inconnu : « {table} »", "error",
+            url_for("admin.admin_system"), "systeme",
+            **_CONTEXTE_ONGLETS["systeme"](storage),
+        )
+    source = registre[table]
+
+    avant = _entrees_cache(storage, table)
+    supprimees = storage.admin.purge_geo_cache(table)
+    apres = _entrees_cache(storage, table)
+
+    storage.admin.log_admin_action(
+        "geo_cache_purged",
+        f"Cache géo '{source}' ({table}) purgé : {supprimees} entrée(s) supprimée(s)"
+        f" ({avant if avant is not None else 'n/a'} avant,"
+        f" {apres if apres is not None else 'n/a'} après) by {g.user['username']}",
+        g.user["username"],
+    )
+
+    if supprimees:
+        message = f"Cache « {source} » purgé — {supprimees} entrée(s) supprimée(s)"
+        categorie = "success"
+    else:
+        message = f"Cache « {source} » déjà vide"
+        categorie = "info"
+    return _reponse_action(
+        message, categorie,
+        url_for("admin.admin_system"), "systeme",
+        **_CONTEXTE_ONGLETS["systeme"](storage),
+    )
+
+
+@admin_bp.route("/admin/system/settings", methods=["POST"])
+@require_admin
+def admin_save_settings():
+    """Enregistrement des paramètres de scraping éditables (#21).
+
+    La pause scheduler n'est PAS ici — c'est le toggle du dashboard (#17),
+    ne pas dupliquer. Chaque valeur est validée (entier strictement positif,
+    ≤ 365 jours) puis persistée via settings_repo ; les routines qui la
+    consomment la RELISENT à chaque usage (`lire_jours`, pattern #17), donc
+    l'effet est immédiat au prochain tour concerné, sans redémarrage.
+    """
+    storage = current_app.storage
+    try:
+        retention = valider_jours(request.form.get("retention_listings_days"),
+                                  "Rétention des annonces")
+        purge_logs = valider_jours(request.form.get("purge_logs_days"),
+                                   "Purge des logs")
+    except ValueError as e:
+        return _reponse_action(
+            str(e), "error",
+            url_for("admin.admin_system"), "systeme",
+            **_CONTEXTE_ONGLETS["systeme"](storage),
+        )
+
+    storage.settings.set_setting(CLE_RETENTION_ANNONCES, str(retention))
+    storage.settings.set_setting(CLE_PURGE_LOGS_AUDIT, str(purge_logs))
+    storage.admin.log_admin_action(
+        "settings_updated",
+        f"Paramètres mis à jour : rétention annonces={retention} j,"
+        f" purge logs={purge_logs} j by {g.user['username']}",
+        g.user["username"],
+    )
+    return _reponse_action(
+        f"Paramètres enregistrés — rétention annonces {retention} j,"
+        f" purge logs {purge_logs} j",
+        "success",
+        url_for("admin.admin_system"), "systeme",
+        **_CONTEXTE_ONGLETS["systeme"](storage),
     )
 
 
@@ -1326,12 +1619,26 @@ def admin_logs():
     return _render_admin_tab("logs", **_CONTEXTE_ONGLETS["logs"](current_app.storage))
 
 
+def _jours_demandes(storage, cle: str, defaut: int) -> int:
+    """Jours à appliquer à une purge : le champ explicite du formulaire gagne,
+    sinon le réglage persisté relu À CHAQUE USAGE (pattern #17).
+
+    Un `days` fourni mais illisible retombe sur le défaut historique
+    (comportement `to_int` inchangé), pas sur le réglage : la demande
+    explicite reste maîtresse.
+    """
+    brut = (request.form.get("days") or "").strip()
+    if brut:
+        return to_int(brut, defaut)
+    return lire_jours(storage.settings.get_setting, cle, defaut)
+
+
 @admin_bp.route("/admin/logs/purge", methods=["POST"])
 @require_admin
 def admin_purge_logs():
-    days = to_int(request.form.get("days", 30), 30)
     storage = current_app.storage
-    deleted = storage.admin.purge_old_logs(days=days)
+    jours = _jours_demandes(storage, CLE_PURGE_LOGS_AUDIT, DEFAUT_PURGE_LOGS_AUDIT)
+    deleted = storage.admin.purge_old_logs(days=jours)
     return _reponse_action(
         f"{deleted} ancien(s) log(s) supprimé(s)", "success",
         url_for("admin.admin_logs"), "logs", **_CONTEXTE_ONGLETS["logs"](storage),
@@ -1341,11 +1648,11 @@ def admin_purge_logs():
 @admin_bp.route("/admin/cleanup", methods=["POST"])
 @require_admin
 def admin_cleanup():
-    days = to_int(request.form.get("days", 4), 4)
     storage = current_app.storage
-    deleted = storage.listings.delete_old_listings(days=days)
+    jours = _jours_demandes(storage, CLE_RETENTION_ANNONCES, DEFAUT_RETENTION_ANNONCES)
+    deleted = storage.listings.delete_old_listings(days=jours)
     storage.admin.log_admin_action(
-        "cleanup_executed", f"{deleted} listings older than {days} days deleted", g.user["username"]
+        "cleanup_executed", f"{deleted} listings older than {jours} days deleted", g.user["username"]
     )
     return _reponse_action(
         f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success",

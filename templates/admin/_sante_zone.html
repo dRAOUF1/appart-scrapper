@@ -1,0 +1,90 @@
+{#
+  Zone vivante « santé du process » de l'onglet SYSTÈME (issue #21).
+
+  C'est le pattern de polling du socle (#16, repris par #17) :
+      <div id="..." hx-get="...fragment=sante" hx-trigger="every 30s"
+           hx-swap="outerHTML"> ... </div>
+  - l'attribut de polling vit SUR l'élément échangé : après chaque swap, le
+    serveur renvoie un nouvel élément qui relance lui-même le cycle ;
+  - quitter l'onglet remplace #admin-content : le polling s'arrête tout seul ;
+  - le GET vise un fragment minimal (`?tab=systeme&fragment=sante`).
+
+  Chaque valeur affichée est fail-open côté serveur : une lecture impossible
+  rend « — », jamais une erreur.
+#}
+
+<div class="card" id="admin-sante-zone" style="margin-bottom: 1.5rem;"
+     hx-get="{{ url_for('admin.admin', tab='systeme', fragment='sante') }}"
+     hx-trigger="every 30s" hx-swap="outerHTML">
+    <h2>🩺 Santé du process</h2>
+    <div class="detail-grid">
+        <div class="detail-card">
+            <h3>📌 Version déployée</h3>
+            <div class="detail-row">
+                <span class="detail-label">Commit</span>
+                <span class="detail-value">
+                    {% if sha == 'local' %}
+                    <span class="badge">local</span>
+                    {% else %}
+                    <code title="{{ sha }}">{{ sha_court }}</code>
+                    {% endif %}
+                </span>
+            </div>
+            <p class="text-muted text-sm">SHA exposé par la plateforme (RENDER_GIT_COMMIT).</p>
+        </div>
+        <div class="detail-card">
+            <h3>⏱️ Process</h3>
+            <div class="detail-row">
+                <span class="detail-label">Uptime</span>
+                <span class="detail-value">{{ uptime_lisible or '—' }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Mémoire RSS</span>
+                <span class="detail-value">{{ rss_lisible or '—' }}</span>
+            </div>
+        </div>
+        <div class="detail-card">
+            <h3>🗓️ Dernier passage planifié</h3>
+            {% if dernier_tick %}
+            <div class="detail-row">
+                <span class="detail-label">Résultat</span>
+                <span class="detail-value">
+                    {% if dernier_tick.statut == 'ok' %}
+                    <span class="badge badge-active">OK</span>
+                    {% elif dernier_tick.statut == 'pause' %}
+                    <span class="badge badge-warning">Pause</span>
+                    {% else %}
+                    <span class="badge badge-inactive">Erreur</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Détail</span>
+                <span class="detail-value">{{ dernier_tick.detail or '—' }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Quand</span>
+                <span class="detail-value">{{ tick_age_lisible }}</span>
+            </div>
+            {% else %}
+            <p class="text-muted text-sm">Aucun passage enregistré sur ce process
+            (le scheduler tourne peut-être sur un autre process, ou n'a pas encore tické).</p>
+            {% endif %}
+        </div>
+        <div class="detail-card">
+            <h3>🔌 Pool de connexions</h3>
+            {% if pool %}
+            <div class="detail-row">
+                <span class="detail-label">Utilisées / libres</span>
+                <span class="detail-value">{{ pool.utilisees }} / {{ pool.libres }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Bornes du pool</span>
+                <span class="detail-value">{{ pool.min }} – {{ pool.max }}</span>
+            </div>
+            {% else %}
+            <p class="text-muted text-sm">Pool non initialisé sur ce process.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>

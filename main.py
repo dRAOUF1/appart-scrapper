@@ -71,6 +71,10 @@ def create_app() -> Flask:
     app.config["SESSION_COOKIE_HTTPONLY"] = True
 
     app.config["APP_CONFIG"] = config
+    # Issue #21 : instant monotonic du boot, lu par l'onglet Système de
+    # l'admin pour afficher l'uptime du process. time.monotonic ne recule pas
+    # (insensible aux changements d'horloge système), c'est la référence.
+    app.config["BOOT_MONOTONIC"] = startup_start
     app.storage = Storage(database_url=config.database.database_url)
     app.notifier = Notifier(
         server=config.ntfy.server,
@@ -228,7 +232,7 @@ def _start_background_tasks(app: Flask):
 
     from apscheduler.schedulers.background import BackgroundScheduler
 
-    from core.scrape_control import submit_scrape
+    from core.scrape_control import enregistrer_tick, submit_scrape
 
     lock_conn = _try_acquire_scheduler_lock(app.storage.database_url)
     if lock_conn is None:
@@ -253,6 +257,9 @@ def _start_background_tasks(app: Flask):
                         "Scheduler en pause globale — scrapes planifiés sautés "
                         "(les lancements manuels restent possibles)"
                     )
+                    # Issue #21 : le résultat du tick est exposé à l'onglet
+                    # Système de l'admin (une pause n'est pas une anomalie).
+                    enregistrer_tick("pause", "Scrapes planifiés sautés (pause globale)")
                     return
                 all_users = app.storage.users.get_all_users()
                 # Naive datetime representing UTC — matches the naive TIMESTAMP
@@ -283,8 +290,12 @@ def _start_background_tasks(app: Flask):
 
                         search_id = s["id"]
                         submit_scrape(app, search_id, user["id"])
+                # Issue #21 : le cycle s'est achevé sans exception — le tick
+                # est enregistré APRÈS la boucle, jamais à sa place.
+                enregistrer_tick("ok", "Cycle planifié terminé")
         except Exception as e:
             logger.error(f"Erreur scheduled_scrape_job: {e}")
+            enregistrer_tick("erreur", str(e)[:200])
 
     scheduler.add_job(scheduled_scrape_job, "interval", seconds=30, id="scrape_scheduler", max_instances=1)
     scheduler.start()

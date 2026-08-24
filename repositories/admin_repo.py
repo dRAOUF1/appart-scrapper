@@ -6,6 +6,28 @@ from loguru import logger
 
 from repositories.base import BaseRepository
 
+# Issue #21 — registre des caches géo visibles/purgeables depuis l'admin.
+# Chaque entrée suit le même pattern de table (`area_key` en clé, une valeur
+# identifiant nullable, `resolved_at`) : `colonne` porte le nom de la valeur
+# résolue, dont NULL mémorise un ÉCHEC de résolution. Une nouvelle source qui
+# ajoute son cache doit s'enregistrer ICI (et dans la fixture clean_geo_cache
+# des tests d'intégration) — rien d'autre.
+# Cas particulier `commune_centres` (#26) : seuls les SUCCÈS y sont mémorisés,
+# il n'y a donc pas de « manquée » à compter (suivi_echecs=False).
+# Hors périmètre volontaire : transit_communes_rayon (#28, cache dérivé sans
+# échec mémorisé, jamais NULL).
+CACHES_GEO = (
+    {"source": "seloger", "table": "seloger_place_ids", "colonne": "place_id", "suivi_echecs": True},
+    {"source": "bienici", "table": "bienici_zone_ids", "colonne": "zone_ids", "suivi_echecs": True},
+    {"source": "century21", "table": "century21_geo_ids", "colonne": "slug_id", "suivi_echecs": True},
+    {"source": "orpi", "table": "orpi_geo_ids", "colonne": "slug_id", "suivi_echecs": True},
+    {"source": "pap", "table": "pap_geo_ids", "colonne": "geo_id", "suivi_echecs": True},
+    {"source": "foncia", "table": "foncia_geo_ids", "colonne": "slug_id", "suivi_echecs": True},
+    {"source": "guyhoquet", "table": "guyhoquet_geo_ids", "colonne": "slug_id", "suivi_echecs": True},
+    {"source": "citya", "table": "citya_geo_ids", "colonne": "slug_id", "suivi_echecs": True},
+    {"source": "communes", "table": "commune_centres", "colonne": None, "suivi_echecs": False},
+)
+
 
 class AdminRepository(BaseRepository):
     """Admin-specific queries (stats, logs, DB management)."""
@@ -103,6 +125,61 @@ class AdminRepository(BaseRepository):
                 "sources_breakdown": sources_breakdown,
                 "users_without_searches": counts["users_no_searches"],
             }
+        finally:
+            self._release_conn(conn)
+
+    def get_geo_cache_stats(self) -> list[dict]:
+        """Compteurs des caches géo, source par source (issue #21).
+
+        Pour chaque cache du registre : `entrees` (COUNT(*)) et `manquees`
+        (lignes où l'identifiant résolu est NULL — un échec MÉMORISÉ, à
+        distinguer de « jamais tenté », cf. les repos *_geo_repo). Les noms
+        de tables viennent du registre CACHES_GEO, jamais d'une entrée
+        utilisateur : l'interpolation f-string est donc sûre par construction.
+        """
+        results = []
+        conn = self._get_conn_for_request()
+        try:
+            with self._dict_cursor(conn) as cur:
+                for cache in CACHES_GEO:
+                    if cache["colonne"]:
+                        cur.execute(
+                            f"SELECT COUNT(*) AS entrees,"
+                            f" COUNT(*) - COUNT({cache['colonne']}) AS manquees"
+                            f" FROM {cache['table']}"
+                        )
+                    else:
+                        # Sans colonne identifiable : pas d'échec mémorisable.
+                        cur.execute(f"SELECT COUNT(*) AS entrees, 0 AS manquees FROM {cache['table']}")
+                    row = dict(cur.fetchone())
+                    row.update({"source": cache["source"], "table": cache["table"],
+                                "suivi_echecs": cache["suivi_echecs"]})
+                    results.append(row)
+            return results
+        finally:
+            self._release_conn(conn)
+
+    def purge_geo_cache(self, table: str) -> int:
+        """Vide UN cache géo identifié par sa table (issue #21).
+
+        L'allowlist CACHES_GEO est la seule protection : le nom de table est
+        interpolé dans le DELETE, toute valeur hors registre lève ValueError
+        AVANT de toucher à la base (jamais une erreur Postgres brute).
+        Retourne le nombre de lignes réellement supprimées.
+        """
+        if table not in {c["table"] for c in CACHES_GEO}:
+            raise ValueError(f"Cache géo inconnu : '{table}'")
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {table}")
+                deleted = cur.rowcount
+                conn.commit()
+                logger.info(f"Purgé {deleted} entrée(s) du cache géo {table}")
+                return deleted
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             self._release_conn(conn)
 
