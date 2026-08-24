@@ -422,7 +422,6 @@ def searches():
         selected_sources = request.form.getlist("sources") or [request.form.get("source", "seloger").strip()]
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
-        criteria, hand_typed_failures = None, None
         try:
             criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form)
         except ValueError as e:

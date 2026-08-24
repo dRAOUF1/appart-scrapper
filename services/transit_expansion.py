@@ -26,6 +26,11 @@ rognage : villes choisies par l'utilisateur (intouchées), puis communes des
 stations ÉPINGLÉES, puis communes de lignes entières — alphabétique dans
 chaque groupe. Tout rognage produit un avertissement, remonté dans les logs
 et le journal de scrape.
+
+Limite assumée : les stations épinglées ne sont pas re-vérifiées contre leur
+ligne (un payload forgé pourrait épingler une station d'une autre ligne) —
+conséquence maximale : un périmètre légèrement différent de celui attendu,
+jamais une erreur ni un scrape en échec.
 """
 
 from __future__ import annotations
