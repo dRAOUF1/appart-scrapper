@@ -96,21 +96,30 @@
         }
 
         input.addEventListener('input', function () {
-            // Retomber exactement sur le libellé choisi (effacer la lettre
-            // parasite qui avait invalidé la ligne) restaure le périmètre :
-            // c'est encore LA MÊME localisation, pas une saisie neuve.
-            if (chosen && input.value === chosen.label) {
+            if (!input.value) {
+                // Champ vidé volontairement : l'utilisateur abandonne ce choix.
+                // Oublier le périmètre mémorisé — la prochaine saisie sera une
+                // saisie neuve, même si elle retape le même libellé à la main.
+                chosen = null;
+                if (payload) payload.value = '';
+                setRowError(row, false);
+            } else if (chosen && input.value === chosen.label) {
+                // Retomber exactement sur le libellé choisi (effacer la lettre
+                // parasite qui avait invalidé la ligne) restaure le périmètre :
+                // c'est encore LA MÊME localisation, pas une saisie neuve (#24).
                 if (payload) payload.value = chosen.json;
                 setRowError(row, false);
                 hide();
                 return;
+            } else {
+                // Une vraie modification suspend le périmètre choisi : payload
+                // retiré et contour rouge immédiat — mais chosen est CONSERVÉ,
+                // tant que le texte peut revenir au libellé exact, la ligne
+                // reste réparable sans re-choisir dans les suggestions (#24).
+                if (payload) payload.value = '';
+                // Même jauge que la garde de soumission (texte significatif).
+                setRowError(row, input.value.trim().length > 0);
             }
-            // Une vraie modification invalide le périmètre choisi : le vider
-            // et le dire tout de suite (contour rouge), au lieu d'un refus
-            // incompréhensible à l'enregistrement.
-            chosen = null;
-            if (payload) payload.value = '';
-            setRowError(row, input.value.trim().length > 0);
 
             const query = input.value.trim();
             clearTimeout(timer);
