@@ -90,23 +90,60 @@
 
 {% else %}
 <!-- Listings List View -->
+{# Issue #20 : filtres avancés (prix, période de première détection,
+   orphelines), tri par colonne, sélection groupée, export CSV.
+   Conventions socle #16/#19 : enveloppe #admin-content, hx-get/hx-post,
+   champs cachés transportant filtres+page pour que la vue survive à l'action. #}
+
+{# En-tête de colonne triable : même vue (filtres+page conservés via
+   params_sans_sort), sens inversé si la colonne est déjà active. #}
+{% macro entete_tri(libelle, colonne, sort, params_sans_sort, page) %}
+{% set sens_actuel = 'asc' if sort == colonne ~ '_asc' else ('desc' if sort == colonne ~ '_desc' else none) %}
+{% set cible_sort = colonne ~ ('_desc' if sens_actuel == 'asc' else '_asc') %}
+<a href="{{ url_for('admin.admin_listings', page=page, sort=cible_sort, **params_sans_sort) }}"
+   hx-get="{{ url_for('admin.admin_listings', page=page, sort=cible_sort, **params_sans_sort) }}"
+   hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true"
+   class="tri-colonne"
+   {% if sens_actuel %}aria-sort="{{ 'ascending' if sens_actuel == 'asc' else 'descending' }}"{% endif %}>
+    {{ libelle }}{% if sens_actuel %} <span class="tri-indicateur">{{ '▲' if sens_actuel == 'asc' else '▼' }}</span>{% endif %}
+</a>
+{% endmacro %}
+
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
         <h2 style="margin-bottom: 0;">🏠 Annonces ({{ total }})</h2>
-        <form method="GET" action="{{ url_for('admin.admin_listings') }}"
-              hx-get="{{ url_for('admin.admin_listings') }}" hx-target="#admin-content"
-              hx-swap="outerHTML" hx-push-url="true"
-              style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
-            <input type="text" name="source" placeholder="Source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
-            <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
-            {% if search_term or source_filter %}
-            <a href="{{ url_for('admin.admin_listings') }}" class="btn btn-sm btn-ghost">Reset</a>
-            {% endif %}
-        </form>
+        <a href="{{ url_for('admin.admin_listings_export', **params_courants) }}"
+           class="btn btn-sm btn-ghost"
+           title="Télécharge le résultat filtré courant (mêmes filtres, sans pagination) — CSV plafonné à 50 000 lignes">⬇️ Export CSV</a>
     </div>
 
-    {% if orphan_count > 0 %}
+    <!-- Filtres combinables (#20) : texte, source, prix, première détection, orphelines -->
+    <form method="GET" action="{{ url_for('admin.admin_listings') }}"
+          hx-get="{{ url_for('admin.admin_listings') }}" hx-target="#admin-content"
+          hx-swap="outerHTML" hx-push-url="true"
+          style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <input type="text" name="search" placeholder="Rechercher..." value="{{ search_term }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="text" name="source" placeholder="Source..." value="{{ source_filter }}" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="number" name="price_min" placeholder="Prix min (€)" value="{{ filtres.get('price_min', '') }}" min="0" style="width: 8.5rem; padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="number" name="price_max" placeholder="Prix max (€)" value="{{ filtres.get('price_max', '') }}" min="0" style="width: 8.5rem; padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="date" name="first_seen_min" value="{{ filtres.get('first_seen_min', '') }}" title="Détectée depuis le" aria-label="Détectée depuis le" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="date" name="first_seen_max" value="{{ filtres.get('first_seen_max', '') }}" title="Détectée jusqu'au" aria-label="Détectée jusqu'au" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <label style="display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: var(--text-secondary);">
+            <input type="checkbox" name="orphelines" value="1" {% if filtres.get('orphans_only') %}checked{% endif %}> Orphelines uniquement
+        </label>
+        <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+        {% if search_term or source_filter or filtres or sort %}
+        <a href="{{ url_for('admin.admin_listings') }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_listings') }}" hx-target="#admin-content"
+           hx-swap="outerHTML" hx-push-url="true">Reset</a>
+        {% endif %}
+    </form>
+
+    {% for erreur in erreurs_filtre %}
+    <div class="badge badge-warning" style="display: block; margin-bottom: 0.75rem;">⚠️ {{ erreur }}</div>
+    {% endfor %}
+
+    {% if orphan_count > 0 and not filtres.get('orphans_only') %}
     <div style="margin-bottom: 1rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
         <span class="badge badge-warning">📭 {{ orphan_count }} annonce(s) orpheline(s)</span>
         <form method="POST" action="{{ url_for('admin.admin_cleanup_orphan') }}" class="inline-form"
@@ -118,23 +155,43 @@
     </div>
     {% endif %}
 
+    <!-- Barre d'actions groupées (#20) : masquée par le JS tant que rien n'est
+         coché ; sans JS elle reste visible et l'action refuse poliment. -->
+    <div class="bulk-bar" id="annonces-bulk-bar">
+        <span id="bulk-compteur">0 annonce sélectionnée</span>
+        <form method="POST" action="{{ url_for('admin.admin_bulk_delete_listings') }}" class="inline-form"
+              id="formulaire-bulk-suppression"
+              data-confirm="Supprimer les annonces sélectionnées ? Cette action est définitive."
+              hx-post="{{ url_for('admin.admin_bulk_delete_listings') }}"
+              hx-target="#admin-content" hx-swap="outerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="page" value="{{ page }}">
+            {% for cle, valeur in params_courants.items() %}
+            <input type="hidden" name="{{ cle }}" value="{{ valeur }}">
+            {% endfor %}
+            <button type="submit" class="btn btn-sm btn-danger">🗑 Supprimer la sélection</button>
+        </form>
+    </div>
+
     <div class="table-wrapper">
         <table class="admin-table">
             <thead>
                 <tr>
+                    <th><input type="checkbox" id="annonces-select-all" aria-label="Tout sélectionner sur cette page"></th>
                     <th>Titre</th>
-                    <th>Prix</th>
+                    <th>{{ entete_tri('Prix', 'prix', sort, params_sans_sort, page) }}</th>
                     <th>Surface</th>
                     <th>Localisation</th>
-                    <th>Source</th>
+                    <th>{{ entete_tri('Source', 'source', sort, params_sans_sort, page) }}</th>
                     <th>Liée à</th>
-                    <th>Publiée / Détectée le</th>
+                    <th>{{ entete_tri('Publiée / Détectée le', 'date', sort, params_sans_sort, page) }}</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for li in listings %}
                 <tr id="annonce-{{ li.listing_id }}">
+                    <td><input type="checkbox" name="ids" value="{{ li.listing_id }}" class="annonce-check" aria-label="Sélectionner « {{ (li.title or li.listing_id)[:40] }} »"></td>
                     <td><strong>{{ li.title[:50] if li.title else '—' }}</strong></td>
                     <td>{{ li.price or '—' }}</td>
                     <td>{{ li.surface or '—' }}</td>
@@ -159,7 +216,7 @@
                 </tr>
                 {% endfor %}
                 {% if not listings %}
-                <tr><td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">Aucune annonce trouvée</td></tr>
+                <tr><td colspan="9" class="text-muted" style="text-align: center; padding: 2rem;">Aucune annonce trouvée</td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -168,14 +225,14 @@
     {% if total_pages > 1 %}
     <div class="pagination">
         {% if page > 1 %}
-        <a href="{{ url_for('admin.admin_listings', page=page-1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost"
-           hx-get="{{ url_for('admin.admin_listings', page=page-1, search=search_term, source=source_filter) }}"
+        <a href="{{ url_for('admin.admin_listings', page=page-1, **params_courants) }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_listings', page=page-1, **params_courants) }}"
            hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">← Précédent</a>
         {% endif %}
         <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
         {% if page < total_pages %}
-        <a href="{{ url_for('admin.admin_listings', page=page+1, search=search_term, source=source_filter) }}" class="btn btn-sm btn-ghost"
-           hx-get="{{ url_for('admin.admin_listings', page=page+1, search=search_term, source=source_filter) }}"
+        <a href="{{ url_for('admin.admin_listings', page=page+1, **params_courants) }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_listings', page=page+1, **params_courants) }}"
            hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">Suivant →</a>
         {% endif %}
     </div>

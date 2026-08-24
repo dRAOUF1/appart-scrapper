@@ -1811,6 +1811,48 @@ Filter Bar
 }
 
 /* ============================================================
+   Admin — annonces (#20) : sélection groupée & tri par colonne
+   ============================================================ */
+
+.bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    background: rgba(255, 69, 58, 0.08);
+    border: 1px solid rgba(255, 69, 58, 0.35);
+    border-radius: var(--radius-sm);
+    padding: 0.6rem 0.9rem;
+    margin-bottom: 1rem;
+}
+
+/* `display:flex` ci-dessus écraserait l'attribut hidden natif sans cette
+   règle : la barre doit vraiment disparaître tant que rien n'est coché. */
+.bulk-bar[hidden] {
+    display: none;
+}
+
+#bulk-compteur {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.tri-colonne {
+    color: inherit;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.tri-colonne:hover {
+    color: var(--accent);
+}
+
+.tri-indicateur {
+    font-size: 0.7em;
+    color: var(--accent);
+}
+
+/* ============================================================
    Tables
    ============================================================ */
 

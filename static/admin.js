@@ -1,7 +1,7 @@
 /**
  * Socle UX HTMX du panel admin (issue #16).
  *
- * Quatre responsabilités, volontairement sans framework ni build step :
+ * Cinq responsabilités, volontairement sans framework ni build step :
  *  1. CSRF — pose le jeton sur TOUTES les requêtes HTMX (ceinture) en plus des
  *     champs cachés csrf_token des formulaires (bretelles) ;
  *  2. toasts — affiche les messages des réponses HTMX (événement « admin:toast »,
@@ -9,11 +9,14 @@
  *     les flashs rendus côté serveur par base.html ;
  *  3. modale de confirmation générique — tout <form data-confirm="..."> passe
  *     par elle, qu'il soit natif ou piloté par htmx ;
- *  4. graphiques Chart.js — instanciés depuis les <script type="application/json"
+ *  4. sélection groupée des annonces (#20) — compteur, barre d'actions et
+ *     confirmation avec compte exact pour les checkboxes de la tab ANNONCES ;
+ *  5. graphiques Chart.js — instanciés depuis les <script type="application/json"
  *     data-chart-cible="..."> embarqués dans la page (voir admin/_charts.html).
  *
  * Progressive enhancement : sans ce fichier, l'admin reste pleinement
- * fonctionnel (POST classiques, flashs statiques, pas de confirmations).
+ * fonctionnel (POST classiques, flashs statiques, pas de confirmations,
+ * suppression groupée refusée poliment sur sélection vide).
  */
 (function () {
     "use strict";
@@ -139,7 +142,69 @@
     }, true);
 
     /* ------------------------------------------------------------------
-     * 4. Graphiques Chart.js
+     * 4. Sélection groupée des annonces (#20)
+     * ------------------------------------------------------------------
+     * Checkboxes de la tab ANNONCES : compteur dynamique, barre d'actions
+     * visible dès qu'au moins une annonce est cochée, et modale de
+     * confirmation portant LE NOMBRE exact d'annonces à supprimer.
+     *
+     * Progressive enhancement : sans ce fichier, les checkboxes partent
+     * quand même en POST (le serveur refuse poliment une sélection vide) ;
+     * la barre reste simplement affichée et le message de confirmation est
+     * le libellé générique rendu côté serveur.
+     */
+
+    /** Met la barre en cohérence avec l'état courant des cases à cocher. */
+    function majSelectionAnnonces(racine) {
+        var barre = document.getElementById("annonces-bulk-bar");
+        if (!barre) return;
+
+        var cochees = Array.prototype.slice.call(
+            racine.querySelectorAll(".annonce-check:checked")
+        );
+        var nombre = cochees.length;
+        var pluriel = nombre > 1 ? "s" : "";
+
+        var compteur = document.getElementById("bulk-compteur");
+        if (compteur) {
+            compteur.textContent = nombre + " annonce" + pluriel + " sélectionnée" + pluriel;
+        }
+
+        // La modale data-confirm lit l'attribut AU MOMENT de la soumission :
+        // le mettre à jour ici donne un message avec le compte exact.
+        var formulaire = document.getElementById("formulaire-bulk-suppression");
+        if (formulaire && nombre > 0) {
+            formulaire.setAttribute(
+                "data-confirm",
+                "Supprimer " + nombre + " annonce" + pluriel
+                + " sélectionnée" + pluriel + " ? Cette action est définitive."
+            );
+        }
+
+        barre.hidden = nombre === 0;
+    }
+
+    // Délégation : les lignes sont remplacées par chaque swap HTMX, on n'attache
+    // donc JAMAIS de listener direct aux checkboxes elles-mêmes.
+    document.addEventListener("change", function (evt) {
+        var cible = evt.target;
+        if (!cible || !estCaseSelection(cible)) return;
+        if (cible.id === "annonces-select-all") {
+            document.querySelectorAll(".annonce-check").forEach(function (case_) {
+                case_.checked = cible.checked;
+            });
+        }
+        majSelectionAnnonces(document);
+    });
+
+    /** Vrai si la case changée appartient au dispositif de sélection (#20). */
+    function estCaseSelection(element) {
+        return element.classList.contains("annonce-check")
+            || element.id === "annonces-select-all";
+    }
+
+    /* ------------------------------------------------------------------
+     * 5. Graphiques Chart.js
      * ------------------------------------------------------------------ */
 
     // Palette alignée sur le thème sombre de style.css.
@@ -235,12 +300,17 @@
 
         animerFlashsExistants(document);
         initialiserGraphiques(document);
+        // État initial de la barre d'actions groupées (#20) : cachée tant
+        // que rien n'est coché (enhancement — sans JS elle reste visible).
+        majSelectionAnnonces(document);
 
         // Après un swap (navigation, action POST), le nouveau contenu peut porter
-        // des flashs fraîchement rendus ou de nouveaux canvas à instancier.
+        // des flashs fraîchement rendus, de nouveaux canvas à instancier ou une
+        // table d'annonces dont la sélection est à réinitialiser.
         document.body.addEventListener("htmx:afterSwap", function (evt) {
             animerFlashsExistants(evt.target);
             initialiserGraphiques(evt.target);
+            majSelectionAnnonces(document);
         });
     }
 
