@@ -5,8 +5,9 @@ Owns the DB connections and schema, and exposes the repositories:
   - searches (SearchRepository)
   - listings (ListingRepository)
   - scrape_logs (ScrapeLogRepository)
-  - admin (AdminRepository)
-  - settings (SettingsRepository)
+   - admin (AdminRepository)
+   - settings (SettingsRepository)
+   - transit (TransitRepository)
 
 Call methods on the relevant repository directly, e.g. storage.searches.get_search(id).
 """
@@ -36,6 +37,7 @@ from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
 from repositories.seloger_geo_repo import SelogerGeoRepository
 from repositories.settings_repo import SettingsRepository
+from repositories.transit_repo import TransitRepository
 from repositories.user_repo import UserRepository
 
 
@@ -62,6 +64,10 @@ class Storage:
         # geo.api.gouv.fr) et repères personnels des utilisateurs.
         self.commune_geo = CommuneGeoRepository(database_url)
         self.map_pins = MapPinRepository(database_url)
+        # Issue #28 : référentiel transports franciliens (lecture seule côté
+        # app — l'import GTFS passe par scripts/import_transit.py) + cache
+        # communes∩rayon.
+        self.transit = TransitRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -145,6 +151,55 @@ class Storage:
                         id          SERIAL PRIMARY KEY,
                         username    TEXT UNIQUE NOT NULL,
                         created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                # Issue #28 : référentiel des transports en commun franciliens
+                # (GTFS ÎDF Mobilités), rempli par scripts/import_transit.py —
+                # JAMAIS par l'app elle-même : l'application ne fait qu'interroger
+                # ces tables (autocomplete, expansion des localisations).
+                # `id` est le route_id GTFS tel quel (chaîne opaque stable),
+                # `mode` l'un des modes ferrés (tram/metro/rer/train) — le bus
+                # est exclu du périmètre de l'issue.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS transit_lines (
+                        id          TEXT PRIMARY KEY,
+                        mode        TEXT NOT NULL,
+                        code_ligne  TEXT NOT NULL DEFAULT '',
+                        nom_ligne   TEXT NOT NULL DEFAULT ''
+                    );
+                """)
+                # `id` est l'identifiant GTFS de la STATION COMMERCIALE
+                # (StopArea, location_type=1) : c'est elle qu'épingle
+                # l'utilisateur, ses quais pouvant bouger sans changer de nom.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS transit_stops (
+                        id          TEXT PRIMARY KEY,
+                        nom         TEXT NOT NULL,
+                        lat         DOUBLE PRECISION NOT NULL,
+                        lon         DOUBLE PRECISION NOT NULL
+                    );
+                """)
+                # Association N-N ligne ↔ station commerciale, limitée aux
+                # trajets ferrés lors de l'import (DISTINCT côté script).
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS transit_line_stops (
+                        line_id     TEXT NOT NULL REFERENCES transit_lines(id) ON DELETE CASCADE,
+                        stop_id     TEXT NOT NULL REFERENCES transit_stops(id) ON DELETE CASCADE,
+                        PRIMARY KEY (line_id, stop_id)
+                    );
+                """)
+                # Cache des communes touchées par le rayon d'une station, même
+                # pattern `area_key` que les autres caches géo (clé
+                # « station:<stop_id>:<rayon>m » — voir
+                # services.transit_expansion.communes_cache_key). Comme pour
+                # commune_centres, seuls les SUCCÈS sont mémorisés : un calcul
+                # raté (API géo momentanément down) est retenté au scrape
+                # suivant plutôt que gelé.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS transit_communes_rayon (
+                        area_key    TEXT PRIMARY KEY,
+                        communes    JSONB NOT NULL DEFAULT '[]',
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
                 cur.execute("""
@@ -451,6 +506,17 @@ class Storage:
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_map_pins_user
                         ON map_pins(user_id);
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_transit_stops_coords
+                        ON transit_stops(lat, lon);
+                """)
+                # La PK couvre déjà les lectures « stations d'une ligne » ; cet
+                # index sert aux suppressions en cascade et aux contrôles
+                # inverses (« à quelles lignes cette station appartient »).
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_transit_line_stops_stop
+                        ON transit_line_stops(stop_id);
                 """)
                 phase_start = _log_phase("indexes")
 

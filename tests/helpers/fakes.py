@@ -32,6 +32,7 @@ from repositories.scrape_log_repo import ScrapeLogRepository
 from repositories.search_repo import SearchRepository
 from repositories.seloger_geo_repo import SelogerGeoRepository
 from repositories.settings_repo import SettingsRepository
+from repositories.transit_repo import TransitRepository
 from repositories.user_repo import UserRepository
 from storage import Storage
 
@@ -52,6 +53,8 @@ _REPOSITORIES = {
     # Issue #26 : repères perso + cache du fallback géocodage commune.
     "map_pins": MapPinRepository,
     "commune_geo": CommuneGeoRepository,
+    # Issue #28 : référentiel transports franciliens + cache communes∩rayon.
+    "transit": TransitRepository,
 }
 
 
@@ -103,6 +106,12 @@ def fake_storage(**repo_overrides) -> MagicMock:
     # Issue #26 : valeurs par défaut neutres pour les nouveaux repos.
     storage.map_pins.list_for_user.return_value = []
     storage.commune_geo.get_cached.return_value = None
+    # Issue #28 : référentiel transit vide par défaut, cache jamais chaud.
+    storage.transit.search_lines.return_value = []
+    storage.transit.get_line.return_value = None
+    storage.transit.get_line_stops.return_value = []
+    storage.transit.get_stops.return_value = []
+    storage.transit.get_communes_cache.return_value = None
 
     for name, value in repo_overrides.items():
         setattr(storage, name, value)
@@ -172,6 +181,16 @@ class RecordingCursor:
             rows = self._current if isinstance(self._current, list) else [self._current]
             self.description = [("col",)]
             self.rowcount = len(rows)
+
+    def executemany(self, sql, seq_of_params):
+        """Enregistre l'appel comme UNE entrée (sql, liste de paramètres).
+
+        psycopg2 itère silencieusement ; ici, c'est la liste complète qui a
+        de la valeur pour les assertions (ordre des upserts, contenu exact).
+        """
+        self._recorder.append((sql, list(seq_of_params)))
+        self.description = None
+        self.rowcount = len(seq_of_params)
 
     def fetchone(self):
         if self._current is None:

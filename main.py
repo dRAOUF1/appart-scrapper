@@ -208,13 +208,18 @@ def _try_acquire_scheduler_lock(database_url: str):
 def _source_has_valid_criteria(source: str, criteria: dict) -> bool:
     """Delegate "is this search runnable" to the source's own parser —
     each source encodes location differently (placeIds vs. city/postal
-    code, ...), so there's no single hardcoded key to check here."""
+    code, ...), so there's no single hardcoded key to check here.
+
+    Issue #28 : une recherche « transit-seule » est runnable pour toutes
+    les sources — l'expansion produira ses localisations avant le scrape.
+    """
+    from core.criteria import has_transit
     from parsers import get_parser
     try:
         parser = get_parser(source)
     except ValueError:
         return False
-    return parser.has_valid_criteria(criteria)
+    return parser.has_valid_criteria(criteria) or has_transit(criteria)
 
 
 def _start_background_tasks(app: Flask):

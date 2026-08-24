@@ -16,11 +16,13 @@ from core.criteria import (
     LAND,
     PARKING,
     RENT,
+    has_transit,
     location_label,
     location_postal_prefixes,
     matches_locations,
     normalize_criteria,
     normalize_locations,
+    normalize_transit,
     source_overrides,
     with_source_override,
 )
@@ -29,6 +31,7 @@ from tests.helpers.factories import (
     make_criteria,
     make_department_location,
     make_region_location,
+    make_transit_selection,
     make_whole_city_location,
 )
 
@@ -1058,3 +1061,113 @@ def test_with_empty_values_the_returned_copy_still_shares_the_existing_overrides
     updated = with_source_override(criteria, "seloger", {})
 
     assert updated["sourceOverrides"] is criteria["sourceOverrides"]
+
+
+# ---------------------------------------------------------------------------
+# transit : sélections de transports en commun (issue #28)
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeTransit:
+    """La clé `transit` est du vocabulaire NEUTRE : aucun parser ne la lit.
+    Sa normalisation doit être aussi prévisible que celle des locations —
+    entrée illisible écartée, jamais devinée, rayon borné à la liste du
+    formulaire."""
+
+    @pytest.mark.parametrize("payload", [None, {}, "x", 42])
+    def test_an_absent_or_unreadable_transit_reads_as_empty(self, payload):
+        """« absence → [] » au sens lecture (normalize_transit) ; la clé
+        n'est pas pour autant INVENTÉE dans les critères normalisés."""
+        assert normalize_transit(payload) == []
+        assert normalize_criteria({"locations": [make_city_location()], "transit": payload}) == {
+            "locations": [make_city_location()]
+        }
+
+    def test_a_valid_selection_is_normalized_field_by_field(self):
+        result = normalize_criteria({
+            "transit": [{
+                "mode": "metro",
+                "line_id": " IDFM:C01388 ",
+                "stop_ids": ["STIF:StopArea:SP:43135:", "OTHER:STOP"],
+                "radius_m": 500,
+            }],
+        })
+
+        assert result["transit"] == [{
+            "mode": "metro",
+            "line_id": "IDFM:C01388",
+            "stop_ids": ["OTHER:STOP", "STIF:StopArea:SP:43135:"],
+            "radius_m": 500,
+        }]
+
+    @pytest.mark.parametrize(
+        ("raw_radius", "expected"),
+        [(None, 1000), ("", 1000), ("1000", 1000), (750, 1000), (2000, 2000), ("500", 500)],
+        ids=["absent", "vide", "chaine", "hors-liste", "borne-haute", "borne-basse"],
+    )
+    def test_the_radius_falls_back_to_the_default_when_not_in_the_offered_list(self, raw_radius, expected):
+        selection = normalize_transit({"transit": [{"line_id": "L", "radius_m": raw_radius}]})
+        assert selection[0]["radius_m"] == expected
+
+    def test_stop_ids_are_coerced_deduplicated_and_sorted(self):
+        selection = normalize_transit({
+            "transit": [{"line_id": "L", "stop_ids": ["B", "A", "A", "", None, 3]},
+        ]})
+
+        assert selection[0]["stop_ids"] == ["3", "A", "B"]
+
+    def test_empty_stop_ids_means_whole_line_and_omits_the_key(self):
+        for stop_ids in ([], ["", "  "]):
+            selection = normalize_transit({"transit": [{"line_id": "L", "stop_ids": stop_ids}]})
+            assert selection[0] == {"line_id": "L", "radius_m": 1000}
+
+    def test_an_unknown_mode_keeps_the_selection_but_omits_the_key(self):
+        """Un mode illisible n'invalide pas la ligne (l'expansion ne s'en sert
+        pas) mais il n'est jamais deviné non plus."""
+        selection = normalize_transit({"transit": [{"line_id": "L", "mode": "funiculaire"}]})
+        assert selection == [{"line_id": "L", "radius_m": 1000}]
+
+    def test_an_entry_without_line_id_is_dropped_never_guessed(self):
+        assert normalize_transit({"transit": [{"mode": "metro", "radius_m": 500}]}) == []
+
+    @pytest.mark.parametrize("entry", ["metro", 42, [], None])
+    def test_non_mapping_entries_are_dropped(self, entry):
+        assert normalize_transit({"transit": [entry]}) == []
+
+    def test_two_entries_on_the_same_line_are_deduplicated_first_wins(self):
+        selections = normalize_transit({"transit": [
+            {"line_id": "L1", "radius_m": 500},
+            {"line_id": " L1 ", "stop_ids": ["S"], "radius_m": 2000},
+        ]})
+
+        assert selections == [{"line_id": "L1", "radius_m": 500}]
+
+    def test_several_lines_are_all_kept_multi_selection(self):
+        selections = normalize_transit({"transit": [
+            {"line_id": "L1"}, {"line_id": "L2"}, {"line_id": "L3"},
+        ]})
+
+        assert [s["line_id"] for s in selections] == ["L1", "L2", "L3"]
+
+    def test_normalization_is_idempotent(self):
+        once = normalize_criteria({"transit": [make_transit_selection()]})
+        assert normalize_criteria(once) == once
+
+    def test_unknown_keys_are_stripped_from_the_canonical_entry(self):
+        """line_label ne sert qu'à l'affichage front : le canonique ne le
+        stocke pas."""
+        selection = normalize_transit({"transit": [make_transit_selection(line_label="Métro 14")]})
+        assert "line_label" not in selection[0]
+        assert set(selection[0]) == {"line_id", "mode", "stop_ids", "radius_m"}
+
+    def test_has_transit_accepts_a_transit_only_search(self):
+        assert has_transit({"transit": [{"line_id": "L"}]}) is True
+        assert has_transit({"transit": [{"radius_m": 500}]}) is False
+        assert has_transit({}) is False
+
+    def test_transit_lives_alongside_locations_without_touching_them(self):
+        criteria = {"locations": [make_city_location()], "transit": [{"line_id": "L"}]}
+        normalized = normalize_criteria(criteria)
+
+        assert set(normalized) == {"locations", "transit"}
+        assert normalized["locations"] == [make_city_location()]

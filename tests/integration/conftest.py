@@ -96,14 +96,18 @@ def clean_geo_cache(clean_db, storage):
     de test et une dépendance d'ordre assumée en commentaire : une fixture
     dédiée règle le problème une fois pour toutes, sans toucher à la logique de
     `clean_db`. Toute nouvelle table de cache géo doit être ajoutée ici —
-    `commune_centres` (#26) y figure désormais aussi.
+    `commune_centres` (#26) y figure désormais aussi, ainsi que les tables
+    transit (#28) : référentiel GTFS + cache communes∩rayon, indépendants des
+    données utilisateur mais jamais isolés autrement.
     """
     conn = storage._get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "TRUNCATE seloger_place_ids, bienici_zone_ids, century21_geo_ids,"
-                " foncia_geo_ids, orpi_geo_ids, pap_geo_ids, commune_centres"
+                " foncia_geo_ids, orpi_geo_ids, pap_geo_ids, commune_centres,"
+                " transit_communes_rayon, transit_line_stops, transit_stops,"
+                " transit_lines"
             )
         conn.commit()
     finally:

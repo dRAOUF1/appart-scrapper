@@ -29,6 +29,7 @@ from tests.helpers.factories import (
     make_criteria,
     make_department_location,
     make_region_location,
+    make_transit_selection,
     make_whole_city_location,
 )
 from tests.helpers.fakes import fake_storage
@@ -338,6 +339,14 @@ class TestHasValidCriteriaDefault:
         parser = make_parser_class("default_validity")()
         assert parser.has_valid_criteria(criteria) is expected
 
+    # Issue #28 : `has_valid_criteria` reste le contrat de LOCALISATION de la
+    # source — le « transit-seul » est accepté un cran plus haut, dans
+    # cannot_search_reason (l'expansion fournira les localisations).
+    def test_has_valid_criteria_stays_location_only_and_ignores_transit(self):
+        parser = make_parser_class("transit_agnostic")()
+
+        assert parser.has_valid_criteria({"transit": [make_transit_selection()]}) is False
+
 
 # ---------------------------------------------------------------------------
 # unsupported_criteria : les messages vus par l'utilisateur
@@ -631,3 +640,39 @@ class TestNoFlaskDependency:
         assert not [
             node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "current_app"
         ], "parsers/ ne doit pas lire le contexte d'application Flask"
+
+
+class TestCannotSearchReasonTransitOnly:
+    """Issue #28 : une recherche « transit-seule » est cherchable par toutes
+    les sources — y compris celles qui surchargent has_valid_criteria (le
+    contrat de localisation reste leur propriété, l'expansion fournira les
+    localisations avant to_native)."""
+
+    def test_a_transit_only_search_gives_no_reason_even_for_a_picky_source(self):
+        parser = make_parser_class(
+            "exigeant",
+            SOURCE_NAME="Exigeant",
+            has_valid_criteria=lambda self, criteria: False,
+        )()
+
+        assert parser.cannot_search_reason({"transit": [make_transit_selection()]}) is None
+
+    def test_a_loose_selection_changes_nothing(self):
+        parser = make_parser_class("boiteux")()
+
+        reason = parser.cannot_search_reason({"transit": [{"radius_m": 500}]})
+
+        assert reason == "aucune localisation exploitable (ville + code postal requis)"
+
+    def test_capability_checks_still_apply_after_the_transit_acceptance(self):
+        """Accepter le transit-seul ne contourne pas les capacités : une
+        transaction non gérée reste refusée."""
+        parser = make_parser_class(
+            "rent_only", SOURCE_NAME="RentOnly", SUPPORTED_TRANSACTIONS=("rent",)
+        )()
+
+        reason = parser.cannot_search_reason(
+            {"transit": [make_transit_selection()], "transaction": "buy"}
+        )
+
+        assert reason == "RentOnly ne référence pas la transaction « Achat »"

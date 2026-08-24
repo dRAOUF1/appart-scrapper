@@ -303,18 +303,7 @@ class SeLogerParser(BaseParser):
 
         return any(area_cache_key(loc) for loc in get_locations(criteria))
 
-    def cannot_search_reason(self, criteria: dict) -> str | None:
-        """Même contrat que BaseParser.
-
-        Pas de message spécifique « pas de code INSEE » : `area_cache_key`
-        résout désormais aussi bien par code postal/nom de ville que par
-        code INSEE (voir services.seloger_geocode), donc toute localisation
-        qui passe `get_locations` (ville + code postal, ou périmètre large)
-        satisfait déjà `has_valid_criteria`."""
-        if not self.has_valid_criteria(criteria):
-            return "aucune localisation exploitable (ville + code postal requis)"
-
-        unsupported = self.unsupported_criteria(criteria)
-        if unsupported:
-            return f"{self.SOURCE_NAME} ne référence pas {' ni '.join(unsupported)}"
-        return None
+    # cannot_search_reason n'est PAS surchargée : le contrat hérite de
+    # BaseParser (message identique, capacités vérifiées après) — c'est ce qui
+    # garantit à SeLoger les évolutions transverses, comme l'acceptation du
+    # « transit-seul » de l'issue #28.

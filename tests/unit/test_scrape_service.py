@@ -24,7 +24,12 @@ from loguru import logger
 
 from parsers.base import BaseParser
 from services.scrape_service import ScrapeService
-from tests.helpers.factories import make_criteria, make_listing, make_search_row
+from tests.helpers.factories import (
+    make_city_location,
+    make_criteria,
+    make_listing,
+    make_search_row,
+)
 from tests.helpers.fakes import fake_notifier, fake_storage
 
 FROZEN = "2026-07-25 10:00:00"
@@ -877,3 +882,91 @@ class TestGeocodageCommuneFallback:
 
         env.storage.commune_geo.get_cached.assert_not_called()
 
+
+
+# ---------------------------------------------------------------------------
+# Issue #28 : expansion des sélections de transports avant les parsers
+# ---------------------------------------------------------------------------
+
+
+class TestExpansionTransit:
+    """`transit` est étendu en localisations classiques AVANT la boucle des
+    sources : aucun parser ne voit jamais cette clé, même en cas d'échec."""
+
+    def _search_with_transit(self, env, **criteria_extra):
+        criteria = make_criteria(transit=[{
+            "line_id": "L14", "stop_ids": ["S1"], "radius_m": 1000,
+        }])
+        criteria.update(criteria_extra)
+        return env.search(criteria=criteria)
+
+    def test_the_parser_receives_expanded_locations_without_the_transit_key(
+        self, env, monkeypatch,
+    ):
+        self._search_with_transit(env)
+        parser = make_parser([make_listing()])
+
+        def fausse_expansion(criteria, storage):
+            etendus = {k: v for k, v in criteria.items() if k != "transit"}
+            etendus["locations"] = [make_city_location(city="Ivry")]
+            return etendus, ["Plafond atteint (test)"]
+
+        monkeypatch.setattr("services.transit_expansion.etendre_criteres", fausse_expansion)
+
+        env.run(parsers={"seloger": parser})
+
+        critères_recus = parser.scrape.call_args[0][0]
+        assert "transit" not in critères_recus
+        assert critères_recus["locations"][0]["city"] == "Ivry"
+
+    def test_warnings_are_logged_and_stored_in_the_success_log(self, env, monkeypatch):
+        self._search_with_transit(env)
+        parser = make_parser([make_listing()])
+
+        def fausse_expansion(criteria, storage):
+            etendus = {k: v for k, v in criteria.items() if k != "transit"}
+            return etendus, ["Stations ignorées : GHOST"]
+
+        monkeypatch.setattr("services.transit_expansion.etendre_criteres", fausse_expansion)
+
+        env.run(parsers={"seloger": parser})
+
+        details = env.storage.scrape_logs.create_scrape_log.call_args.kwargs["details"]
+        assert details["avertissements_transit"] == ["Stations ignorées : GHOST"]
+
+    def test_an_expansion_failure_strips_transit_and_keeps_the_scrape_alive(
+        self, env, monkeypatch,
+    ):
+        """Best effort : l'échec d'expansion ne tue pas le scrape — mais la
+        clé `transit` ne doit quand même pas fuiter vers le parser."""
+        criteria = make_criteria(transit=[{"line_id": "L14"}])
+        env.search(criteria=criteria)
+        parser = make_parser([make_listing()])
+
+        def boom(criteria, storage):
+            raise RuntimeError("base transit indisponible")
+
+        monkeypatch.setattr("services.transit_expansion.etendre_criteres", boom)
+
+        env.run(parsers={"seloger": parser})
+
+        critères_recus = parser.scrape.call_args[0][0]
+        assert "transit" not in critères_recus
+        # Les localisations classiques restent intactes.
+        assert critères_recus["locations"]
+
+    def test_a_search_without_transit_is_untouched(self, env, monkeypatch):
+        env.search()
+        parser = make_parser([make_listing()])
+        appelé = []
+        import services.transit_expansion as module
+
+        def espion(criteria, storage):
+            appelé.append(True)
+            return criteria, []
+
+        monkeypatch.setattr(module, "etendre_criteres", espion)
+
+        env.run(parsers={"seloger": parser})
+
+        assert not appelé  # ni importé ni exécuté sans clé transit

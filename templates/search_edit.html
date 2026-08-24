@@ -123,6 +123,28 @@
             </small>
         </div>
 
+        <div class="form-section" data-transit-block>
+            <div class="form-section-label">🚇 Transports</div>
+            <!-- La vérité de l'état vit ICI (même discipline que
+                 location_payload, #24) : écrit par le JS à chaque changement,
+                 relu par le serveur puis normalisé — jamais l'inverse. -->
+            <input type="hidden" name="transit_payload"
+                value="{{ search.criteria.transit | tojson if search.criteria.transit else '' }}"
+                data-transit-payload>
+            <div class="transit-list" data-transit-list></div>
+            <button type="button" class="btn btn-ghost btn-sm" data-add-transit>+ Ajouter une ligne</button>
+            <div class="transit-error" data-transit-error role="alert" hidden></div>
+            <small class="form-help" style="display: block; margin-top: 0.5rem;">
+                Choisis une ligne ferrée francilienne (tram, métro, RER, train), épingle si tu veux
+                certaines stations (« toute la ligne » si aucune n'est cochée), puis un rayon à vol
+                d'oiseau. Une annonce remonte si elle est dans tes villes choisies OU près des
+                stations choisies. Les communes du rayon s'ajoutent à tes villes — 60 localisations
+                maximum par recherche : priorité à tes villes, puis aux stations cochées, ensuite
+                par ordre alphabétique (un avertissement apparaît dans le journal de scrape si ce
+                plafond rogne des communes).
+            </small>
+        </div>
+
         <div class="form-section">
             <div class="form-section-label">Sources</div>
             <div class="source-picker">

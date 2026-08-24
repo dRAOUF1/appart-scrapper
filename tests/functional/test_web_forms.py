@@ -674,3 +674,89 @@ class TestParseListingFilters:
         payload = "'; DROP TABLE listings; --"
 
         assert _parse_listing_filters(MultiDict({"q": payload}))["q"] == payload
+
+
+# ---------------------------------------------------------------------------
+# transit_payload — le champ caché du bloc Transports (#28)
+# ---------------------------------------------------------------------------
+
+M14_PAYLOAD = json.dumps([{
+    "mode": "metro",
+    "line_id": "IDFM:C01388",
+    "stop_ids": ["STIF:StopArea:SP:1:"],
+    "radius_m": 1000,
+}])
+
+
+class TestParseTransitFromForm:
+    def test_an_absent_or_empty_field_yields_no_selection(self):
+        from routes.web import _parse_transit_from_form
+
+        assert _parse_transit_from_form(MultiDict()) == []
+        assert _parse_transit_from_form(MultiDict([("transit_payload", "  ")])) == []
+
+    def test_a_valid_json_list_is_passed_through_raw(self):
+        """Le parsing ne valide QUE la forme : le contenu est normalisé ensuite
+        par normalize_criteria (même séparation que les locations)."""
+        from routes.web import _parse_transit_from_form
+
+        assert _parse_transit_from_form(
+            MultiDict([("transit_payload", M14_PAYLOAD)])
+        ) == [{"mode": "metro", "line_id": "IDFM:C01388",
+               "stop_ids": ["STIF:StopArea:SP:1:"], "radius_m": 1000}]
+
+    def test_a_corrupted_json_is_an_explicit_french_error(self):
+        from routes.web import _parse_transit_from_form
+
+        with pytest.raises(ValueError, match="corrompues"):
+            _parse_transit_from_form(MultiDict([("transit_payload", "{pas du json")]))
+
+    @pytest.mark.parametrize("payload", ['"ligne"', '{"line_id": "L"}', "42"])
+    def test_a_non_list_json_is_an_explicit_french_error(self, payload):
+        from routes.web import _parse_transit_from_form
+
+        with pytest.raises(ValueError, match="liste attendue"):
+            _parse_transit_from_form(MultiDict([("transit_payload", payload)]))
+
+
+class TestTransitInParseSearchCriteria:
+    def test_transit_and_locations_are_parsed_together(self):
+        criteria, failures = _parse_search_criteria_from_form(MultiDict([
+            ("location_payload", json.dumps({
+                "kind": "city", "city": "Paris", "postalCode": "75013", "inseeCode": "75113",
+            })),
+            ("transit_payload", M14_PAYLOAD),
+        ]))
+
+        assert failures == []
+        assert set(criteria) >= {"locations", "transit"}
+        assert criteria["locations"][0]["inseeCode"] == "75113"
+        # Normalisé au passage : rayon entier, stop_ids triés.
+        assert criteria["transit"][0]["radius_m"] == 1000
+
+    def test_loose_entries_in_the_payload_are_dropped_by_normalization(self):
+        criteria, failures = _parse_transit_tolerant()
+
+        assert failures == []
+        assert criteria["transit"] == [{
+            "line_id": "IDFM:C01388", "radius_m": 1000,
+            "stop_ids": ["A"], "mode": "metro",
+        }]
+
+    def test_no_transit_field_means_no_key_at_all(self):
+        """Rétrocompatibilité : un formulaire sans bloc Transports produit
+        exactement les mêmes critères qu'avant l'issue."""
+        criteria, _ = _parse_search_criteria_from_form(MultiDict([
+            ("location_city", "Poitiers 86000"),
+        ]))
+
+        assert "transit" not in criteria
+
+
+def _parse_transit_tolerant():
+    """Un payload contenant une entrée boiteuse ET une entrée correcte."""
+    payload = json.dumps([
+        {"radius_m": 500},                       # sans line_id : écartée
+        {"mode": "METRO", "line_id": "IDFM:C01388", "stop_ids": ["A"], "radius_m": 999},
+    ])
+    return _parse_search_criteria_from_form(MultiDict([("transit_payload", payload)]))

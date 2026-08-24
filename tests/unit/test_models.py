@@ -611,3 +611,29 @@ def test_scrape_log_to_dict_returns_a_detached_copy_of_details():
 
 def test_scrape_log_to_dict_exposes_every_declared_field():
     assert set(ScrapeLog().to_dict()) == {f.name for f in fields(ScrapeLog)}
+
+
+# ---------------------------------------------------------------------------
+# Search — has_valid_criteria et le « transit-seul » (issue #28)
+# ---------------------------------------------------------------------------
+
+
+def test_a_transit_only_search_is_valid_for_every_source():
+    """L'expansion produira les localisations au scrape : la recherche
+    transit-seule doit passer la planification pour TOUTES les sources, y
+    compris celles qui n'auraient pas pu servir des critères vides."""
+    criteria = {"transit": [{"line_id": "IDFM:C01388", "radius_m": 1000}]}
+
+    assert _search(criteria=criteria, sources=["seloger"]).has_valid_criteria() is True
+    assert _search(criteria=criteria, sources=["laforet"]).has_valid_criteria() is True
+    assert _search(criteria=criteria, sources=["seloger", "laforet"]).has_valid_criteria() is True
+
+
+def test_a_loose_transit_selection_does_not_make_a_search_valid():
+    criteria = {"transit": [{"radius_m": 500}]}  # pas de line_id : inexploitable
+
+    assert _search(criteria=criteria, sources=["seloger"]).has_valid_criteria() is False
+
+
+def test_an_invalid_criteria_dict_short_circuits_before_the_transit_check():
+    assert _search(criteria="transit").has_valid_criteria() is False

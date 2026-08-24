@@ -16,6 +16,7 @@ from core.criteria import (
     PROPERTY_TYPES,
     TRANSACTION_LABELS,
     TRANSACTIONS,
+    has_transit,
     normalize_locations,
 )
 from models.listing import Listing
@@ -276,8 +277,15 @@ class BaseParser(ABC):
         est utilisable : validation à la création d'une recherche (front),
         pipeline de scrape, reconstruction d'URL. Une seule formulation, au
         même endroit.
+
+        Issue #28 : une recherche « transit-seule » reste cherchable pour
+        TOUTES les sources — l'expansion (services/transit_expansion)
+        produira ses localisations classiques avant to_native, les parsers
+        ne lisent donc jamais `transit`. L'accepter ici garantit qu'une telle
+        recherche n'est rejetée ni à la création ni au scrape, sans avoir à
+        répéter la règle dans chaque surcharge de has_valid_criteria.
         """
-        if not self.has_valid_criteria(criteria):
+        if not self.has_valid_criteria(criteria) and not has_transit(criteria):
             return "aucune localisation exploitable (ville + code postal requis)"
 
         unsupported = self.unsupported_criteria(criteria)
