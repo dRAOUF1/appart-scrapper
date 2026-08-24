@@ -1,7 +1,7 @@
 """Centralized, thread-safe scrape-job submission and queue inspection.
 
 Shared by the background scheduler (main.py) and the manual-trigger routes
-(routes/api.py, routes/web.py, routes/admin.py) so they don't race on the
+(routes/web.py, routes/admin.py) so they don't race on the
 app._scrape_futures dict.
 """
 
