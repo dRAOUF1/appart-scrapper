@@ -33,12 +33,13 @@ from tests.functional.conftest import (
 )
 from tests.helpers.factories import make_user_row
 
-# URLs des six onglets, rendus complets (layout + partial) pour les tests de contenu.
+# URLs des sept onglets, rendus complets (layout + partial) pour les tests de contenu.
 URLS_ONGLETS = [
     pytest.param("/admin", id="dashboard"),
     pytest.param("/admin/users", id="users"),
     pytest.param("/admin/searches", id="searches"),
     pytest.param("/admin/listings", id="listings"),
+    pytest.param("/admin/scrapes", id="scrapes"),
     pytest.param("/admin/database", id="database"),
     pytest.param("/admin/logs", id="logs"),
 ]
@@ -322,11 +323,12 @@ class TestRenduCompletDesOnglets:
         assert reponse.status_code == 200
         assert "<html" in reponse.data.decode()
 
-    def test_la_barre_longlets_propose_les_six_destinations(self, admin_client):
+    def test_la_barre_longlets_propose_les_sept_destinations(self, admin_client):
+        """#19 : la barre d'onglets compte désormais la tab « Scrapes »."""
         page = admin_client.get("/admin").data.decode()
 
         for destination in ("tab=dashboard", "/admin/users", "/admin/searches",
-                            "/admin/listings", "/admin/database", "/admin/logs"):
+                            "/admin/listings", "/admin/scrapes", "/admin/database", "/admin/logs"):
             assert destination in page
 
     def test_les_utilisateurs_affiches_conservent_leurs_colonnes(self, admin_client, storage):

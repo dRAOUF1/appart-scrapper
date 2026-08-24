@@ -85,6 +85,11 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.scrape_logs.get_scrape_logs.return_value = []
     storage.scrape_logs.count_scrape_logs.return_value = 0
     storage.scrape_logs.get_scrape_stats.return_value = {}
+    # Vue globale des scrapes (#19) : retours neutres pour que les onglets
+    # admin restent rendables sans configuration explicite.
+    storage.scrape_logs.get_all_scrape_logs.return_value = []
+    storage.scrape_logs.count_all_scrape_logs.return_value = 0
+    storage.scrape_logs.get_global_scrape_stats.return_value = {}
     storage.settings.get_setting.return_value = ""
     storage.seloger_geo.get_cached.return_value = None
     storage.bienici_geo.get_cached.return_value = None

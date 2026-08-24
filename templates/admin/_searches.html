@@ -82,6 +82,46 @@
         <pre style="font-size: 0.75rem; margin-top: 0.5rem;"><code>{{ search_detail.criteria | tojson(indent=2) }}</code></pre>
     </div>
     {% endif %}
+    {# Issue #19 : santé des scrapes de CETTE recherche, même grille que les
+       cartes voisines ; absent (recherche jamais scrapée) → pas de bloc. #}
+    {% if scrape_stats and scrape_stats.total %}
+    <div class="detail-card">
+        <h3>🩺 Scrapes</h3>
+        <div class="detail-row">
+            <span class="detail-label">Exécutés</span>
+            <span class="detail-value">{{ scrape_stats.total }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">✅ / ℹ️ / ❌</span>
+            <span class="detail-value">{{ scrape_stats.success_count }} succès · {{ scrape_stats.empty_count }} vides · {{ scrape_stats.error_count }} échecs</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Moy. annonces trouvées</span>
+            <span class="detail-value">{{ '%.1f'|format(scrape_stats.avg_listings) if scrape_stats.avg_listings is not none else '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Durée moyenne</span>
+            <span class="detail-value">{{ '%.1f'|format(scrape_stats.avg_duration) if scrape_stats.avg_duration is not none else '—' }}s</span>
+        </div>
+        {% if scrape_stats.last_scrape %}
+        <div class="detail-row">
+            <span class="detail-label">Dernier scrape</span>
+            <span class="detail-value">
+                {% if scrape_stats.last_scrape.status == 'success' %}<span class="badge badge-active">✅</span>
+                {% elif scrape_stats.last_scrape.status == 'error' %}<span class="badge badge-inactive" title="{{ scrape_stats.last_scrape.error_message }}">❌</span>
+                {% else %}<span class="badge badge-muted">ℹ️ {{ scrape_stats.last_scrape.status }}</span>{% endif %}
+                {{ (scrape_stats.last_scrape.started_at|fr_time).strftime('%d/%m/%Y %H:%M') if scrape_stats.last_scrape.started_at else '—' }}
+            </span>
+        </div>
+        {% if scrape_stats.last_scrape.status == 'error' and scrape_stats.last_scrape.error_message %}
+        <div class="detail-row">
+            <span class="detail-label">Erreur</span>
+            <span class="detail-value text-sm">{{ scrape_stats.last_scrape.error_message[:120] }}{% if scrape_stats.last_scrape.error_message|length > 120 %}…{% endif %}</span>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 
 {% if search_detail.recent_listings %}

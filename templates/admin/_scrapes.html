@@ -1,0 +1,228 @@
+{#
+  Onglet SCRAPES (issue #19) : historique & diagnostic de TOUS les scrape_logs.
+
+  Deux rendus dans un seul partial, comme _searches.html :
+  - LISTE (défaut) : cartes de synthèse santé, filtres combinables
+    (statut / source / recherche / dates), tableau paginé (20/page),
+    bouton « Relancer » uniquement sur un échec dont la recherche existe
+    encore et est active ;
+  - DÉTAIL d'un log brut : même markup que la page utilisateur
+    (macro partagée log_brut), sans polling.
+
+  Conventions du socle (#16/#17) respectées : enveloppe #admin-content,
+  formulaires hx-get/hx-post ciblant cette enveloppe avec hx-push-url,
+  actions POST avec data-confirm + jeton CSRF, toasts portés par HX-Trigger.
+#}
+
+<div id="admin-content">
+{% if scrape_log_detail %}
+{# ------------------------------------------------------------------ DÉTAIL #}
+<a href="{{ url_for('admin.admin_scrapes') }}" class="back-link"
+   hx-get="{{ url_for('admin.admin_scrapes') }}" hx-target="#admin-content"
+   hx-swap="outerHTML" hx-push-url="true">← Retour aux scrapes</a>
+
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+            <span class="badge {% if scrape_log_detail.status == 'success' %}badge-active{% elif scrape_log_detail.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
+                {% if scrape_log_detail.status == 'success' %}✅{% elif scrape_log_detail.status == 'empty' %}ℹ️{% elif scrape_log_detail.status == 'error' %}❌{% else %}⚠️{% endif %}
+                {{ scrape_log_detail.status }}
+            </span>
+            <span class="text-muted" style="margin-left: 0.75rem;">
+                {{ (scrape_log_detail.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') }}
+                {% if scrape_log_detail.completed_at %} → {{ (scrape_log_detail.completed_at|fr_time).strftime('%H:%M:%S') }}{% endif %}
+            </span>
+        </div>
+        <a href="{{ url_for('admin.admin_search_detail', search_id=scrape_log_detail.search_id) }}"
+           class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_search_detail', search_id=scrape_log_detail.search_id) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">
+            🔍 Recherche #{{ scrape_log_detail.search_id }}{{ ' — ' ~ scrape_log_recherche.label if scrape_log_recherche else '' }}
+        </a>
+    </div>
+</div>
+
+<div class="log-viewer" id="raw-viewer">
+    {% if scrape_log_detail.raw_logs %}
+        {# Rendu PARTAGÉ avec templates/search_log_raw.html (issue #19). #}
+        {% from "_macros.html" import log_brut %}
+        {{ log_brut(scrape_log_detail.raw_logs) }}
+    {% else %}
+        <span class="text-muted">Aucun log brut disponible pour ce scrape.</span>
+    {% endif %}
+</div>
+
+{% else %}
+{# ------------------------------------------------------------------- LISTE #}
+<div class="card" style="margin-bottom: 1.5rem;">
+    {# Accès défensifs (.get) : le repo peut renvoyer un dict partiel selon les
+       fenêtres disponibles ; une clé absente vaut « pas de donnée », jamais 0. #}
+    {% set taux_24h = stats_globales.get('taux_succes_24h') if stats_globales else none %}
+    {% set nb_24h = stats_globales.get('nb_scrapes_24h', 0) if stats_globales else 0 %}
+    {% set taux_7j = stats_globales.get('taux_succes_7j') if stats_globales else none %}
+    {% set nb_7j = stats_globales.get('nb_scrapes_7j', 0) if stats_globales else 0 %}
+    {% set duree_moyenne = stats_globales.get('duree_moyenne_7j') if stats_globales else none %}
+    {% set top_erreurs = stats_globales.get('top_erreurs', []) if stats_globales else [] %}
+    <h2>🩺 Santé des scrapes
+        {%- if scheduler_paused %} <span class="badge badge-warning">⏸️ Planification en pause — lancements manuels toujours possibles</span>{% endif -%}
+    </h2>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-value">{{ '%.1f'|format(taux_24h) if taux_24h is not none else '—' }}%</div>
+            <div class="stat-label">Taux de succès 24 h ({{ nb_24h }} scrape(s))</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📅</div>
+            <div class="stat-value">{{ '%.1f'|format(taux_7j) if taux_7j is not none else '—' }}%</div>
+            <div class="stat-label">Taux de succès 7 j ({{ nb_7j }} scrape(s))</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⏱️</div>
+            <div class="stat-value">{{ '%.1f'|format(duree_moyenne) if duree_moyenne is not none else '—' }}s</div>
+            <div class="stat-label">Durée moyenne (7 j)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">❌</div>
+            <div class="stat-value">{{ top_erreurs|length }}</div>
+            <div class="stat-label">Erreur(s) distincte(s) récente(s)</div>
+        </div>
+    </div>
+    {% if top_erreurs %}
+    <div style="margin-top: 0.75rem;">
+        {% for erreur in top_erreurs %}
+        <div class="detail-row">
+            <span class="detail-label">❌ {{ erreur.message[:100] }}{% if erreur.message|length > 100 %}…{% endif %}</span>
+            <span class="detail-value"><span class="badge badge-inactive">× {{ erreur.occurrences }}</span>
+                <span class="text-muted text-sm">dernière : {{ (erreur.derniere|fr_time).strftime('%d/%m/%Y %H:%M') }}</span></span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>📜 Historique des scrapes ({{ total }})</h2>
+
+    <!-- Filtres combinables : statut, source, recherche, dates -->
+    <form method="GET" action="{{ url_for('admin.admin_scrapes') }}"
+          hx-get="{{ url_for('admin.admin_scrapes') }}" hx-target="#admin-content"
+          hx-swap="outerHTML" hx-push-url="true"
+          style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <select name="statut" aria-label="Filtrer par statut" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <option value="">Tous les statuts</option>
+            <option value="success" {% if statut_filter == 'success' %}selected{% endif %}>✅ Succès</option>
+            <option value="error" {% if statut_filter == 'error' %}selected{% endif %}>❌ Échec</option>
+            <option value="empty" {% if statut_filter == 'empty' %}selected{% endif %}>ℹ️ Vide (aucun résultat)</option>
+        </select>
+        <select name="source" aria-label="Filtrer par source" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <option value="">Toutes les sources</option>
+            {% for source in sources_disponibles %}
+            <option value="{{ source }}" {% if source_filter == source %}selected{% endif %}>{{ source }}</option>
+            {% endfor %}
+        </select>
+        <select name="recherche" aria-label="Filtrer par recherche" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+            <option value="">Toutes les recherches</option>
+            {% for recherche in recherches %}
+            <option value="{{ recherche.id }}" {% if recherche_filter == recherche.id|string %}selected{% endif %}>{{ recherche.label }}</option>
+            {% endfor %}
+        </select>
+        <input type="date" name="date_from" value="{{ date_from }}" title="Depuis" aria-label="Depuis le" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <input type="date" name="date_to" value="{{ date_to }}" title="Avant" aria-label="Avant le" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+        <button type="submit" class="btn btn-sm btn-ghost">Filtrer</button>
+        {% if statut_filter or source_filter or recherche_filter or date_from or date_to %}
+        <a href="{{ url_for('admin.admin_scrapes') }}" class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_scrapes') }}" hx-target="#admin-content"
+           hx-swap="outerHTML" hx-push-url="true">Reset</a>
+        {% endif %}
+    </form>
+
+    {% if logs %}
+    <div class="table-wrapper">
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Recherche</th>
+                    <th>Source</th>
+                    <th>Statut</th>
+                    <th>Durée</th>
+                    <th>Trouvées</th>
+                    <th>Nouvelles</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td class="text-muted">{{ (log.started_at|fr_time).strftime('%d/%m/%Y %H:%M:%S') if log.started_at else '—' }}</td>
+                    <td>
+                        <a href="{{ url_for('admin.admin_search_detail', search_id=log.search_id) }}"
+                           hx-get="{{ url_for('admin.admin_search_detail', search_id=log.search_id) }}"
+                           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true"><strong>{{ log.search_label }}</strong></a>
+                    </td>
+                    <td><span class="badge badge-source">{{ log.search_source }}</span></td>
+                    <td>
+                        {% if log.status == 'success' %}<span class="badge badge-active">✅ Succès</span>
+                        {% elif log.status == 'error' %}<span class="badge badge-inactive" title="{{ log.error_message }}">❌ Échec</span>
+                        {% elif log.status == 'empty' %}<span class="badge badge-muted">ℹ️ Vide</span>
+                        {% else %}<span class="badge badge-warning">{{ log.status }}</span>{% endif %}
+                    </td>
+                    <td class="text-muted">{{ '%.1f'|format(log.duration_sec or 0) }}s</td>
+                    <td>{{ log.listings_found or 0 }}</td>
+                    <td>{{ log.new_listings or 0 }}</td>
+                    <td>
+                        <a href="{{ url_for('admin.admin_scrape_log_detail', log_id=log.id) }}" class="btn btn-sm btn-ghost"
+                           hx-get="{{ url_for('admin.admin_scrape_log_detail', log_id=log.id) }}"
+                           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">📄 Log</a>
+                        {# Relance UNIQUEMENT sur un échec dont la recherche existe encore et est active (#19).
+                           Les champs cachés transportent filtres+page : la vue filtrée survit à l'action. #}
+                        {% if log.status == 'error' and log.peut_relancer %}
+                        <form method="POST" action="{{ url_for('admin.admin_retry_scrape', search_id=log.search_id) }}" class="inline-form"
+                              data-confirm="Relancer le scraping de « {{ log.search_label }} » ?"
+                              hx-post="{{ url_for('admin.admin_retry_scrape', search_id=log.search_id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="statut" value="{{ statut_filter }}">
+                            <input type="hidden" name="source" value="{{ source_filter }}">
+                            <input type="hidden" name="recherche" value="{{ recherche_filter }}">
+                            <input type="hidden" name="date_from" value="{{ date_from }}">
+                            <input type="hidden" name="date_to" value="{{ date_to }}">
+                            <input type="hidden" name="page" value="{{ page }}">
+                            <button type="submit" class="btn btn-sm btn-success" title="Relancer ce scrape">🔄 Relancer</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('admin.admin_scrapes', page=page-1, statut=statut_filter, source=source_filter, recherche=recherche_filter, date_from=date_from, date_to=date_to) }}"
+           class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_scrapes', page=page-1, statut=statut_filter, source=source_filter, recherche=recherche_filter, date_from=date_from, date_to=date_to) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">← Précédent</a>
+        {% endif %}
+        <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('admin.admin_scrapes', page=page+1, statut=statut_filter, source=source_filter, recherche=recherche_filter, date_from=date_from, date_to=date_to) }}"
+           class="btn btn-sm btn-ghost"
+           hx-get="{{ url_for('admin.admin_scrapes', page=page+1, statut=statut_filter, source=source_filter, recherche=recherche_filter, date_from=date_from, date_to=date_to) }}"
+           hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">Suivant →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <h3>Aucun scrape trouvé</h3>
+        <p>Ajustez les filtres, ou lancez un scrape depuis le dashboard.</p>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+</div>

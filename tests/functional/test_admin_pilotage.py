@@ -30,12 +30,13 @@ import pytest
 from tests.functional.conftest import ADMIN_USERNAME, make_admin_stats
 from tests.helpers.factories import make_search_row, make_user_row
 
-# URLs des six onglets, pour vérifier que le bandeau suit partout.
+# URLs des sept onglets, pour vérifier que le bandeau suit partout (#19 : + Scrapes).
 URLS_ONGLETS = [
     "/admin",
     "/admin/users",
     "/admin/searches",
     "/admin/listings",
+    "/admin/scrapes",
     "/admin/database",
     "/admin/logs",
 ]

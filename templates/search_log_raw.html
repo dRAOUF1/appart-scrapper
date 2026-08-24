@@ -25,7 +25,9 @@
 
 <div class="log-viewer" id="raw-viewer">
     {% if log_entry.raw_logs %}
-        {{ log_entry.raw_logs | replace('&', '&amp;') | replace('<', '&lt;') | replace('>', '&gt;') | replace('\n', '<br>') | replace('ERROR', '<span class="log-error">ERROR</span>') | replace('WARNING', '<span class="log-warning">WARNING</span>') | replace('INFO', '<span class="log-info">INFO</span>') | replace('DEBUG', '<span class="log-debug">DEBUG</span>') | safe }}
+        {# Rendu partagé avec le viewer admin (#19) : macro log_brut de _macros.html. #}
+        {% from "_macros.html" import log_brut %}
+        {{ log_brut(log_entry.raw_logs) }}
     {% else %}
         <span class="text-muted">Aucun log brut disponible pour ce scrape.</span>
     {% endif %}
