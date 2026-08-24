@@ -9,7 +9,7 @@
 #
 # `make help` liste toutes les cibles.
 
-.PHONY: help dev dev-stop dev-reset prod docker-build docker-push
+.PHONY: help dev dev-stop dev-reset prod docker-build docker-push test-js
 
 VENV_ACTIVATE := venv/bin/activate
 DEV_DB_CONTAINER := appart-dev-pg
@@ -29,6 +29,7 @@ help:
 	@echo "make prod         — instance branchée sur .env (ATTENTION : la prod si .env pointe dessus)"
 	@echo "make docker-build — build de l'image de production : $(DOCKER_IMAGE):$(DOCKER_TAG)"
 	@echo "make docker-push  — login + build + push vers Docker Hub (DOCKER_USER et DOCKER_TAG surchargeables)"
+	@echo "make test-js      — suite node --test de static/search_form.js (zéro dépendance)"
 
 ## Instance locale : DB Postgres Docker dédiée, jamais la production.
 dev:
@@ -75,6 +76,12 @@ prod:
 ##   DOCKER_USER=moncompte DOCKER_TAG=v1.0.0 make docker-build
 docker-build:
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+
+## Suite JS (node --test natif, Node >= 18, zéro dépendance npm) : couvre
+## static/search_form.js (écart n°1 de l'audit de tests). NB : sur Node >= 21
+## un répertoire en argument n'est plus récursé, on passe donc le glob.
+test-js:
+	node --test "tests/js/**/*.test.mjs"
 
 ## Login + build + push vers Docker Hub.
 ## `docker login` est interactif (identifiant + mot de passe/token).
