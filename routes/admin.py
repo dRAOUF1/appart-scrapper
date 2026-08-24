@@ -1540,10 +1540,28 @@ def _cellule_publication(creation_date) -> str:
         return str(creation_date)
 
 
+def _neutraliser_formule_csv(cellule: str) -> str:
+    """Neutralise l'injection de formule CSV (CWE-1236, recommandation OWASP).
+
+    Une cellule qui commence par « = », « + », « - » ou « @ » est évaluée
+    comme une formule par Excel/LibreOffice à l'ouverture de l'export :
+    exfiltration de données (HYPERLINK), exécution de commandes (cmd). Les
+    cellules viennent du SCRAPING — un titre malveillant est possible. Le
+    préfixe apostrophe rend la cellule inerte tout en restant lisible.
+    """
+    if cellule.startswith(("=", "+", "-", "@")):
+        return f"'{cellule}"
+    return cellule
+
+
 def _cellules_csv_annonce(li: dict) -> list[str]:
-    """Une ligne d'annonce → les colonnes françaises de l'export (#20)."""
+    """Une ligne d'annonce → les colonnes françaises de l'export (#20).
+
+    Chaque cellule passe par _neutraliser_formule_csv : le contenu vient du
+    scraping et n'est jamais de confiance.
+    """
     premiere_detection = li.get("first_seen")
-    return [
+    brutes = [
         str(li.get("listing_id") or ""),
         li.get("title") or "",
         li.get("source") or "",
@@ -1555,6 +1573,7 @@ def _cellules_csv_annonce(li: dict) -> list[str]:
         li.get("city") or "",
         li.get("url") or "",
     ]
+    return [_neutraliser_formule_csv(cellule) for cellule in brutes]
 
 
 @admin_bp.route("/admin/listings/export")
