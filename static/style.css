@@ -1071,6 +1071,31 @@ code {
 }
 
 /* ============================================================
+   Pause globale du scheduler (issue #17)
+   ============================================================ */
+
+/* Bandeau d'alerte affiché sur TOUS les onglets de l'admin tant que la pause
+   est active ; l'ancre #admin-pause-zone reste dans le DOM (vide) quand la
+   planification est reprise, pour que le swap hx-swap-oob ait une cible. */
+.pause-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: rgba(255, 159, 10, 0.12);
+    border: 1px solid rgba(255, 159, 10, 0.45);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.pause-banner-text {
+    color: var(--orange);
+    font-size: 0.9rem;
+}
+
+/* ============================================================
    Search Cards
    ============================================================ */
 

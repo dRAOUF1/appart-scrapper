@@ -1,0 +1,30 @@
+{#
+  Bandeau de PAUSE GLOBALE du scheduler (issue #17).
+
+  Rendu à deux endroits, comme la barre d'onglets :
+  - inline dans admin.html (ancre permanente #admin-pause-zone) ;
+  - « hors bande » (hx-swap-oob) en fin de CHAQUE fragment HTMX admin :
+    l'état est relu côté serveur à chaque échange, donc un toggle effectué
+    depuis n'importe quel onglet — ou par un autre admin — se propage partout
+    sans rechargement.
+
+  L'élément porteur reste TOUJOURS dans le DOM (vide si reprise) : c'est lui
+  que htmx vient remplacer par id. Sans JS, l'inclusion dans le layout suffit.
+#}
+
+<div id="admin-pause-zone"{% if oob %} hx-swap-oob="true"{% endif %}>
+{% if scheduler_paused %}
+    <div class="pause-banner" role="alert">
+        <span class="pause-banner-text">
+            ⏸️ <strong>Scheduler en pause globale</strong> — aucun scrape planifié ne démarre.
+            Les lancements manuels restent possibles.
+        </span>
+        <form method="POST" action="{{ url_for('admin.admin_toggle_pause_scheduler') }}" class="inline-form"
+              hx-post="{{ url_for('admin.admin_toggle_pause_scheduler') }}"
+              hx-target="#admin-content" hx-swap="outerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-success">▶ Reprendre le scheduler</button>
+        </form>
+    </div>
+{% endif %}
+</div>

@@ -29,6 +29,7 @@ from flask import (
     send_file,
     url_for,
 )
+from loguru import logger
 
 from core.web_utils import to_int
 from routes.auth import require_admin
@@ -50,20 +51,41 @@ def _est_requete_htmx() -> bool:
     return request.headers.get("HX-Request") == "true"
 
 
+def _pause_active(storage) -> bool:
+    """État affiché de la pause globale du scheduler (#17).
+
+    Fail-open comme la lecture du tick planifié (main._pause_scheduler_active) :
+    un échec de lecture n'a jamais à masquer l'admin ni casser un fragment.
+    """
+    from core.scrape_control import CLE_PAUSE_SCHEDULER
+
+    try:
+        valeur = storage.settings.get_setting(CLE_PAUSE_SCHEDULER, "false")
+        return str(valeur).strip().lower() == "true"
+    except Exception as e:
+        logger.error(f"Impossible de lire l'état de pause du scheduler: {e}")
+        return False
+
+
 def _fragment_admin_tab(onglet: str, **ctx) -> str:
     """Fragment HTMX d'un onglet : contenu + barre d'onglets hors bande.
 
     La nav est réémise avec `hx-swap-oob` : htmx remplace celle de la page par
-    le même id, l'onglet actif suit la navigation sans rechargement.
+    le même id, l'onglet actif suit la navigation sans rechargement. Le bandeau
+    de pause (#17) suit le même chemin : son état est relu à chaque fragment,
+    donc un toggle effectué ailleurs (autre onglet, autre admin) se propage.
     """
     ctx["active_tab"] = onglet
+    ctx.setdefault("scheduler_paused", _pause_active(current_app.storage))
     contenu = render_template(f"admin/_{onglet}.html", **ctx)
     nav = render_template("admin/_tabs_nav.html", oob=True, **ctx)
-    return contenu + nav
+    bandeau = render_template("admin/_pause_banner.html", oob=True, **ctx)
+    return contenu + nav + bandeau
 
 
 def _render_admin_tab(onglet: str, **ctx) -> Response | str:
     """Réponse d'une vue GET d'onglet : page complète, ou fragment si requête HTMX."""
+    ctx.setdefault("scheduler_paused", _pause_active(current_app.storage))
     if _est_requete_htmx():
         return _fragment_admin_tab(onglet, **ctx)
     ctx["active_tab"] = onglet
@@ -108,8 +130,119 @@ def _reponse_rendue(message: str, categorie: str, onglet: str, **ctx) -> Respons
 # ce que donnaient les redirections avant le socle HTMX.
 # ---------------------------------------------------------------------------
 
+def _contexte_file(application) -> dict:
+    """Contexte du fragment « file d'attente live » des scrapes (#17).
+
+    Agrège, sans JAMAIS lever (le fragment est pollé toutes les 5 s, il doit
+    rester rendable en tout état de cause) :
+      - les scrapes non terminés (app._scrape_futures via core.file_dattente),
+        enrichis du label/source lus en base ;
+      - l'occupation de l'executor (capacité = max_workers) ;
+      - le prochain passage planifié du scheduler ;
+      - le détenteur du verrou consultatif 727271 (pg_locks/pg_stat_activity,
+        lus par la voie readonly existante execute_query — aucun schéma touché) ;
+      - l'état de la pause globale.
+    """
+    from core.scrape_control import CLE_VERROU_SCHEDULER, file_dattente
+
+    storage = application.storage
+
+    # Scrapes en cours / en attente — enrichissement DB best-effort.
+    entrees: list[dict] = []
+    nb_termines = 0
+    try:
+        for entree in file_dattente(application):
+            if entree["termine"]:
+                nb_termines += 1
+                continue
+            recherche = storage.searches.get_search(entree["search_id"]) or {}
+            entrees.append(
+                {
+                    **entree,
+                    "label": recherche.get("label") or f"Recherche #{entree['search_id']}",
+                    "source": recherche.get("source") or "—",
+                }
+            )
+    except Exception as e:
+        logger.error(f"Impossible de lire la file des scrapes: {e}")
+
+    # Occupation de l'executor : max_workers est privé mais stable ; en test,
+    # le double MagicMock rend l'attribut non chiffrable → repli neutre.
+    try:
+        capacite = max(1, int(getattr(application._scrape_executor, "_max_workers", 1)))
+    except Exception:
+        capacite = 1
+
+    # Prochain passage planifié : APScheduler parké sur l'app par
+    # _start_background_tasks ; absent (test, verrou pris ailleurs) → None.
+    prochain_passage = None
+    scheduler = getattr(application, "_scheduler", None)
+    try:
+        job = scheduler.get_job("scrape_scheduler") if scheduler is not None else None
+        prochain_passage = job.next_run_time if job is not None else None
+    except Exception:
+        prochain_passage = None
+
+    # Détenteur du verrou consultatif : lecture readonly via le repo admin.
+    # L'entête SQL est une f-string, mais la seule valeur interpolée est
+    # CLE_VERROU_SCHEDULER — constante entière du code, jamais une entrée
+    # utilisateur (execute_query est de toute façon en transaction READ ONLY).
+    verrou_detenu_par = None
+    try:
+        rows, _count, error = storage.admin.execute_query(
+            "SELECT a.usename, a.application_name FROM pg_locks l"
+            " JOIN pg_stat_activity a ON a.pid = l.pid"
+            f" WHERE l.locktype = 'advisory' AND l.objid = {CLE_VERROU_SCHEDULER}"
+        )
+        if not error and rows:
+            verrou_detenu_par = rows[0].get("application_name") or rows[0].get("usename")
+    except Exception as e:
+        logger.error(f"Impossible de lire le détenteur du verrou du scheduler: {e}")
+
+    return {
+        "file_entrees": entrees,
+        "nb_termines_non_purges": nb_termines,
+        "nb_actifs": len(entrees),
+        "capacite_executor": capacite,
+        "prochain_passage": prochain_passage,
+        "verrou_detenu_par": verrou_detenu_par,
+        "scheduler_paused": _pause_active(storage),
+    }
+
+
+def _sources_actives(storage) -> dict:
+    """Sources distinctes des recherches actives + effectifs (#17).
+
+    Retourne `{"sources_actives": [{"source", "count"}...], "nb_recherches_actives": N}`
+    pour alimenter les boutons de scrape en masse. Une recherche dont `sources`
+    est vide retombe sur sa colonne legacy `source`, comme le fait le tick
+    planifié ; une recherche multi-sources compte pour chacune.
+    """
+    compteur: dict[str, int] = {}
+    nb_recherches_actives = 0
+    try:
+        for s in storage.searches.get_all_searches():
+            if not s.get("is_active", True):
+                continue
+            nb_recherches_actives += 1
+            for source in s.get("sources") or [s.get("source")]:
+                if source:
+                    compteur[source] = compteur.get(source, 0) + 1
+    except Exception as e:
+        logger.error(f"Impossible de lister les sources actives: {e}")
+    return {
+        "sources_actives": [{"source": src, "count": cnt} for src, cnt in sorted(compteur.items())],
+        "nb_recherches_actives": nb_recherches_actives,
+    }
+
+
 def _contexte_dashboard(storage) -> dict:
-    return {"stats": storage.admin.get_enhanced_admin_stats()}
+    """Dashboard = page de pilotage (#17) : stats + état de la file + bulk."""
+    application = current_app._get_current_object()
+    ctx = {"stats": storage.admin.get_enhanced_admin_stats()}
+    ctx.update(_contexte_file(application))
+    ctx.update(_sources_actives(storage))
+    return ctx
 
 
 def _contexte_utilisateurs(storage) -> dict:
@@ -187,7 +320,94 @@ def admin():
     if tab == "dashboard" and request.args.get("fragment") == "stats":
         # Zone vivante (#16) : le polling HTMX ne recharge que cartes + alertes.
         return render_template("admin/_stats_zone.html", stats=storage.admin.get_enhanced_admin_stats())
+    if tab == "dashboard" and request.args.get("fragment") == "queue":
+        # Zone vivante (#17) : file d'attente des scrapes, pollée toutes les 5 s.
+        return render_template("admin/_queue_zone.html", **_contexte_file(current_app._get_current_object()))
     return _render_admin_tab(tab, **_CONTEXTE_ONGLETS[tab](storage))
+
+
+# ---------------------------------------------------------------------------
+# Pilotage du scraping (issue #17) — pause globale, file d'attente, bulk
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/admin/scheduler/pause", methods=["POST"])
+@require_admin
+def admin_toggle_pause_scheduler():
+    """Bascule de la pause GLOBALE du scheduler (#17).
+
+    La pause ne bloque QUE les scrapes planifiés (le tick la relit à chaque
+    passage) : un lancement manuel reste possible pendant la pause. Chaque
+    bascule est tracée dans le journal d'audit.
+    """
+    storage = current_app.storage
+    from core.scrape_control import CLE_PAUSE_SCHEDULER
+
+    en_pause = not _pause_active(storage)
+    storage.settings.set_setting(CLE_PAUSE_SCHEDULER, "true" if en_pause else "false")
+    storage.admin.log_admin_action(
+        "scheduler_pause_toggled",
+        f"Scheduler {'mis en pause' if en_pause else 'repris'} by {g.user['username']}",
+        g.user["username"],
+    )
+    message = (
+        "Scheduler mis en pause — plus aucun scrape planifié tant que la pause est active"
+        if en_pause
+        else "Scheduler repris — les scrapes planifiés reprennent"
+    )
+    return _reponse_action(
+        message, "warning" if en_pause else "success",
+        url_for("admin.admin"), "dashboard", **_CONTEXTE_ONGLETS["dashboard"](storage),
+    )
+
+
+@admin_bp.route("/admin/scrapes/bulk", methods=["POST"])
+@require_admin
+def admin_bulk_scrape():
+    """Scrape EN MASSE (#17) : toutes les recherches actives, ou d'une source.
+
+    Les soumissions passent par submit_scrape : la déduplication existante
+    évite de doubler un scrape déjà en cours ou en file, et la file
+    séquentielle (max_workers=1) reste la règle. Le rang de chaque recherche
+    dans cette file est visible dans la zone vivante du dashboard.
+    """
+    storage = current_app.storage
+    cible = request.form.get("cible", "").strip().lower()
+
+    actives = [s for s in storage.searches.get_all_searches() if s.get("is_active", True)]
+    libelle_cible = "toutes recherches actives"
+    if cible and cible != "all":
+        actives = [s for s in actives if cible in (s.get("sources") or [s.get("source")])]
+        libelle_cible = f"source '{cible}'"
+
+    soumises: list[int] = []
+    deja_en_file: list[int] = []
+    from core.scrape_control import submit_scrape
+
+    application = current_app._get_current_object()
+    for s in actives:
+        ok, _msg = submit_scrape(application, s["id"], s["user_id"])
+        (soumises if ok else deja_en_file).append(s["id"])
+
+    storage.admin.log_admin_action(
+        "bulk_scrape",
+        f"Bulk scrape {libelle_cible}: {len(soumises)} submitted, "
+        f"{len(deja_en_file)} already queued ({', '.join(map(str, soumises)) or 'none'})"
+        f" by {g.user['username']}",
+        g.user["username"],
+    )
+
+    message = f"{len(soumises)} scrape(s) lancé(s) pour {libelle_cible}"
+    categorie = "success"
+    if deja_en_file:
+        message += f" — {len(deja_en_file)} déjà en file d'attente"
+    if not soumises and not deja_en_file:
+        message = f"Aucune recherche active pour {libelle_cible}"
+        categorie = "info"
+
+    return _reponse_action(
+        message, categorie,
+        url_for("admin.admin"), "dashboard", **_CONTEXTE_ONGLETS["dashboard"](storage),
+    )
 
 
 @admin_bp.route("/admin/users")
@@ -281,6 +501,45 @@ def admin_delete_search(search_id):
             url_for("admin.admin_searches"), "searches", **_CONTEXTE_ONGLETS["searches"](storage),
         )
     return redirect(url_for("admin.admin_searches"))
+
+
+@admin_bp.route("/admin/searches/<int:search_id>/toggle-active", methods=["POST"])
+@require_admin
+def admin_toggle_search_active(search_id):
+    """Bascule actif/pause d'UNE recherche (#17), via toggle_search_active.
+
+    Une recherche en pause n'est plus planifiée (le tick saute is_active falsy)
+    mais reste lançable manuellement. Retombe sur la fiche détail si l'action
+    venait de là (champ caché `origine`), sinon sur la liste.
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+
+    nouvelle_valeur = storage.searches.toggle_search_active(search_id)
+    if nouvelle_valeur is None:
+        # La ligne a disparu entre la lecture et la bascule : rien à annoncer.
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+
+    storage.admin.log_admin_action(
+        "search_active_toggled",
+        f"Search '{search['label']}' (ID:{search_id}) "
+        f"{'activated' if nouvelle_valeur else 'paused'} by {g.user['username']}",
+        g.user["username"],
+    )
+
+    message = "Recherche activée" if nouvelle_valeur else "Recherche mise en pause"
+    if request.form.get("origine") == "detail":
+        detail = storage.searches.get_search_detail(search_id)
+        ctx = {"search_detail": detail} if detail else _CONTEXTE_ONGLETS["searches"](storage)
+        url_retour = url_for("admin.admin_search_detail", search_id=search_id)
+    else:
+        ctx = _CONTEXTE_ONGLETS["searches"](storage)
+        url_retour = url_for("admin.admin_searches")
+    return _reponse_action(message, "success", url_retour, "searches", **ctx)
 
 
 @admin_bp.route("/admin/searches/<int:search_id>/scrape", methods=["POST"])

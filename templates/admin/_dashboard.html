@@ -10,10 +10,69 @@
 <div id="admin-content">
     {% include "admin/_stats_zone.html" %}
 
-    <!-- Settings -->
+    {% include "admin/_queue_zone.html" %}
+
+    <!-- Pilotage du scraping (#17) : pause globale du scheduler + scrape en masse.
+         La file d'attente live est la zone ci-dessus (polling 5s). -->
     <div class="card" style="margin-bottom: 1.5rem;">
-        <h2>⚙️ Paramètres de scraping</h2>
+        <h2>⚙️ Pilotage du scraping</h2>
         <div class="detail-grid">
+            <div class="detail-card">
+                <h3>⏸️ Pause globale du scheduler</h3>
+                <p class="text-muted text-sm">
+                    En pause, plus aucun scrape <em>planifié</em> ne démarre.
+                    Les lancements manuels restent possibles.
+                </p>
+                <div class="detail-row">
+                    <span class="detail-label">État</span>
+                    <span class="detail-value">
+                        {% if scheduler_paused %}
+                        <span class="badge badge-warning">⏸️ En pause</span>
+                        {% else %}
+                        <span class="badge badge-active">▶ Actif</span>
+                        {% endif %}
+                    </span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.admin_toggle_pause_scheduler') }}" class="inline-form"
+                      style="margin-top: 0.75rem;"
+                      data-confirm="{% if scheduler_paused %}Reprendre la planification des scrapes ?{% else %}Mettre le scheduler en pause ? Plus aucun scrape planifié ne démarrera tant que la pause est active.{% endif %}"
+                      hx-post="{{ url_for('admin.admin_toggle_pause_scheduler') }}"
+                      hx-target="#admin-content" hx-swap="outerHTML">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn {% if scheduler_paused %}btn-success{% else %}btn-warning{% endif %}">
+                        {% if scheduler_paused %}▶ Reprendre le scheduler{% else %}⏸ Mettre en pause{% endif %}
+                    </button>
+                </form>
+            </div>
+            <div class="detail-card">
+                <h3>🚀 Scrapes en masse</h3>
+                <p class="text-muted text-sm">
+                    Lance toutes les recherches actives (ou celles d'une source) :
+                    elles partent en FILE SÉQUENTIELLE (un scrape à la fois), leur rang
+                    s'affiche dans la zone « File d'attente ». Les scrapes déjà en file
+                    ne sont pas doublés.
+                </p>
+                <div class="action-bar" style="margin-top: 0.75rem;">
+                    {% if nb_recherches_actives > 0 %}
+                    <form method="POST" action="{{ url_for('admin.admin_bulk_scrape') }}" class="inline-form"
+                          data-confirm="Lancer le scraping des {{ nb_recherches_actives }} recherche(s) active(s) ?"
+                          hx-post="{{ url_for('admin.admin_bulk_scrape') }}" hx-target="#admin-content" hx-swap="outerHTML">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="cible" value="all">
+                        <button type="submit" class="btn btn-primary">🚀 Toutes les recherches actives</button>
+                    </form>
+                    {% endif %}
+                    {% for src in sources_actives %}
+                    <form method="POST" action="{{ url_for('admin.admin_bulk_scrape') }}" class="inline-form"
+                          data-confirm="Lancer le scraping des {{ src.count }} recherche(s) active(s) de la source « {{ src.source }} » ?"
+                          hx-post="{{ url_for('admin.admin_bulk_scrape') }}" hx-target="#admin-content" hx-swap="outerHTML">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="cible" value="{{ src.source }}">
+                        <button type="submit" class="btn btn-ghost">🚀 Source : {{ src.source }} ({{ src.count }})</button>
+                    </form>
+                    {% endfor %}
+                </div>
+            </div>
         </div>
     </div>
 

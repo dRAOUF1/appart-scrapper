@@ -22,6 +22,26 @@
             <span class="detail-label">Source</span>
             <span class="detail-value"><span class="badge badge-source">{{ search_detail.source }}</span></span>
         </div>
+        {# Issue #17 : état actif/pause, pilotable depuis la fiche. #}
+        <div class="detail-row">
+            <span class="detail-label">Statut</span>
+            <span class="detail-value">
+                {% if search_detail.is_active %}
+                <span class="badge badge-active">Active</span>
+                {% else %}
+                <span class="badge badge-inactive">En pause</span>
+                {% endif %}
+                <form method="POST" action="{{ url_for('admin.admin_toggle_search_active', search_id=search_detail.id) }}" class="inline-form"
+                      hx-post="{{ url_for('admin.admin_toggle_search_active', search_id=search_detail.id) }}"
+                      hx-target="#admin-content" hx-swap="outerHTML">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="origine" value="detail">
+                    <button type="submit" class="btn btn-sm btn-ghost">
+                        {% if search_detail.is_active %}⏸ Mettre en pause{% else %}▶ Activer{% endif %}
+                    </button>
+                </form>
+            </span>
+        </div>
         <div class="detail-row">
             <span class="detail-label">Topic ntfy</span>
             <span class="detail-value">
@@ -157,6 +177,7 @@
                     <th>Annonces</th>
                     <th>Topic ntfy</th>
                     <th>Intervalle</th>
+                    <th>Statut</th>
                     <th>Dernier scrape</th>
                     <th>Créée le</th>
                     <th>Actions</th>
@@ -182,12 +203,29 @@
                         {% endif %}
                     </td>
                     <td><span class="badge">{{ s.scrape_interval or 5 }}min</span></td>
+                    {# Issue #17 : état actif/pause de la recherche, pilotable en place. #}
+                    <td>
+                        {% if s.is_active %}
+                        <span class="badge badge-active">Active</span>
+                        {% else %}
+                        <span class="badge badge-inactive">En pause</span>
+                        {% endif %}
+                    </td>
                     <td class="text-muted">{{ (s.last_scraped|fr_time).strftime('%H:%M') if s.last_scraped else '—' }}</td>
                     <td class="text-muted">{{ (s.created_at|fr_time).strftime('%d/%m/%Y') if s.created_at else '—' }}</td>
                     <td>
                         <a href="{{ url_for('admin.admin_search_detail', search_id=s.id) }}" class="btn btn-sm btn-ghost"
                            hx-get="{{ url_for('admin.admin_search_detail', search_id=s.id) }}" hx-target="#admin-content"
                            hx-swap="outerHTML" hx-push-url="true">Voir</a>
+                        <form method="POST" action="{{ url_for('admin.admin_toggle_search_active', search_id=s.id) }}" class="inline-form"
+                              hx-post="{{ url_for('admin.admin_toggle_search_active', search_id=s.id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-ghost"
+                                    title="{% if s.is_active %}Mettre la recherche en pause (plus planifiée){% else %}Réactiver la recherche{% endif %}">
+                                {% if s.is_active %}⏸{% else %}▶{% endif %}
+                            </button>
+                        </form>
                         <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=s.id) }}" class="inline-form"
                               data-confirm="Lancer le scraping maintenant ?"
                               hx-post="{{ url_for('admin.admin_scrape_search', search_id=s.id) }}"
@@ -206,7 +244,7 @@
                 </tr>
                 {% endfor %}
                 {% if not searches %}
-                <tr><td colspan="10" class="text-muted" style="text-align: center; padding: 2rem;">Aucune recherche trouvée</td></tr>
+                <tr><td colspan="11" class="text-muted" style="text-align: center; padding: 2rem;">Aucune recherche trouvée</td></tr>
                 {% endif %}
             </tbody>
         </table>

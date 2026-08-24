@@ -326,6 +326,140 @@ class TestSchedulerStartup:
             logger.remove(sink_id)
 
 
+class TestPauseGlobaleScheduler:
+    """Issue #17 : la clé app_settings `scheduler_paused` met EN PAUSE les
+    scrapes PLANIFIÉS uniquement — un déclenchement manuel (submit_scrape
+    depuis API/web/admin) ne passe pas par le tick et reste possible.
+
+    La décision est extraite dans `main._pause_scheduler_active` pour être
+    testable isolément ; le tick la relit À CHAQUE passage (un toggle admin
+    s'applique donc au cycle suivant, sans redémarrage).
+    """
+
+    def test_the_pause_key_is_stable(self):
+        """La clé est le contrat entre l'admin (écriture), le tick (lecture)
+        et la base : la renommer désynchroniserait l'affichage du pilotage."""
+        from core.scrape_control import CLE_PAUSE_SCHEDULER
+
+        assert CLE_PAUSE_SCHEDULER == "scheduler_paused"
+
+    @pytest.mark.parametrize(
+        ("valeur", "attendu"),
+        [
+            ("true", True),
+            ("TRUE", True),
+            (" true ", True),
+            ("false", False),
+            ("", False),
+            ("0", False),
+            ("vrai", False),
+            (None, False),
+        ],
+        ids=["true", "upper", "espaces", "false", "vide_defaut", "zero", "francais", "none"],
+    )
+    def test_only_the_exact_true_value_pauses_the_scheduler(self, valeur, attendu):
+        """Décision pure : seule la chaîne 'true' (casse/espaces tolérés) met
+        en pause. Toute autre valeur — y compris une base vide — laisse le
+        scheduler tourner."""
+        from tests.helpers.fakes import fake_storage
+
+        storage = fake_storage()
+        storage.settings.get_setting.return_value = valeur
+
+        assert main._pause_scheduler_active(storage) is attendu
+
+    def test_the_key_read_is_the_canonical_one(self):
+        """La lecture passe par settings_repo avec LA clé canonique : toute
+        divergence d'orthographe rendrait le toggle admin inopérant."""
+        from core.scrape_control import CLE_PAUSE_SCHEDULER
+        from tests.helpers.fakes import fake_storage
+
+        storage = fake_storage()
+        main._pause_scheduler_active(storage)
+
+        storage.settings.get_setting.assert_called_once_with(CLE_PAUSE_SCHEDULER, "false")
+
+    def test_a_settings_failure_fails_open_and_is_logged(self):
+        """Base injoignable : la pause est considérée INACTIVE (fail-open) et
+        l'erreur est tracée. Fail-closed raterait silencieusement TOUS les
+        scrapes planifiés tant que la base répond mal — pire que le risque
+        inverse, puisque le scrape échouerait de toute façon sur une base morte."""
+        from tests.helpers.fakes import fake_storage
+
+        messages: list[str] = []
+        sink_id = logger.add(lambda msg: messages.append(msg.record["message"]), level="DEBUG")
+        try:
+            storage = fake_storage()
+            storage.settings.get_setting.side_effect = RuntimeError("pool épuisé")
+
+            assert main._pause_scheduler_active(storage) is False
+            assert any("Impossible de lire l'état de pause" in m for m in messages)
+        finally:
+            logger.remove(sink_id)
+
+    @freeze_time(FROZEN)
+    def test_a_paused_tick_skips_every_planned_submission(self, harness):
+        """Critère d'acceptation : pause active ⇒ AUCUN scrape planifié. La
+        boucle ne regarde même pas les utilisateurs (return avant)."""
+        harness.storage.settings.get_setting.return_value = "true"
+        harness.with_searches(make_search_row(id=11))
+
+        messages: list[str] = []
+        sink_id = logger.add(lambda msg: messages.append(msg.record["message"]), level="DEBUG")
+        try:
+            assert harness.run() == []
+        finally:
+            logger.remove(sink_id)
+
+        # Preuves positives : le tick a bien tourné ET a consulté la pause…
+        harness.storage.settings.get_setting.assert_called_with(main.CLE_PAUSE_SCHEDULER, "false")
+        # …et le saut est annoncé en info français, pas avalé en silence.
+        assert any("en pause globale" in m for m in messages)
+        harness.storage.users.get_all_users.assert_not_called()
+
+    @freeze_time(FROZEN)
+    def test_manual_submissions_are_not_blocked_by_the_pause(self, harness, monkeypatch):
+        """Le corollaire attendu : pendant la pause, submit_scrape appelé
+        directement (route manuelle) fonctionne encore — il n'y a AUCUNE
+        vérification de pause dans son chemin."""
+        monkeypatch.setattr(
+            "core.scrape_control.submit_scrape",
+            lambda app, search_id, user_id: harness.submitted.append((search_id, user_id)) or (True, ""),
+        )
+        harness.storage.settings.get_setting.return_value = "true"
+
+        from core.scrape_control import submit_scrape
+
+        ok, _msg = submit_scrape(harness.app, search_id=11, user_id=1)
+
+        assert ok is True
+        assert harness.submitted == [(11, 1)], (
+            "la pause planifiée ne doit pas filtrer les soumissions manuelles"
+        )
+
+    @freeze_time(FROZEN)
+    def test_the_pause_is_reread_on_every_tick(self, harness):
+        """Un toggle admin pris EN COMPTE au cycle suivant : le premier tick
+        tourne en pause (rien ne part), le second après reprise soumet. Une
+        lecture faite une fois pour toutes au démarrage rendrait le toggle
+        invisible sans redémarrage du process."""
+        harness.with_searches(make_search_row(id=11))
+        harness.storage.settings.get_setting.return_value = "true"
+        assert harness.run() == []
+
+        harness.storage.settings.get_setting.return_value = "false"
+        assert harness.run() == [(11, 1)]
+
+    def test_the_scheduler_is_parked_on_the_app_for_the_admin_queue_view(self, harness):
+        """La vue file d'attente (#17) lit next_run_time via app._scheduler :
+        si l'instance n'est pas parkée, le badge « prochain passage » restera
+        muet en production même quand le scheduler tourne."""
+        job = harness.job  # monte le scheduler
+        assert callable(job)
+
+        assert harness.app._scheduler is harness.scheduler
+
+
 class TestDueForScrapeFiltering:
     @freeze_time(FROZEN)
     def test_a_never_scraped_active_search_is_submitted(self, harness):

@@ -26,6 +26,7 @@ from flask_wtf import CSRFProtect
 from loguru import logger
 
 from config import load_config
+from core.scrape_control import CLE_PAUSE_SCHEDULER, CLE_VERROU_SCHEDULER
 from notifier import Notifier
 from storage import Storage
 
@@ -151,8 +152,31 @@ def create_app() -> Flask:
 
 # Clé arbitraire pour le verrou consultatif Postgres (un seul process doit
 # faire tourner le scheduler, même si le déploiement passe un jour à
-# plusieurs workers gunicorn).
-_SCHEDULER_LOCK_KEY = 727271
+# plusieurs workers gunicorn). La valeur vit dans core/scrape_control.py
+# (source unique, lue aussi par la vue file d'attente de l'admin) ; le nom
+# historique est conservé comme alias pour les tests existants.
+_SCHEDULER_LOCK_KEY = CLE_VERROU_SCHEDULER
+
+# Issue #17 : la clé app_settings portant la pause GLOBALE du scheduler
+# (`CLE_PAUSE_SCHEDULER`, importée de core/scrape_control.py — source unique,
+# partagée avec l'admin) vaut 'true'/'false' dans app_settings. En pause, les
+# scrapes PLANIFIÉS sont sautés ; les soumissions manuelles (submit_scrape
+# depuis API/web/admin) restent permises.
+def _pause_scheduler_active(storage) -> bool:
+    """Décision testable : le scheduler planifié est-il en pause ?
+
+    Lit la clé 'scheduler_paused' du magasin clé/valeur app_settings via
+    settings_repo. Tolérante sur la casse/espaces ; en cas d'échec de lecture
+    (base injoignable…), la pause est considérée INACTIVE (comportement
+    fail-open : le cycle suivant retentera, et un scrape planifié rate une
+    exécution plutôt que d'en rater toutes les suivantes en silence).
+    """
+    try:
+        valeur = storage.settings.get_setting(CLE_PAUSE_SCHEDULER, "false")
+    except Exception as e:
+        logger.error(f"Impossible de lire l'état de pause du scheduler: {e}")
+        return False
+    return str(valeur).strip().lower() == "true"
 
 
 def _try_acquire_scheduler_lock(database_url: str):
@@ -215,6 +239,16 @@ def _start_background_tasks(app: Flask):
     def scheduled_scrape_job():
         try:
             with app.app_context():
+                # Issue #17 : pause globale lue À CHAQUE TICK. Les scrapes
+                # planifiés sont sautés silencieusement ; les déclenchements
+                # manuels (submit_scrape) ne passent pas par ici et restent
+                # donc possibles pendant la pause.
+                if _pause_scheduler_active(app.storage):
+                    logger.info(
+                        "Scheduler en pause globale — scrapes planifiés sautés "
+                        "(les lancements manuels restent possibles)"
+                    )
+                    return
                 all_users = app.storage.users.get_all_users()
                 # Naive datetime representing UTC — matches the naive TIMESTAMP
                 # columns populated by Postgres CURRENT_TIMESTAMP (DB session
@@ -249,6 +283,10 @@ def _start_background_tasks(app: Flask):
 
     scheduler.add_job(scheduled_scrape_job, "interval", seconds=30, id="scrape_scheduler", max_instances=1)
     scheduler.start()
+    # Issue #17 : parké sur l'app pour que la vue file d'attente de l'admin
+    # puisse lire next_run_time du job (aucun autre usage — le verrou
+    # consultatif et max_instances=1 restent inchangés).
+    app._scheduler = scheduler
     logger.info("Scrape scheduler démarré (toutes les 30s)")
 
 

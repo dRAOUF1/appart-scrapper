@@ -28,6 +28,10 @@
     <span class="badge badge-active">Connecté en tant que {{ session.get('username') }}</span>
 </div>
 
+{# Bandeau de pause globale (#17) : visible sur TOUS les onglets, mis à jour
+   hors bande (hx-swap-oob) à chaque fragment HTMX — cf. _pause_banner.html. #}
+{% include "admin/_pause_banner.html" %}
+
 {% include "admin/_tabs_nav.html" %}
 
 {% if active_tab == 'users' %}
