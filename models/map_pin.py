@@ -9,6 +9,7 @@ porter les lignes telles que le repository les relit.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -22,7 +23,7 @@ class MapPin:
     longitude: float
     note: str = ""
     icon: str = "📍"
-    created_at: object = None
+    created_at: datetime | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

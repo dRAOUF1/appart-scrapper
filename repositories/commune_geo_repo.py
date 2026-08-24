@@ -6,8 +6,9 @@ d'une commune ne change plus, d'où ce cache en base plutôt qu'un dict local au
 process — même raison que repositories/bienici_geo_repo.py, dont ce module
 reprend exactement la forme.
 
-La clé (`area_key`) vaut « postal:<cp> » pour un code postal, ou le code INSEE
-nu (voir services.geocode_commune.area_cache_key). Contrairement aux caches de
+La clé (`area_key`) vaut « postal:<cp> » — un code postal est la seule
+localisation fiable dont dispose une annonce sans coordonnées (voir
+services.geocode_commune.area_cache_key). Contrairement aux caches de
 résolution par source, seuls les SUCCÈS sont stockés ici : un CP non résolu
 (code postal inexistant, API momentanément down) doit pouvoir réussir au
 scrape suivant, sans délai de réessai.
