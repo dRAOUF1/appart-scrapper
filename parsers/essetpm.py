@@ -71,6 +71,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
+from parsers._coords import PRECISION_EXACTE, extraire_coordonnees
 from parsers._dates import DATE_INCONNUE
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
@@ -337,6 +338,15 @@ def _listing_from_detail(listing: Listing, detail: dict) -> Listing:
     listing.image_url = image_url
     listing.price_details = _detail_price_details(detail)
     listing.headline = _strip_text(detail.get("nomProgramme") or "")
+
+    # Issue #26 : quasi-natif — la fiche porte .lat/.lon directs, mais leur
+    # absence prend DEUX formes vérifiées en direct : null ET 0.0/0.0.
+    # extraire_coordonnees rejette les deux (plus l'illisible), sinon un lot
+    # sans position atterrirait au golfe de Guinée sur la carte.
+    coords = extraire_coordonnees(detail.get("lat"), detail.get("lon"))
+    if coords:
+        listing.latitude, listing.longitude = coords
+        listing.location_precision = PRECISION_EXACTE
     return listing
 
 

@@ -59,6 +59,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, REGION, region_departments
 from models.listing import Listing
+from parsers._coords import PRECISION_APPROXIMATIVE, PRECISION_EXACTE, extraire_coordonnees
 from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
@@ -189,6 +190,22 @@ def _zip_from_slug(slug: str) -> str:
     return m.group(1) if m else ""
 
 
+def _coords_orpi(item: dict) -> tuple[tuple[float, float] | None, str]:
+    """Les coordonnées natives d'un item /recherche/ajax, et leur précision.
+
+    L'API porte latitude/longitude directs, plus un champ `blurredness`
+    (valeurs entières observées en direct : 1 = position floutée au niveau de
+    la rue, 2 = encore plus grossière) — toute valeur non nulle signifie que
+    le point ne désigne pas le bien lui-même : 'approximative'. Une position
+    illisible ou sentinelle (0.0) est rejetée par extraire_coordonnees.
+    """
+    coords = extraire_coordonnees(item.get("latitude"), item.get("longitude"))
+    if not coords:
+        return None, ""
+    precision = PRECISION_APPROXIMATIVE if item.get("blurredness") else PRECISION_EXACTE
+    return coords, precision
+
+
 def _detail_url(item: dict) -> str:
     """L'URL de détail d'après la transaction : `/annonce-vente-{slug}/` ou
     `/annonce-location-{slug}/` (formats vérifiés en direct, HTTP 200)."""
@@ -278,6 +295,8 @@ def _dict_to_listing(item: dict) -> Listing:
         pass
     title_parts.append(location_name)
 
+    coords, precision = _coords_orpi(item)
+
     return Listing(
         listing_id=f"orpi_{reference}",
         url=_detail_url(item),
@@ -301,6 +320,9 @@ def _dict_to_listing(item: dict) -> Listing:
         photos=json.dumps(
             [{"url": url, "alt": "", "key": ""} for url in photos if url]
         ),
+        latitude=coords[0] if coords else None,
+        longitude=coords[1] if coords else None,
+        location_precision=precision,
     )
 
 
