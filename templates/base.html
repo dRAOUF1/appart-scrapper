@@ -39,6 +39,23 @@
     </nav>
     {% endif %}
 
+    {# Issue #22 : bannière de la vue administrateur lecture seule. Présente sur
+       TOUTES les pages authentifiées tant que la session porte la marque
+       d'impersonation ; le bouton « Quitter » poste vers la sortie (CSRF), qui
+       est la seule route admin accessible pendant la vue. #}
+    {% if session.get('impersonator_user_id') %}
+    <div class="impersonation-banner" role="alert">
+        <span class="impersonation-banner-text">
+            👁️ Vue administrateur — <strong>lecture seule</strong>
+            (vous voyez <strong>{{ session.get('impersonated_username', '') }}</strong>)
+        </span>
+        <form method="POST" action="{{ url_for('admin.admin_impersonation_exit') }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-warning">Quitter</button>
+        </form>
+    </div>
+    {% endif %}
+
     <main class="container">
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}

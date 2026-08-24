@@ -30,6 +30,48 @@
             <span class="detail-value">{{ user_detail.listing_count }}</span>
         </div>
     </div>
+
+    {# Issue #22 : statistiques détaillées du compte. Chaque carte retombe sur
+       « — » si la pièce n'a pas pu être lue (le contexte peut être partiel). #}
+    {% set su = stats_utilisateur or {} %}
+    <div class="detail-card">
+        <h3>📊 Activité</h3>
+        <div class="detail-row">
+            <span class="detail-label">Recherches actives</span>
+            <span class="detail-value">{{ su.get('recherches_actives', '—') }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Recherches en pause</span>
+            <span class="detail-value">{{ su.get('recherches_inactives', '—') }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Annonces trouvées (7 j)</span>
+            <span class="detail-value">{{ su.get('annonces_7j', '—') }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Annonces trouvées (30 j)</span>
+            <span class="detail-value">{{ su.get('annonces_30j', '—') }}</span>
+        </div>
+    </div>
+    <div class="detail-card">
+        <h3>🩺 Scrapes</h3>
+        <div class="detail-row">
+            <span class="detail-label">Dernier scrape réussi</span>
+            <span class="detail-value">{{ (dernier_scrape_succes|fr_time).strftime('%d/%m/%Y %H:%M') if dernier_scrape_succes else '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Dernier scrape échoué</span>
+            <span class="detail-value">{{ (dernier_scrape_echec|fr_time).strftime('%d/%m/%Y %H:%M') if dernier_scrape_echec else '—' }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Sources utilisées</span>
+            <span class="detail-value">
+                {% for src in su.get('sources_utilisees') or [] %}
+                <span class="badge badge-source">{{ src }}</span>
+                {% else %}—{% endfor %}
+            </span>
+        </div>
+    </div>
 </div>
 
 {% if user_detail.searches %}
@@ -95,6 +137,16 @@
 {% endif %}
 
 <div class="action-bar" style="margin-top: 1.5rem;">
+    {# Issue #22 : entrée en vue administrateur lecture seule. Navigation
+       CLASSIQUE volontairement (pas d'hx-post) : on quitte le panel admin pour
+       l'espace utilisateur — la redirection vers le dashboard doit être suivie
+       par le navigateur, bannière comprise. La protection reste le guard
+       serveur (403) ; ce bouton n'est qu'une commodité. #}
+    <form method="POST" action="{{ url_for('admin.admin_impersonate_start', user_id=user_detail.id) }}" class="inline-form"
+          data-confirm="Ouvrir la vue lecture seule du compte « {{ user_detail.username }} » ?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-warning">👁 Voir comme {{ user_detail.username }}</button>
+    </form>
     <form method="POST" action="{{ url_for('admin.admin_delete_user', user_id=user_detail.id) }}" class="inline-form"
           data-confirm="Supprimer définitivement cet utilisateur et toutes ses données ?"
           hx-post="{{ url_for('admin.admin_delete_user', user_id=user_detail.id) }}"

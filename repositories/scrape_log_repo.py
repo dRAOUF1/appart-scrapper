@@ -321,6 +321,35 @@ class ScrapeLogRepository(BaseRepository):
             "top_erreurs": top_erreurs,
         }
 
+    def get_dernier_scrape_resultat(self, search_ids: list[int]) -> dict:
+        """Dernier scrape RÉUSSI et dernier ÉCHEC parmi les recherches données (#22).
+
+        Alimente les cartes de la fiche utilisateur admin. Le stockage est un
+        JSONL par recherche (pas de SQL ici) : la passe itère les fichiers des
+        SEULES recherches reçues — le même coût que la vue globale #19, borné
+        par la rétention des logs.
+
+        Statuts : `success` = réussi, `error` = échec ; `empty` n'est NI l'un
+        NI l'autre (le scrape a tourné et légitimement rien trouvé — même
+        convention que get_scrape_stats). Les timestamps sont naïfs UTC
+        (héritage create_scrape_log), donc comparables tels quels.
+        """
+        dernier_succes: datetime | None = None
+        dernier_echec: datetime | None = None
+        for search_id in search_ids:
+            for log in read_entries(search_id):
+                debut = log.get("started_at")
+                if not isinstance(debut, datetime):
+                    continue
+                statut = log.get("status")
+                if statut == "success":
+                    if dernier_succes is None or debut > dernier_succes:
+                        dernier_succes = debut
+                elif statut == "error":
+                    if dernier_echec is None or debut > dernier_echec:
+                        dernier_echec = debut
+        return {"dernier_succes": dernier_succes, "dernier_echec": dernier_echec}
+
     def export_scrape_logs(self, search_id: int) -> str:
         return export_search_logs(search_id)
 

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Lecture seule — Appart Scraper{% endblock %}
+
+{% block content %}
+<div class="empty-state">
+    <div class="empty-icon">👁️</div>
+    <h3>Lecture seule</h3>
+    <p>
+        Vous consultez ce compte en vue administrateur :
+        les actions d'écriture sont désactivées
+        (requête {{ action }} refusée, rien n'a été modifié).
+    </p>
+</div>
+
+{% endblock %}

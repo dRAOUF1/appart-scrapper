@@ -1163,6 +1163,32 @@ code {
 }
 
 /* ============================================================
+   Vue administrateur lecture seule (issue #22)
+   ============================================================ */
+
+/* Bandeau affiché sur TOUTES les pages authentifiées tant qu'un admin
+   consulte un compte en impersonation. Violet, distinct du bandeau de pause
+   (orange) : deux alertes différentes ne doivent pas se confondre. Le bouton
+   « Quitter » est la seule action admin disponible pendant la vue. */
+.impersonation-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: rgba(191, 90, 242, 0.12);
+    border: 1px solid rgba(191, 90, 242, 0.45);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.impersonation-banner-text {
+    color: var(--purple);
+    font-size: 0.9rem;
+}
+
+/* ============================================================
    Search Cards
    ============================================================ */
 

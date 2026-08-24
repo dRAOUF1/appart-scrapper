@@ -32,6 +32,10 @@
 </div>
 
 <!-- Cleanup -->
+{# Issue #22 : en vue administrateur lecture seule, les actions d'écriture sont
+   masquées — la protection RÉELLE reste le guard serveur (403), ce masquage
+   n'est qu'un confort pour ne pas montrer un bouton qui répondra 403. #}
+{% if not session.get('impersonator_user_id') %}
 <div class="card">
     <h2>🧹 Nettoyage des annonces</h2>
     <p class="text-muted">Les annonces sont automatiquement supprimées après 4 jours.</p>
@@ -40,6 +44,7 @@
         <button type="submit" class="btn btn-primary">Nettoyer maintenant</button>
     </form>
 </div>
+{% endif %}
 
 <!-- Recent listings -->
 {% if recent %}
