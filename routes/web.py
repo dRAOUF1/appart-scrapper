@@ -24,7 +24,7 @@ from flask import (
 )
 from loguru import logger
 
-from core.criteria import location_label
+from core.criteria import has_transit, location_label
 from core.geocode import CITY
 from core.web_utils import to_int
 from parsers import list_sources, remember_manual_overrides
@@ -156,6 +156,36 @@ def _parse_locations_from_form(
     return locations, hand_typed_failures
 
 
+def _parse_transit_from_form(form_data: dict) -> list[dict]:
+    """Le champ caché `transit_payload` (issue #28) -> sélections brutes.
+
+    Le payload est un JSON de liste ({mode, line_id, stop_ids[], radius_m}),
+    écrit par static/search_form.js et re-normalisé par le serveur
+    (normalize_criteria) : le front ne fait jamais autorité sur la validité.
+
+    Un payload CORROMPU (JSON illisible, forme inattendue) est une erreur
+    explicite en français — jamais un crash ni une donnée abandonnée en
+    silence. Une liste valide mais contenant des entrées boiteuses reste
+    acceptée : la normalisation écarte ce qui est inexploitable.
+    """
+    raw = (form_data.get("transit_payload") or "").strip() if hasattr(form_data, "get") else ""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError) as e:
+        raise ValueError(
+            "Le bloc Transports contient des données corrompues : "
+            "dépliez-le et re-sélectionnez vos lignes avant d'enregistrer."
+        ) from e
+    if not isinstance(parsed, list):
+        raise ValueError(
+            "Le bloc Transports est invalide (liste attendue) : "
+            "re-sélectionnez vos lignes avant d'enregistrer."
+        )
+    return parsed
+
+
 def _parse_search_criteria_from_form(
     form_data: dict, existing_locations: list[dict] | None = None
 ) -> tuple[dict, list[str]]:
@@ -170,6 +200,10 @@ def _parse_search_criteria_from_form(
     `existing_locations` (édition) permet de réutiliser une localisation déjà
     stockée quand sa ligne revient sans payload mais avec son libellé exact —
     voir _parse_locations_from_form.
+
+    Issue #28 : le champ caché transit_payload est parsé ici aussi (voir
+    _parse_transit_from_form). Un payload corrompu lève ValueError — les
+    routes affichent ce message, jamais un crash.
 
     Retourne `(critères, textes_non_exploitables)`, les seconds alimentant un
     message d'erreur dédié dans la route (_location_error_message).
@@ -186,6 +220,10 @@ def _parse_search_criteria_from_form(
     locations, hand_typed_failures = _parse_locations_from_form(form_data, existing_locations)
     if locations:
         criteria["locations"] = locations
+
+    transit = _parse_transit_from_form(form_data)
+    if transit:
+        criteria["transit"] = transit
 
     criteria["transaction"] = form_data.get("transaction", "rent")
     property_types = _form_list(form_data, "property_types")
@@ -234,7 +272,10 @@ def _location_error_message(criteria: dict, hand_typed_failures: list[str]) -> s
             )
         quoted = ", ".join(f"« {text} »" for text in hand_typed_failures)
         return f"Localisations {quoted} saisies à la main non exploitables — choisissez-les dans les suggestions"
-    if not criteria.get("locations"):
+    if not criteria.get("locations") and not has_transit(criteria):
+        # Issue #28 : une recherche « transit-seule » est valide (l'expansion
+        # produira ses localisations au scrape) — elle ne déclenche pas
+        # l'exigence de ville.
         return "Aucune localisation renseignée"
     return None
 
@@ -381,7 +422,14 @@ def searches():
         selected_sources = request.form.getlist("sources") or [request.form.get("source", "seloger").strip()]
         scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
-        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form)
+        criteria, hand_typed_failures = None, None
+        try:
+            criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form)
+        except ValueError as e:
+            # Payload transit corrompu (#28) : message français explicite,
+            # jamais un 500.
+            flash(str(e), "error")
+            return redirect(url_for("web.searches"))
 
         location_error = _location_error_message(criteria, hand_typed_failures)
         if location_error:
@@ -603,7 +651,18 @@ def edit_search(search_id: int):
         # texte est le libellé exact d'une localisation déjà enregistrée
         # réutilise celle-ci (inseeCode compris) au lieu d'être abandonnée.
         existing_locations = (search.get("criteria") or {}).get("locations") or []
-        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
+        try:
+            criteria, hand_typed_failures = _parse_search_criteria_from_form(
+                request.form, existing_locations
+            )
+        except ValueError as e:
+            # Payload transit corrompu (#28) : message français explicite et
+            # retour au formulaire — jamais un 500.
+            flash(str(e), "error")
+            stats = storage.scrape_logs.get_scrape_stats(search_id)
+            return render_template(
+                "search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow
+            )
 
         location_error = _location_error_message(criteria, hand_typed_failures)
         if location_error:
@@ -1191,3 +1250,63 @@ def cleanup():
     deleted = current_app.storage.listings.delete_old_listings(days=days)
     flash(f"{deleted} ancienne(s) annonce(s) supprimée(s)", "success")
     return redirect(url_for("web.dashboard"))
+
+
+# ---------------------------------------------------------------------------
+# Autocomplete des transports en commun (issue #28)
+#
+# Session-only (@require_login) : ces endpoints lisent NOTRE référentiel GTFS,
+# consommés uniquement par le formulaire connecté — même philosophie que les
+# routes web depuis la suppression de l'API à token (#30). Contrat JSON
+# {items: [{id, label}...]} comme l'autocomplete de localisation.
+# ---------------------------------------------------------------------------
+
+_TRANSIT_MODE_LABELS = {
+    "tram": "Tram",
+    "metro": "Métro",
+    "rer": "RER",
+    "train": "Train",
+}
+# L'autocomplete de lignes n'affiche qu'une liste courte (typeahead) ; les
+# STATIONS, elles, alimentent des cases à cocher et doivent être complètes :
+# cap défensif à 100 (la plus longue ligne ferrée francilienne en compte ~50).
+_TRANSIT_LINES_LIMIT = 10
+_TRANSIT_STOPS_LIMIT = 100
+
+
+def _ligne_label(ligne: dict) -> str:
+    """« Métro 14 · Saint-Denis – Orly », prêt pour un <option>."""
+    mode = _TRANSIT_MODE_LABELS.get(ligne.get("mode") or "", "")
+    code = ligne.get("code_ligne") or ""
+    nom = ligne.get("nom_ligne") or ""
+    titre = f"{mode} {code}".strip()
+    return f"{titre} · {nom}" if nom and nom != code else titre
+
+
+@web_bp.route("/locations/transit/lines")
+@require_login
+def transit_lines_autocomplete():
+    """Lignes ferrées dont le code ou le nom contient `q`, triées par mode
+    puis par code. `mode` optionnel filtre le type."""
+    from core.criteria import TRANSIT_MODES
+
+    query = request.args.get("q", "").strip()
+    mode = request.args.get("mode", "").strip() or None
+    if mode not in TRANSIT_MODES:
+        mode = None
+    if not query:
+        return jsonify({"items": []})
+    lignes = current_app.storage.transit.search_lines(query, mode=mode, limit=_TRANSIT_LINES_LIMIT)
+    return jsonify({"items": [{"id": ligne["id"], "label": _ligne_label(ligne)} for ligne in lignes]})
+
+
+@web_bp.route("/locations/transit/stops")
+@require_login
+def transit_stops_autocomplete():
+    """Toutes les stations d'une ligne, alphabétique — la liste COMPLÈTE est
+    nécessaire au multi-select (« toute la ligne » si rien n'est coché)."""
+    line_id = request.args.get("line", "").strip()
+    if not line_id:
+        return jsonify({"items": []})
+    stations = current_app.storage.transit.get_line_stops(line_id)[:_TRANSIT_STOPS_LIMIT]
+    return jsonify({"items": [{"id": station["id"], "label": station["nom"]} for station in stations]})
