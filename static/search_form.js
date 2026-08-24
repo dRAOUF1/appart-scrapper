@@ -686,4 +686,20 @@
     }
 
     document.querySelectorAll('[data-transit-block]').forEach(setupTransitBlock);
+
+    /* --- Exposition pour la suite de tests (node --test) ------------------
+     * Sous Node, `module` existe : on expose les internes que les scénarios
+     * de tests/js pilotent (l'état frais vient du DOM factice construit par
+     * chaque test, ces fonctions restent pures côté effets navigateur).
+     * En navigateur, `module` n'existe pas : ce bloc est inerte et rien de
+     * ce qui précède n'est changé d'un octet de comportement.
+     */
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            attachAutocomplete: attachAutocomplete,
+            setupLocationList: setupLocationList,
+            validateBeforeSubmit: validateBeforeSubmit,
+            ROW_ERROR_CLASS: ROW_ERROR_CLASS,
+        };
+    }
 })();
