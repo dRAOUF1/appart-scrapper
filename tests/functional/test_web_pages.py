@@ -616,6 +616,33 @@ class TestEditSearch:
         assert resp.status_code == 200
         storage.searches.update_search.assert_not_called()
 
+    def test_a_failed_source_validation_rerenders_with_the_submitted_locations(
+        self, web_client, storage, owned_search
+    ):
+        """Écart audit n°5 (#24, volet affichage) : quand c'est la validation
+        PAR SOURCE qui rejette (localisation valide mais critère non référencé),
+        le formulaire se re-rend avec les localisations saisies toujours
+        affichées dans leurs champs — aucune perte à l'écran — et le message
+        nomme précisément la source fautive."""
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Un libellé",
+            "ntfy_topic": "topic",
+            "sources": "laforet",          # Laforêt ne référence pas les parkings
+            "property_types": "parking",
+            "location_payload": PARIS_PAYLOAD,
+        })
+
+        assert resp.status_code == 200
+        storage.searches.update_search.assert_not_called()
+        assert (
+            "Laforêt ne référence pas les biens de type « Parking »".encode()
+            in resp.data
+        ), "le message par source est affiché, pas un refus générique"
+        assert b'value="Paris (75013)"' in resp.data, (
+            "la localisation soumise reste affichée dans son champ"
+        )
+        storage.scrape_logs.get_scrape_stats.assert_called_once_with(1)
+
     def test_the_sources_fall_back_to_the_stored_ones(self, web_client, storage, user):
         """Le formulaire d'édition peut ne pas renvoyer de cases `sources` : il
         faut alors conserver celles de la recherche, et non repartir sur

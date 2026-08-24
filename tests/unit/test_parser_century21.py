@@ -570,6 +570,11 @@ class TestPassesFilters:
             ("6", {"rooms": [5]}, True),
             ("4", {"rooms": [5]}, False),
             ("", {"rooms": [2]}, True),
+            # Écart audit n°3 : les chaînes passent aussi le filtre aval
+            # (int("3")) — cohérent avec l'URL, qui n'exprime pas p-N pour une
+            # chaîne mais laisse _passes_filters décider.
+            ("3", {"rooms": ["3"]}, True),
+            ("5", {"rooms": ["3"]}, False),
         ],
     )
     def test_room_counts(self, rooms, criteria, expected):
@@ -740,8 +745,12 @@ class TestUrlFilters:
             ([2, 3], "plusieurs valeurs : un seul segment p autorisé par URL"),
             ([5], "le « 5 » canonique signifie « 5 et plus », p-5 serait exact"),
             ([], "pas de pièces demandées"),
+            # Écart audit n°3 : une CHAÎNE (« 3 », override manuel ou recherche
+            # pré-unification) n'a pas à être devinée par l'URL — la grammaire
+            # p-N exige un int strict, le filtre aval prend le relais.
+            pytest.param(["3"], "chaîne : pas de segment p émis", id="chaine"),
         ],
-        ids=["multi_valeurs", "cinq_et_plus", "vide"],
+        ids=["multi_valeurs", "cinq_et_plus", "vide", "chaine"],
     )
     def test_inexpressible_room_filters_are_left_to_the_scraper(self, rooms, case):
         """Le minimum de prix canonique (sans max) n'a pas non plus d'équivalent
