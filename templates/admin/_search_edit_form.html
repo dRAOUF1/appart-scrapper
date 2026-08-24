@@ -1,8 +1,9 @@
 {# Formulaire d'édition admin d'une recherche (issue #18), rendu DANS la fiche
    détail de l'onglet recherches. Même mécanique que le formulaire utilisateur
    (templates/search_edit.html) : champ texte doublé d'un payload canonique
-   caché par localisation, sources multi-cases, filtres optionnels, flag
-   notify_enabled (#10) avec son marqueur obligatoire.
+   caché par localisation, bloc Transports avec son transit_payload (#28),
+   sources multi-cases, filtres optionnels, flag notify_enabled (#10) avec son
+   marqueur obligatoire.
 
    L'autocomplete côté client est le MÊME script que l'espace utilisateur
    (static/search_form.js), chargé en fin de partial : htmx évalue les scripts
@@ -84,6 +85,26 @@
                 {% endfor %}
             </div>
             <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une localisation</button>
+        </div>
+
+        <div class="form-section" data-transit-block>
+            <div class="form-section-label">🚇 Transports</div>
+            {# Même bloc que templates/search_edit.html (#28) : la vérité de
+               l'état vit dans CE champ caché, écrit par le JS à chaque
+               changement, relu par le serveur puis normalisé. SANS lui, un
+               POST d'édition écraserait les sélections stockées avec []. #}
+            <input type="hidden" name="transit_payload"
+                value="{{ criteres.transit | tojson if criteres.transit else '' }}"
+                data-transit-payload>
+            <div class="transit-list" data-transit-list></div>
+            <button type="button" class="btn btn-ghost btn-sm" data-add-transit>+ Ajouter une ligne</button>
+            <div class="transit-error" data-transit-error role="alert" hidden></div>
+            <small class="form-help" style="display: block; margin-top: 0.5rem;">
+                Choisis une ligne ferrée francilienne (tram, métro, RER, train), épingle si tu veux
+                certaines stations (« toute la ligne » si aucune n'est cochée), puis un rayon à vol
+                d'oiseau. Une annonce remonte si elle est dans les villes choisies OU près des
+                stations choisies.
+            </small>
         </div>
 
         <div class="form-section">

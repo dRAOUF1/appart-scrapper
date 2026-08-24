@@ -1231,12 +1231,6 @@ def admin_edit_search(search_id):
         )
 
         existing_locations = (search.get("criteria") or {}).get("locations") or []
-        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
-
-        location_error = _location_error_message(criteria, hand_typed_failures)
-        validation = _validate_sources_criteria(selected_sources, criteria)
-        if not location_error and not all(r["ok"] for r in validation):
-            location_error = _validation_error_message(validation)
 
         def _retour_formulaire() -> dict:
             """Le formulaire réaffiché avec la saisie en cours ; si la fiche
@@ -1248,6 +1242,19 @@ def admin_edit_search(search_id):
                 )
                 or _CONTEXTE_ONGLETS["searches"](storage)
             )
+
+        try:
+            criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
+        except ValueError as e:
+            # Payload transit corrompu (#28) : même filet que les routes
+            # utilisateur (web.py) — message français explicite et retour au
+            # formulaire, jamais un 500.
+            return _reponse_rendue(str(e), "error", "searches", **_retour_formulaire())
+
+        location_error = _location_error_message(criteria, hand_typed_failures)
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not location_error and not all(r["ok"] for r in validation):
+            location_error = _validation_error_message(validation)
 
         if location_error:
             return _reponse_rendue(location_error, "error", "searches", **_retour_formulaire())
