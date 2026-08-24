@@ -36,7 +36,6 @@ from tests.functional.conftest import make_admin_stats, make_search_detail
 from tests.helpers.factories import (
     make_city_location,
     make_department_location,
-    make_criteria,
     make_search_row,
     make_transit_selection,
 )
