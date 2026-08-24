@@ -12,7 +12,8 @@
  *
  * Scénarios de l'audit (#24) :
  *   (a) frappe d'un caractère alors que value == libellé choisi -> payload conservé ;
- *   (b) effacement de la lettre parasite -> payload restauré [BUG RÉEL : skip] ;
+ *   (b) effacement de la lettre parasite -> payload restauré (bug corrigé,
+ *       test dé-skipé ; b-bis/b-ter couvrent les angles morts de la décision) ;
  *   (c) modification réelle du texte -> payload vidé + ligne has-error ;
  *   (d) soumission bloquée tant qu'une ligne a perdu son payload, message français ;
  *   (e) purge des états d'erreur au clonage d'une nouvelle ligne.
@@ -136,17 +137,7 @@ describe("autocomplete d'une ligne de localisation", () => {
         assert.equal(requetesFetch.length, requetesAvant, 'pas de requête réseau pour un texte inchangé');
     });
 
-    it("(b) restaure le payload quand la lettre parasite est effacée — BUG RÉEL actuel", { skip: (
-        'BUG RÉEL signalé (écart audit n°1) : le commentaire du code et le message '
-        + 'de commit #24 promettent que « retomber exactement sur le libellé choisi '
-        + '(effacer la lettre parasite) restaure le périmètre », mais chosen = null est '
-        + 'exécuté dès la PREMIÈRE frappe parasite (static/search_form.js, branche '
-        + '« vraie modification ») : au moment où le texte revient au libellé exact, '
-        + 'chosen vaut déjà null, la garde échoue et le payload RESTE vide avec la ligne '
-        + 'toujours marquée has-error — la soumission est donc bloquée malgré un texte '
-        + 'parfaitement identique au choix initial. Ce test contient le comportement '
-        + 'documenté ; le dé-skiper quand routes/web ou static/search_form.js sont corrigés.'
-    ) }, async () => {
+    it("(b) restaure le payload quand la lettre parasite est effacée (comportement documenté #24)", async () => {
         suggestionsServies = [PARIS];
         const line = makeLocationRow();
         searchForm.attachAutocomplete(line.row);
@@ -164,6 +155,56 @@ describe("autocomplete d'une ligne de localisation", () => {
 
         assert.equal(line.payload.value, PARIS_JSON, 'le payload documenté par #24 est restauré');
         assert.equal(line.row.classList.contains(searchForm.ROW_ERROR_CLASS), false);
+    });
+
+    it("(b-bis) suit l'alternance rapide modification -> retour au libellé -> re-modification", async () => {
+        suggestionsServies = [PARIS];
+        const line = makeLocationRow();
+        searchForm.attachAutocomplete(line.row);
+        await chooseSuggestion(line, PARIS);
+        assert.equal(line.payload.value, PARIS_JSON, 'précondition');
+
+        // 1re modification : payload suspendu, ligne en erreur.
+        line.input.value = 'Paris modifié';
+        line.input.emit('input');
+        assert.equal(line.payload.value, '');
+        assert.equal(line.row.classList.contains(searchForm.ROW_ERROR_CLASS), true);
+
+        // Retour au libellé exact : restauration + erreur levée.
+        line.input.value = PARIS.label;
+        line.input.emit('input');
+        assert.equal(line.payload.value, PARIS_JSON, 'retour au libellé exact restaure');
+        assert.equal(line.row.classList.contains(searchForm.ROW_ERROR_CLASS), false);
+
+        // Re-modification : le périmètre est à nouveau suspendu.
+        line.input.value = 'Paris (75)';
+        line.input.emit('input');
+        assert.equal(line.payload.value, '', 're-modification suspend à nouveau');
+        assert.equal(line.row.classList.contains(searchForm.ROW_ERROR_CLASS), true);
+    });
+
+    it("(b-ter) un effacement total oublie le choix : retaper le libellé à la main ne restaure rien", async () => {
+        suggestionsServies = [PARIS];
+        const line = makeLocationRow();
+        searchForm.attachAutocomplete(line.row);
+        await chooseSuggestion(line, PARIS);
+        assert.equal(line.payload.value, PARIS_JSON, 'précondition');
+
+        // Effacement total volontaire : abandon du choix, pas d'erreur affichée.
+        line.input.value = '';
+        line.input.emit('input');
+        assert.equal(line.payload.value, '', 'le payload suit l\'effacement');
+        assert.equal(
+            line.row.classList.contains(searchForm.ROW_ERROR_CLASS), false,
+            'un champ vide n\'est pas marqué en erreur',
+        );
+
+        // Retaper EXACTEMENT le même libellé à la main : saisie neuve, elle doit
+        // repasser par les suggestions — aucune résurrection du payload oublié.
+        line.input.value = PARIS.label;
+        line.input.emit('input');
+        assert.equal(line.payload.value, '', 'le choix oublié n\'est pas ressuscité');
+        assert.equal(line.row.classList.contains(searchForm.ROW_ERROR_CLASS), true);
     });
 
     it('(c) vide le payload et marque la ligne has-error à toute modification réelle', async () => {
@@ -185,9 +226,10 @@ describe("autocomplete d'une ligne de localisation", () => {
 });
 
 /** Les alertes de soumission rendues sous la liste. NB : on cherche PAR
- * CLASSE et non par [data-location-submit-error] — la box créée
- * dynamiquement ne porte pas cet attribut (voir rapport : showListError la
- * recrée à chaque échec au lieu de la réutiliser, constat dispatché). */
+ * CLASSE pour rester indépendant de l'attribut ; le scénario anti-doublon
+ * vérifie en plus que la boîte créée porte bien [data-location-submit-error]
+ * (sans lui, showListError recréait une div à chaque échec et clearListError
+ * était un no-op — écart audit n°2, corrigé). */
 function findAlerts(container) {
     return container.children.filter((child) => /location-submit-error/.test(child.className));
 }
@@ -255,6 +297,39 @@ describe('garde de soumission du formulaire', () => {
         assert.equal(event.prevented, true);
         const alerts = findAlerts(ctx.container);
         assert.match(alerts[0].textContent, /Renseignez au moins une localisation\./);
+    });
+
+    it("(d-ter) réutilise la même boîte d'erreur (aucun empilement) et la masque à la soumission valide", async () => {
+        suggestionsServies = [PARIS];
+        const ctx = makeLocationForm({ rows: 1 });
+        const [line] = ctx.rows;
+        line.input.value = 'Paris tapé à la main'; // texte SANS payload
+
+        // 1er échec : la boîte est créée, identifiable par son attribut.
+        ctx.form.emit('submit');
+        let alerts = findAlerts(ctx.container);
+        assert.equal(alerts.length, 1, "exactement une boîte après le premier échec");
+        assert.notEqual(
+            alerts[0].getAttribute('data-location-submit-error'), null,
+            "la boîte porte l'attribut qui permet de la retrouver",
+        );
+
+        // 2e échec : aucune nouvelle boîte — l'existante est réutilisée.
+        ctx.form.emit('submit');
+        alerts = findAlerts(ctx.container);
+        assert.equal(alerts.length, 1, "pas de doublon au second échec");
+        assert.equal(alerts[0].hidden, false);
+
+        // La ligne est réparée : la soumission part et la boîte est masquée.
+        await chooseSuggestion(line, PARIS);
+        const event = ctx.form.emit('submit');
+        assert.equal(event.prevented, false, 'la ligne réparée laisse partir le formulaire');
+        alerts = findAlerts(ctx.container);
+        assert.equal(alerts.length, 1, "toujours une seule boîte, jamais recréée");
+        assert.equal(
+            alerts[0].hidden, true,
+            "clearListError masque la boîte existante (fini le no-op)",
+        );
     });
 });
 
