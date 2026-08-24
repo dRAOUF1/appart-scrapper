@@ -3,6 +3,10 @@
 
 <div id="admin-content">
 {% if search_detail %}
+{% if edit_mode %}
+{# Issue #18 : mode édition — le formulaire prend la place de la fiche. #}
+{% include "admin/_search_edit_form.html" %}
+{% else %}
 <!-- Search Detail View -->
 <a href="{{ url_for('admin.admin_searches') }}" class="back-link"
    hx-get="{{ url_for('admin.admin_searches') }}" hx-target="#admin-content"
@@ -76,10 +80,23 @@
         </div>
         {% endif %}
     </div>
+    {# Issue #18 : critères en français lisible (format_criteria_lisible),
+       le JSON brut reste repliable pour le debug avancé. #}
     {% if search_detail.criteria %}
     <div class="detail-card">
         <h3>📋 Critères</h3>
-        <pre style="font-size: 0.75rem; margin-top: 0.5rem;"><code>{{ search_detail.criteria | tojson(indent=2) }}</code></pre>
+        {% for ligne_label, ligne_valeur in criteria_lignes or [] %}
+        <div class="detail-row">
+            <span class="detail-label">{{ ligne_label }}</span>
+            <span class="detail-value">{{ ligne_valeur }}</span>
+        </div>
+        {% else %}
+        <p class="text-muted text-sm">Aucun critère exploitable.</p>
+        {% endfor %}
+        <details class="criteria-json-details">
+            <summary>JSON brut (debug)</summary>
+            <pre style="font-size: 0.75rem; margin-top: 0.5rem;"><code>{{ search_detail.criteria | tojson(indent=2) }}</code></pre>
+        </details>
     </div>
     {% endif %}
     {# Issue #19 : santé des scrapes de CETTE recherche, même grille que les
@@ -157,6 +174,18 @@
 {% endif %}
 
 <div class="action-bar" style="margin-top: 1.5rem;">
+    {# Issue #18 : édition des critères dans la fiche (formulaire rendu à la
+       place du détail), duplication en copie inactive. #}
+    <a href="{{ url_for('admin.admin_edit_search', search_id=search_detail.id) }}" class="btn btn-primary"
+       hx-get="{{ url_for('admin.admin_edit_search', search_id=search_detail.id) }}"
+       hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">✏️ Éditer</a>
+    <form method="POST" action="{{ url_for('admin.admin_duplicate_search', search_id=search_detail.id) }}" class="inline-form"
+          data-confirm="Dupliquer « {{ search_detail.label }} » ? La copie sera créée inactive."
+          hx-post="{{ url_for('admin.admin_duplicate_search', search_id=search_detail.id) }}"
+          hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost">⧉ Dupliquer</button>
+    </form>
     <form method="POST" action="{{ url_for('admin.admin_scrape_search', search_id=search_detail.id) }}" class="inline-form"
           data-confirm="Lancer le scraping maintenant ?"
           hx-post="{{ url_for('admin.admin_scrape_search', search_id=search_detail.id) }}"
@@ -164,6 +193,11 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-success">🔄 Scrapper maintenant</button>
     </form>
+    {# Issue #18 : URLs natives construites par chaque source, chargées à la
+       demande (construction pure hors-ligne, sans scrape). #}
+    <button type="button" class="btn btn-ghost"
+            hx-get="{{ url_for('admin.admin_search_urls', search_id=search_detail.id) }}"
+            hx-target="#search-urls-zone" hx-swap="innerHTML">🔗 URLs sources</button>
     <form method="GET" action="{{ url_for('admin.admin_export_search_logs', search_id=search_detail.id) }}" class="inline-form">
         <button type="submit" class="btn btn-ghost">⬇ Exporter logs (.zip)</button>
     </form>
@@ -187,6 +221,10 @@
         <button type="submit" class="btn btn-danger">🗑 Supprimer cette recherche</button>
     </form>
 </div>
+
+{# Issue #18 : zone cible du fragment « URLs sources » (chargement à la demande). #}
+<div id="search-urls-zone" style="margin-top: 1.5rem;"></div>
+{% endif %}
 
 {% else %}
 <!-- Searches List View -->
@@ -272,6 +310,13 @@
                               hx-target="#admin-content" hx-swap="outerHTML">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-sm btn-success">🔄</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin.admin_duplicate_search', search_id=s.id) }}" class="inline-form"
+                              data-confirm="Dupliquer « {{ s.label }} » ? La copie sera créée inactive."
+                              hx-post="{{ url_for('admin.admin_duplicate_search', search_id=s.id) }}"
+                              hx-target="#admin-content" hx-swap="outerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-ghost" title="Dupliquer (copie inactive)">⧉</button>
                         </form>
                         <form method="POST" action="{{ url_for('admin.admin_delete_search', search_id=s.id) }}" class="inline-form"
                               data-confirm="Supprimer « {{ s.label }} » ?"

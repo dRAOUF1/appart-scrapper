@@ -31,8 +31,16 @@ from flask import (
 )
 from loguru import logger
 
-from core.web_utils import to_int
+from core.web_utils import format_criteria_lisible, to_int
+from parsers import list_sources, remember_manual_overrides
 from routes.auth import require_admin
+from routes.web import (
+    _location_error_message,
+    _parse_notify_enabled_from_form,
+    _parse_search_criteria_from_form,
+    _validate_sources_criteria,
+    _validation_error_message,
+)
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -647,18 +655,207 @@ def admin_searches():
     return _render_admin_tab("searches", **_CONTEXTE_ONGLETS["searches"](current_app.storage))
 
 
+def _contexte_recherche_detail(storage, search_id: int, **extras) -> dict | None:
+    """Contexte de la fiche détail d'une recherche, GET comme après action.
+
+    Porte depuis l'issue #18 les critères déjà mis en forme
+    (`criteria_lignes`, via core.web_utils.format_criteria_lisible) pour que
+    le partial affiche un résumé français au lieu du JSON brut — qui reste
+    disponible en <details> pour le debug avancé.
+    """
+    detail = storage.searches.get_search_detail(search_id)
+    if not detail:
+        return None
+    ctx = {
+        "search_detail": detail,
+        # Issue #19 : bloc santé des scrapes de CETTE recherche dans la fiche.
+        "scrape_stats": storage.scrape_logs.get_scrape_stats(search_id),
+        "criteria_lignes": format_criteria_lisible(detail.get("criteria")),
+    }
+    ctx.update(extras)
+    return ctx
+
+
 @admin_bp.route("/admin/searches/<int:search_id>")
 @require_admin
 def admin_search_detail(search_id):
     storage = current_app.storage
-    search = storage.searches.get_search_detail(search_id)
+    ctx = _contexte_recherche_detail(storage, search_id)
+    if ctx is None:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+    return _render_admin_tab("searches", **ctx)
+
+
+@admin_bp.route("/admin/searches/<int:search_id>/edit", methods=["GET", "POST"])
+@require_admin
+def admin_edit_search(search_id):
+    """Édition des critères d'une recherche (issue #18), vue par l'admin.
+
+    L'admin édite la recherche D'UN AUTRE utilisateur sans s'en approprier
+    rien : la mise à jour passe par `update_search` avec le user_id DU
+    PROPRIÉTAIRE (le repository vérifie cette correspondance), jamais celui
+    de la session. Le parsing du formulaire et la re-normalisation canonique
+    sont EXACTEMENT ceux du flux utilisateur (routes/web.py) : payload
+    d'autocomplete repris tel quel (l'inseeCode ne peut pas se perdre),
+    correspondance avec une localisation stockée si le payload manque (#24),
+    ancien vocabulaire SeLoger converti à la lecture ET à l'écriture,
+    validation par source avant enregistrement (#10 : notify_enabled suit).
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
     if not search:
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
-    # Issue #19 : bloc santé des scrapes de CETTE recherche dans la fiche.
-    return _render_admin_tab(
-        "searches", search_detail=search,
-        scrape_stats=storage.scrape_logs.get_scrape_stats(search_id),
+
+    if request.method == "POST":
+        label = request.form.get("label", "").strip()
+        ntfy_topic = request.form.get("ntfy_topic", "").strip()
+        scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
+        selected_sources = (
+            request.form.getlist("sources")
+            or search.get("sources")
+            or [search.get("source", "seloger")]
+        )
+
+        existing_locations = (search.get("criteria") or {}).get("locations") or []
+        criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
+
+        location_error = _location_error_message(criteria, hand_typed_failures)
+        validation = _validate_sources_criteria(selected_sources, criteria)
+        if not location_error and not all(r["ok"] for r in validation):
+            location_error = _validation_error_message(validation)
+
+        def _retour_formulaire() -> dict:
+            """Le formulaire réaffiché avec la saisie en cours ; si la fiche
+            n'est plus lisible, l'état par défaut de l'onglet (jamais 500)."""
+            return (
+                _contexte_recherche_detail(
+                    storage, search_id, edit_mode=True, sources=list_sources(),
+                    form_values=request.form,
+                )
+                or _CONTEXTE_ONGLETS["searches"](storage)
+            )
+
+        if location_error:
+            return _reponse_rendue(location_error, "error", "searches", **_retour_formulaire())
+
+        if not (label and ntfy_topic):
+            return _reponse_rendue("Label et topic ntfy requis", "error", "searches", **_retour_formulaire())
+
+        storage.searches.update_search(
+            search_id, search["user_id"],
+            label=label, ntfy_topic=ntfy_topic,
+            criteria=criteria, scrape_interval=scrape_interval,
+            sources=selected_sources,
+            notify_enabled=_parse_notify_enabled_from_form(request.form),
+        )
+        remember_manual_overrides(selected_sources, criteria, storage=storage)
+        storage.admin.log_admin_action(
+            "search_edited_admin",
+            f"Search '{label}' (ID:{search_id}, owner user_id:{search['user_id']})"
+            f" edited by {g.user['username']}",
+            g.user["username"],
+        )
+        return _reponse_action(
+            f"Recherche « {label} » mise à jour", "success",
+            url_for("admin.admin_search_detail", search_id=search_id), "searches",
+            **(_contexte_recherche_detail(storage, search_id) or _CONTEXTE_ONGLETS["searches"](storage)),
+        )
+
+    ctx = _contexte_recherche_detail(storage, search_id, edit_mode=True, sources=list_sources())
+    if ctx is None:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+    return _render_admin_tab("searches", **ctx)
+
+
+@admin_bp.route("/admin/searches/<int:search_id>/duplicate", methods=["POST"])
+@require_admin
+def admin_duplicate_search(search_id):
+    """Duplication d'une recherche (issue #18).
+
+    La copie porte le label « Copie de <label> », les mêmes critères
+    canoniques, le même propriétaire, `notify_enabled`, mais naît INACTIVE :
+    rien ne se scrape tant qu'un admin ne l'a pas activée. Elle est vierge
+    de toute annonce liée (create_search n'écrit rien dans search_listings).
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search:
+        flash("Recherche introuvable", "error")
+        return redirect(url_for("admin.admin_searches"))
+
+    copie = storage.searches.duplicate_search(search_id, f"Copie de {search['label']}")
+    if not copie:
+        # La ligne source a disparu entre la lecture et la copie.
+        return _reponse_action(
+            "Recherche introuvable — duplication impossible", "error",
+            url_for("admin.admin_searches"), "searches",
+            **_CONTEXTE_ONGLETS["searches"](storage),
+        )
+
+    storage.admin.log_admin_action(
+        "search_duplicated",
+        f"Search '{search['label']}' (ID:{search_id}) duplicated into"
+        f" '{copie['label']}' (ID:{copie['id']}) by {g.user['username']}",
+        g.user["username"],
+    )
+    return _reponse_action(
+        f"Copie créée : « {copie['label']} » (inactive)", "success",
+        url_for("admin.admin_search_detail", search_id=copie["id"]), "searches",
+        **(_contexte_recherche_detail(storage, copie["id"]) or _CONTEXTE_ONGLETS["searches"](storage)),
+    )
+
+
+@admin_bp.route("/admin/searches/<int:search_id>/urls", methods=["GET"])
+@require_admin
+def admin_search_urls(search_id):
+    """URLs natives construites par CHAQUE source de la recherche (issue #18).
+
+    Construction pure (`build_search_urls`), SANS scrape : c'est exactement
+    ce que le scraper visiterait, précieux pour diagnostiquer un scrape vide.
+
+    Décision vis-à-vis de la route web `/searches/<id>/urls` (#30) : son
+    contrat JSON + restriction propriétaire convient à l'espace utilisateur
+    (fetch client) mais pas à l'admin, qui consulte des recherches d'AUTRES
+    utilisateurs et veut un rendu HTML dans la fiche. Cet endpoint admin
+    réutilise la même mécanique (`get_parser(...).build_search_urls(criteria
+    normalisés)`), isolée par source : une source dont la construction échoue
+    prive seulement sa propre ligne, jamais les autres. Rendu en fragment
+    HTML, chargé à la demande depuis la fiche (pas d'appel géo réseau au
+    simple chargement du détail).
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    results = []
+    if search:
+        from parsers import get_parser
+
+        criteria = search.get("criteria") or {}
+        for source in search.get("sources") or [search.get("source", "seloger")]:
+            try:
+                parser = get_parser(source, storage=storage)
+            except ValueError as e:
+                results.append({"source": source, "name": source, "urls": [], "error": str(e), "note": None})
+                continue
+            try:
+                urls = parser.build_search_urls(criteria)
+                error = None if urls else "Pas d'URL reconstruisible pour cette source"
+            except Exception as e:  # isolation par source, comme côté web
+                logger.warning(f"[admin:{search_id}] URL non reconstructible ({source}): {e}")
+                urls, error = [], f"URL non reconstructible : {e}"
+            results.append({
+                "source": source,
+                "name": parser.SOURCE_NAME,
+                "urls": urls,
+                "error": error,
+                "note": parser.URL_NOTE or None,
+            })
+    return render_template(
+        "admin/_search_urls.html",
+        urls_results=results,
+        search_introuvable=search is None,
     )
 
 
@@ -711,8 +908,7 @@ def admin_toggle_search_active(search_id):
 
     message = "Recherche activée" if nouvelle_valeur else "Recherche mise en pause"
     if request.form.get("origine") == "detail":
-        detail = storage.searches.get_search_detail(search_id)
-        ctx = {"search_detail": detail} if detail else _CONTEXTE_ONGLETS["searches"](storage)
+        ctx = _contexte_recherche_detail(storage, search_id) or _CONTEXTE_ONGLETS["searches"](storage)
         url_retour = url_for("admin.admin_search_detail", search_id=search_id)
     else:
         ctx = _CONTEXTE_ONGLETS["searches"](storage)
@@ -733,8 +929,7 @@ def admin_scrape_search(search_id):
     ok, msg = submit_scrape(current_app._get_current_object(), search_id, search["user_id"])
     # Comme la redirection d'avant, on retombe sur la fiche de la recherche ;
     # si le détail est indisponible, on rend l'état par défaut de l'onglet.
-    detail = storage.searches.get_search_detail(search_id)
-    ctx = {"search_detail": detail} if detail else _CONTEXTE_ONGLETS["searches"](storage)
+    ctx = _contexte_recherche_detail(storage, search_id) or _CONTEXTE_ONGLETS["searches"](storage)
     return _reponse_action(
         msg, "success" if ok else "warning",
         url_for("admin.admin_search_detail", search_id=search_id), "searches", **ctx,

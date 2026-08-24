@@ -1,0 +1,44 @@
+{# Debug « URLs sources » d'une recherche (issue #18) : ce que CHAQUE source
+   visiterait au prochain scrape, construit hors-ligne par son parser
+   (build_search_urls sur les critères normalisés), sans aucun scraping.
+
+   Chargé à la demande dans #search-urls-zone de la fiche détail (hx-get) :
+   ni le chargement du détail ni ce fragment ne déclenchent de résolution
+   géo pour les autres blocs — et une source dont la construction échoue
+   n'empêche pas l'affichage des autres (isolation faite côté route).
+
+   Les liens ouvrent dans un nouvel onglet avec rel="noopener" : c'est un
+   écran admin, jamais un iframe du site source. La note URL_NOTE du parser
+   (ex. filtres volontairement absents de l'URL chez certains sites) est
+   affichée pour que l'écart ne ressemble pas à un bug. #}
+
+<div class="card">
+    <h3>🔗 URLs sources</h3>
+    {% if search_introuvable %}
+    <p class="text-muted">Recherche introuvable.</p>
+    {% else %}
+    <div class="url-source-list">
+        {% for r in urls_results %}
+        <div class="url-source-item">
+            <span class="badge badge-source">{{ r.name }}</span>
+            {% if r.error %}
+            <span class="text-muted text-sm">{{ r.error }}</span>
+            {% elif r.urls|length == 1 %}
+            <a href="{{ r.urls[0] }}" target="_blank" rel="noopener" class="url-source-link">{{ r.urls[0] }}</a>
+            {% else %}
+            <ul class="url-source-links">
+                {% for u in r.urls %}
+                <li><a href="{{ u }}" target="_blank" rel="noopener" class="url-source-link">{{ u }}</a></li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% if r.note %}
+            <small class="form-help url-source-note">ℹ️ {{ r.note }}</small>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="text-muted">Aucune source sélectionnée sur cette recherche.</p>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>

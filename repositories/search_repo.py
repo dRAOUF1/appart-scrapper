@@ -205,6 +205,37 @@ class SearchRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
+    def duplicate_search(self, search_id: int, new_label: str) -> dict | None:
+        """Copie de recherche (issue #18) : mêmes critères, même propriétaire,
+        INACTIVE par défaut.
+
+        Passe par les voies standards (get_search + create_search) : la lecture
+        normalise déjà les critères vers le canonique, donc une recherche
+        d'avant l'unification est dupliquée dans son format réécrit, jamais
+        dans l'ancien vocabulaire. `create_search` n'écrit rien dans
+        `search_listings` : la copie naît vierge de toute annonce liée,
+        même celles de l'original. Le topic ntfy et `notify_enabled` sont
+        repris tels quels ; `is_active=False` garantit qu'aucun scrape ne
+        part sans action explicite.
+
+        None si la recherche source a disparu.
+        """
+        search = self.get_search(search_id)
+        if not search:
+            return None
+        sources = search.get("sources") or [search.get("source", "seloger")]
+        return self.create_search(
+            user_id=search["user_id"],
+            label=new_label,
+            ntfy_topic=search["ntfy_topic"],
+            source=sources[0],
+            criteria=search.get("criteria") or {},
+            scrape_interval=search.get("scrape_interval") or 5,
+            is_active=False,
+            sources=sources,
+            notify_enabled=bool(search.get("notify_enabled", True)),
+        )
+
     def delete_search(self, search_id: int) -> bool:
         from scrape_logs.storage import delete_search_logs
         conn = self._get_conn_for_request()

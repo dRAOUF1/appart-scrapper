@@ -35,6 +35,11 @@ ADMIN_URLS = [
     pytest.param("POST", "/admin/users/create", id="user-create"),
     pytest.param("GET", "/admin/searches", id="searches"),
     pytest.param("GET", "/admin/searches/1", id="search-detail"),
+    # Issue #18 : édition critères, duplication, URLs sources.
+    pytest.param("GET", "/admin/searches/1/edit", id="search-edit-form"),
+    pytest.param("POST", "/admin/searches/1/edit", id="search-edit-submit"),
+    pytest.param("POST", "/admin/searches/1/duplicate", id="search-duplicate"),
+    pytest.param("GET", "/admin/searches/1/urls", id="search-urls-debug"),
     pytest.param("POST", "/admin/searches/1/delete", id="search-delete"),
     pytest.param("POST", "/admin/searches/1/scrape", id="search-scrape"),
     pytest.param("POST", "/admin/searches/1/toggle-active", id="search-toggle-active"),
