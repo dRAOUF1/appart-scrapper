@@ -413,10 +413,16 @@ SORT_MAP = {
     "surface_desc": "CAST(NULLIF(REGEXP_REPLACE(l.surface, '[^0-9.]', '', 'g'), '') AS NUMERIC) DESC NULLS LAST",
     # Issue #12 : les ISO-8601 UTC se trient lexicalement ; les états
     # dégénérés — sentinelle « unknown », vide hérité, NULL — sont repoussés
-    # en DERNIER par un drapeau de tri, dans les deux sens.
+    # en DERNIER par un drapeau de tri, dans les deux sens. Au sein du
+    # compartiment dégénéré, l'ordre reste ASC dans les deux sens (deux
+    # CASE sans ELSE : chaque clé ne porte que son compartiment).
     "date_desc": (
         "CASE WHEN l.creation_date IN ('unknown', '') "
-        "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, l.creation_date DESC"
+        "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, "
+        "CASE WHEN l.creation_date IN ('unknown', '') "
+        "OR l.creation_date IS NULL THEN l.creation_date END ASC, "
+        "CASE WHEN l.creation_date IN ('unknown', '') "
+        "OR l.creation_date IS NULL THEN NULL ELSE l.creation_date END DESC"
     ),
     "date_asc": (
         "CASE WHEN l.creation_date IN ('unknown', '') "
