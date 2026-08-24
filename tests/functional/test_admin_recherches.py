@@ -364,7 +364,8 @@ class TestTransitEditionAdmin:
 
         assert resp.status_code == 200, "jamais un 500 : même filet que les routes utilisateur"
         assert "corrompues" in resp.data.decode(), "le message français du parseur doit être affiché"
-        storage.searches.update_search.assert_not_called(), "la recherche doit rester INTACTE en base"
+        # La recherche doit rester INTACTE en base.
+        storage.searches.update_search.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -56,7 +56,7 @@ class TestCellulesCsvAnnonce:
         })
 
         titre = ligne[COLONNES_CSV.index("titre")]
-        assert titre == '\'=HYPERLINK("http://evil.example";"voir")'
+        assert titre == "'=HYPERLINK(\"http://evil.example\";\"voir\")"
         assert ligne[COLONNES_CSV.index("ville")] == "'@Paris"
         # Les cellules saines ne sont pas retouchées.
         assert ligne[COLONNES_CSV.index("source")] == "seloger"
