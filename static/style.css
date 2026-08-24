@@ -2820,3 +2820,125 @@ width: 100%;
     font-size: 0.85rem;
     white-space: pre-line;
 }
+
+/* ==========================================================================
+   Couches POI contextuelles (#27)
+   ========================================================================== */
+
+/* La vue porte le toast flottant d'échec de couche. */
+.carte-view {
+    position: relative;
+}
+
+/* Bouton « Calques » + son panneau flottant */
+.poi-layer-control {
+    position: relative;
+}
+
+.poi-controls {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 1200; /* au-dessus des tuiles et marqueurs Leaflet */
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 190px;
+    padding: 0.75rem;
+    border-radius: var(--radius-md, 14px);
+    border: 1px solid var(--glass-border);
+    background: rgba(18, 18, 24, 0.94);
+    backdrop-filter: blur(var(--glass-blur-sm));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.poi-controls-vide {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.poi-chip {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.45rem;
+    width: 100%;
+    text-align: left;
+}
+
+.poi-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.poi-chip .poi-chip-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Spinner discret pendant un fetch de couche */
+.poi-spin,
+.poi-spin::after {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.poi-spin {
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-top-color: currentColor;
+    animation: poi-rotation 0.8s linear infinite;
+}
+
+@keyframes poi-rotation {
+    to { transform: rotate(360deg); }
+}
+
+/* Marqueurs POI : emoji par type (divIcon — aucun asset image requis) */
+.poi-marker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    font-size: 16px;
+    line-height: 1;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+}
+
+/* Popup POI */
+.poi-popup-nom {
+    display: block;
+    font-size: 0.92rem;
+    margin-bottom: 0.1rem;
+}
+
+.poi-popup-type {
+    font-size: 0.78rem;
+    font-style: italic;
+    color: #777;
+}
+
+/* Toast discret d'échec de couche : jamais une erreur bloquante */
+.map-toast {
+    position: absolute;
+    left: 50%;
+    bottom: 1.25rem;
+    transform: translateX(-50%);
+    z-index: 1400;
+    max-width: 90%;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    background: rgba(20, 20, 26, 0.9);
+    border: 1px solid rgba(255, 107, 107, 0.4);
+    color: #ffd9d9;
+    font-size: 0.85rem;
+    text-align: center;
+    pointer-events: none;
+}

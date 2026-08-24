@@ -13,7 +13,19 @@
     <button type="button" id="pin-add-btn" class="btn btn-primary btn-sm">📍 Ajouter un repère</button>
     <span id="pin-hint" class="map-hint" hidden>Cliquez sur la carte à l'endroit de votre repère…</span>
     <span id="map-count" class="map-count" aria-live="polite"></span>
+
+    {# Couches POI (#27) : le bouton est statique, la liste des couches est
+       chargée au PREMIER CLIC seulement (GET /listings/poi) — aucun appel
+       réseau au rendu initial des biens. #}
+    <div class="poi-layer-control">
+      <button type="button" id="poi-panel-btn" class="btn btn-ghost btn-sm"
+              aria-expanded="false" aria-controls="poi-controls">🗂️ Calques</button>
+      <div id="poi-controls" class="poi-controls" hidden></div>
+    </div>
   </div>
+
+  {# Message discret d'échec d'une couche : jamais bloquant, auto-masqué. #}
+  <div id="map-toast" class="map-toast" role="status" aria-live="polite" hidden></div>
 
   <div id="map-empty" class="empty-state map-empty-state" hidden>
     <div class="empty-icon">🗺️</div>
