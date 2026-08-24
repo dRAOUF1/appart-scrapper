@@ -18,6 +18,7 @@ import datetime
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from freezegun import freeze_time
 from loguru import logger
 
@@ -797,3 +798,82 @@ class TestRawLogsAndHandlerLeak:
             return
         env.storage.listings.save_and_link.return_value = ([listing], [])
         env.run({"seloger": make_parser([listing])})
+
+
+# ---------------------------------------------------------------------------
+# Fallback géocodage commune (#26) — best effort, jamais bloquant
+# ---------------------------------------------------------------------------
+
+
+class TestGeocodageCommuneFallback:
+    """Le fallback geo.api.gouv.fr est appelé AU SCRAPE, avant la sauvegarde ;
+    son échec ne doit jamais faire perdre un scrape qui a réussi."""
+
+    @staticmethod
+    def _listing_sans_coords(listing_id: str):
+        return make_listing(
+            listing_id=listing_id, zip_code="31500", city="Toulouse",
+            latitude=None, longitude=None, location_precision="",
+        )
+
+    def test_une_annonce_sans_coords_est_completee_avant_la_sauvegarde(self, env, monkeypatch):
+        from services import geocode_commune
+
+        annonce = self._listing_sans_coords("sl_1")
+        env.search()
+        env.storage.listings.save_and_link.return_value = ([annonce], [])
+
+        monkeypatch.setattr(geocode_commune, "_resolve_uncached", lambda cp, ville: (43.6007, 1.4328))
+
+        env.run({"seloger": make_parser([annonce])})
+
+        sauvegardee = env.storage.listings.save_and_link.call_args.args[0][0]
+        assert (sauvegardee.latitude, sauvegardee.longitude) == (43.6007, 1.4328)
+        assert sauvegardee.location_precision == "commune"
+
+    def test_le_cache_commune_est_consulte_via_le_storage_injecte(self, env, monkeypatch):
+        from services import geocode_commune
+
+        annonce = self._listing_sans_coords("sl_cache")
+        env.search()
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("Aucun réseau attendu quand le cache répond")
+
+        monkeypatch.setattr(geocode_commune.requests, "get", refuse)
+        env.storage.commune_geo.get_cached.return_value = {
+            "area_key": "postal:31500", "latitude": 43.6, "longitude": 1.44,
+        }
+
+        env.run({"seloger": make_parser([annonce])})
+
+        sauvegardee = env.storage.listings.save_and_link.call_args.args[0][0]
+        assert (sauvegardee.latitude, sauvegardee.longitude) == (43.6, 1.44)
+
+    @pytest.mark.parametrize(
+        "panne",
+        [
+            pytest.param(RuntimeError("DB down"), id="repo-en-echec"),
+            pytest.param(requests.ConnectTimeout(), id="reseau-indisponible"),
+        ],
+    )
+    def test_une_panne_du_fallback_ne_fait_pas_echoer_le_scrape(self, env, panne, monkeypatch):
+        annonce = self._listing_sans_coords("sl_2")
+        env.search()
+        env.storage.listings.save_and_link.return_value = ([annonce], [])
+        env.storage.commune_geo.get_cached.side_effect = panne
+
+        result = env.run({"seloger": make_parser([annonce])})
+
+        assert result == 1
+        args, kwargs = env.only_log()
+        assert args[1] == "success"
+        env.storage.listings.save_and_link.assert_called_once()
+
+    def test_un_scrape_vide_ne_touche_pas_au_fallback(self, env):
+        env.search()
+
+        env.run({"seloger": make_parser([])})  # résultat vide légitime
+
+        env.storage.commune_geo.get_cached.assert_not_called()
+

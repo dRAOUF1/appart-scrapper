@@ -28,6 +28,7 @@ from core.criteria import location_label
 from core.geocode import CITY
 from core.web_utils import to_int
 from parsers import list_sources, remember_manual_overrides
+from parsers._coords import coordonnee_valide
 from routes.auth import require_login
 
 web_bp = Blueprint(
@@ -994,6 +995,147 @@ def listings_page(search_id: int):
 @web_bp.route("/health")
 def health():
     return "OK", 200
+
+
+# ---------------------------------------------------------------------------
+# Carte d'une recherche et repères personnels (issue #26)
+#
+# Routes de SESSION web (web_bp + @require_login) — PAS d'API token : le
+# /api/* piloté par script a été supprimé (#30). Les mutations passent par la
+# protection CSRF globale de l'app ; la validation des coordonnées réutilise
+# parsers._coords.coordonnee_valide — un pin à 999 ou (0, 0) n'existe jamais,
+# côté base ET côté route.
+# ---------------------------------------------------------------------------
+
+_PIN_ICONS = ("📍", "🏠", "⭐", "🚉", "🏫", "🛒")
+_PIN_LABEL_MAX = 80
+_PIN_NOTE_MAX = 500
+
+
+def _request_payload() -> dict:
+    """Le corps de la requête, formulaire OU JSON — le client JS envoie du
+    FormData (pour passer CSRF naturellement), mais un appelant JSON reste
+    toléré."""
+    if request.form:
+        return dict(request.form.items())
+    json_body = request.get_json(silent=True)
+    return json_body if isinstance(json_body, dict) else {}
+
+
+def _pin_creation_payload() -> tuple[dict, str | None]:
+    """Valide le payload de création d'un repère. `(champs, erreur)`.
+
+    Toute valeur invalide est une erreur EXPLICITE (jamais une correction
+    silencieuse) : latitude/longitude illisibles, nulles (sentinelle « pas de
+    position ») ou hors bornes sont refusées, l'icône doit appartenir à la
+    liste proposée par l'UI.
+    """
+    data = _request_payload()
+
+    label = str(data.get("label") or "").strip()
+    if not label:
+        return {}, "Le libellé du repère est obligatoire"
+    if len(label) > _PIN_LABEL_MAX:
+        return {}, f"Le libellé dépasse {_PIN_LABEL_MAX} caractères"
+
+    note = str(data.get("note") or "").strip()
+    if len(note) > _PIN_NOTE_MAX:
+        return {}, f"La note dépasse {_PIN_NOTE_MAX} caractères"
+
+    icon = str(data.get("icon") or "📍").strip() or "📍"
+    if icon not in _PIN_ICONS:
+        return {}, "Icône inconnue"
+
+    latitude = coordonnee_valide(data.get("latitude"), min_bound=-90.0, max_bound=90.0)
+    if latitude is None:
+        return {}, "Latitude invalide (nombre entre -90 et 90, non nulle)"
+    longitude = coordonnee_valide(data.get("longitude"), min_bound=-180.0, max_bound=180.0)
+    if longitude is None:
+        return {}, "Longitude invalide (nombre entre -180 et 180, non nulle)"
+
+    fields = {"label": label, "note": note, "icon": icon, "latitude": latitude, "longitude": longitude}
+    return fields, None
+
+
+def _owned_pin_or_none(storage, pin_id: int):
+    """Le repère de CET utilisateur — None sinon : la route répond 404 sans
+    révéler qu'une ligne d'un autre utilisateur existe (balayage IDOR)."""
+    return storage.map_pins.get_owned(g.user["id"], pin_id)
+
+
+@web_bp.route("/listings/<int:search_id>/map-data")
+@require_login
+def listings_map_data(search_id: int):
+    """Données carte d'une recherche : ses biens géolocalisés + les repères
+    personnels (GLOBAUX) de l'utilisateur connecté.
+
+    Contrat d'autorisation identique à /listings/<id> : recherche inexistante
+    ou d'un autre utilisateur -> 404, jamais les données d'autrui.
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search or search["user_id"] != g.user["id"]:
+        return jsonify({"error": "Recherche introuvable"}), 404
+
+    points = storage.listings.get_map_points_for_search(search_id)
+    pins = storage.map_pins.list_for_user(g.user["id"])
+    return jsonify({"points": points, "pins": pins})
+
+
+@web_bp.route("/pins", methods=["POST"])
+@require_login
+def create_pin():
+    """Crée un repère personnel pour l'utilisateur connecté."""
+    fields, error = _pin_creation_payload()
+    if error:
+        return jsonify({"error": error}), 400
+    pin = current_app.storage.map_pins.create(user_id=g.user["id"], **fields)
+    return jsonify(pin), 201
+
+
+@web_bp.route("/pins/<int:pin_id>", methods=["PATCH"])
+@require_login
+def update_pin(pin_id: int):
+    """Renomme/reprécise un repère APPARTENANT à l'utilisateur (label, note,
+    icône) — la position est fixe après création."""
+    data = _request_payload()
+    fields: dict = {}
+    if "label" in data:
+        label = str(data.get("label") or "").strip()
+        if not label or len(label) > _PIN_LABEL_MAX:
+            return jsonify({"error": "Libellé obligatoire (80 caractères max)"}), 400
+        fields["label"] = label
+    if "note" in data:
+        note = str(data.get("note") or "").strip()
+        if len(note) > _PIN_NOTE_MAX:
+            return jsonify({"error": f"La note dépasse {_PIN_NOTE_MAX} caractères"}), 400
+        fields["note"] = note
+    if "icon" in data:
+        icon = str(data.get("icon") or "").strip()
+        if icon not in _PIN_ICONS:
+            return jsonify({"error": "Icône inconnue"}), 400
+        fields["icon"] = icon
+    if not fields:
+        return jsonify({"error": "Aucun champ modifiable fourni"}), 400
+
+    storage = current_app.storage
+    if _owned_pin_or_none(storage, pin_id) is None:
+        return jsonify({"error": "Repère introuvable"}), 404
+
+    pin = storage.map_pins.update(g.user["id"], pin_id, fields)
+    if pin is None:
+        return jsonify({"error": "Repère introuvable"}), 404
+    return jsonify(pin)
+
+
+@web_bp.route("/pins/<int:pin_id>", methods=["DELETE"])
+@require_login
+def delete_pin(pin_id: int):
+    """Supprime un repère APPARTENANT à l'utilisateur — 404 sinon."""
+    deleted = current_app.storage.map_pins.delete(g.user["id"], pin_id)
+    if not deleted:
+        return jsonify({"error": "Repère introuvable"}), 404
+    return jsonify({"status": "supprimé"})
 
 
 @web_bp.route("/cleanup", methods=["POST"])

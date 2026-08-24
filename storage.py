@@ -25,9 +25,11 @@ from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
 from repositories.citya_geo_repo import CityaGeoRepository
+from repositories.commune_geo_repo import CommuneGeoRepository
 from repositories.foncia_geo_repo import FonciaGeoRepository
 from repositories.guyhoquet_geo_repo import GuyHoquetGeoRepository
 from repositories.listing_repo import ListingRepository
+from repositories.map_pin_repo import MapPinRepository
 from repositories.orpi_geo_repo import OrpiGeoRepository
 from repositories.pap_geo_repo import PapGeoRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
@@ -56,6 +58,10 @@ class Storage:
         self.foncia_geo = FonciaGeoRepository(database_url)
         self.guyhoquet_geo = GuyHoquetGeoRepository(database_url)
         self.citya_geo = CityaGeoRepository(database_url)
+        # Issue #26 : cache des centres de communes (fallback géocodage
+        # geo.api.gouv.fr) et repères personnels des utilisateurs.
+        self.commune_geo = CommuneGeoRepository(database_url)
+        self.map_pins = MapPinRepository(database_url)
         self._init_db()
 
     @classmethod
@@ -204,6 +210,25 @@ class Storage:
                         PRIMARY KEY (search_id, listing_id)
                     );
                 """)
+                # Issue #26 : repères personnels GLOBAUX d'un utilisateur
+                # (pas liés à une recherche). Les CHECK excluent (0, 0) — le
+                # « golfe de Guinée » des coords manquantes mal filtrées — et
+                # toute valeur hors bornes géographiques : un pin invalide ne
+                # doit jamais pouvoir exister en base.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS map_pins (
+                        id          SERIAL PRIMARY KEY,
+                        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        label       TEXT NOT NULL,
+                        note        TEXT DEFAULT '',
+                        icon        TEXT DEFAULT '📍',
+                        latitude    DOUBLE PRECISION NOT NULL
+                                    CHECK (latitude <> 0 AND latitude BETWEEN -90 AND 90),
+                        longitude   DOUBLE PRECISION NOT NULL
+                                    CHECK (longitude <> 0 AND longitude BETWEEN -180 AND 180),
+                        created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS admin_logs (
                         id            SERIAL PRIMARY KEY,
@@ -338,6 +363,20 @@ class Storage:
                         resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                # Issue #26 : centre géographique d'une commune, résolu par le
+                # fallback geo.api.gouv.fr — voir services.geocode_commune.
+                # Même pattern que les caches géo ci-dessus (`area_key` en clé,
+                # ici « postal:<cp> » ou code INSEE nu). Contrairement à eux,
+                # seuls les SUCCÈS sont mémorisés : un CP non résolu est
+                # re-tenté au scrape suivant plutôt que gelé 7 jours.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS commune_centres (
+                        area_key    TEXT PRIMARY KEY,
+                        latitude    DOUBLE PRECISION,
+                        longitude   DOUBLE PRECISION,
+                        resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
                 phase_start = _log_phase("create_tables")
 
                 conn.commit()
@@ -402,6 +441,17 @@ class Storage:
                     CREATE INDEX IF NOT EXISTS idx_admin_logs_action
                         ON admin_logs(action);
                 """)
+                # Issue #26 : la lecture carte ne parcourt que les annonces
+                # géolocalisées — l'index partiel épouse exactement ce filtre.
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_listings_coords
+                        ON listings(latitude, longitude)
+                        WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_map_pins_user
+                        ON map_pins(user_id);
+                """)
                 phase_start = _log_phase("indexes")
 
                 cur.execute("""
@@ -423,7 +473,17 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS creation_date TEXT DEFAULT 'unknown',
                         ADD COLUMN IF NOT EXISTS update_date TEXT DEFAULT '',
                         ADD COLUMN IF NOT EXISTS headline TEXT DEFAULT '',
-                        ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
+                        ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]',
+                        -- Issue #26 : géolocalisation hybride — extraction
+                        -- native par source (bienici/ORPI/Foncia/essetpm),
+                        -- sinon fallback centre de commune au scrape. Les
+                        -- trois colonnes restent NULLables : une annonce sans
+                        -- coordonnées reste valide, simplement absente de la
+                        -- carte. `location_precision` vaut 'exacte',
+                        -- 'approximative' ou 'commune'.
+                        ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
+                        ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
+                        ADD COLUMN IF NOT EXISTS location_precision TEXT;
                 """)
                 phase_start = _log_phase("alter_listings")
 

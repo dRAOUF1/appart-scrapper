@@ -148,6 +148,20 @@ class ScrapeService:
             )
             return 0
 
+        # Issue #26 : fallback géocodage commune pour les annonces restées
+        # sans coordonnées natives. BEST EFFORT : geo.api.gouv.fr peut être
+        # down, lent ou muet — aucun échec ne doit faire perdre un scrape qui
+        # a réussi ; l'annonce non complétée restera simplement absente de la
+        # carte (et retentera au prochain scrape).
+        try:
+            from services.geocode_commune import completer_coordonnees_manquantes
+
+            completes = completer_coordonnees_manquantes(listings, storage.commune_geo)
+            if completes:
+                logger.info(f"[search:{search_id}] {completes} annonce(s) géolocalisée(s) par centre de commune")
+        except Exception as e:
+            logger.warning(f"[search:{search_id}] Fallback géocodage commune ignoré : {e}")
+
         new_listings, already = storage.listings.save_and_link(listings, search_id)
         topic = search["ntfy_topic"]
         blacklist_mode = search.get("blacklist_mode", "exclude")

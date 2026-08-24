@@ -43,6 +43,14 @@ class Listing:
     update_date: str = ""
     headline: str = ""
     photos: str = "[]"
+    # Issue #26 : géolocalisation hybride. Remplies au scrape par
+    # l'extraction native de la source (parsers/_coords.py) ou, à défaut, par
+    # le fallback centre de commune (services/geocode_commune.py — précision
+    # 'commune'). NULL/'' = pas de coordonnées : l'annonce reste valide,
+    # simplement absente de la carte. Jamais 0.0/0.0 (piège essetpm).
+    latitude: float | None = None
+    longitude: float | None = None
+    location_precision: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

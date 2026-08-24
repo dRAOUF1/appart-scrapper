@@ -24,6 +24,7 @@ from loguru import logger
 from core.criteria import source_overrides
 from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
+from parsers._coords import PRECISION_APPROXIMATIVE, PRECISION_EXACTE, extraire_coordonnees
 from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
@@ -81,6 +82,33 @@ def _slugify(text: str) -> str:
 _PRO_ACCOUNT_TYPES = {"agency", "network", "mandatary"}
 
 
+# Types de blurInfo observés en direct (realEstateAds.json, 23/08/2026) :
+# « disk » = position floutée dans un disque de ~50 m autour du bien ;
+# « cityOrArrondissement » = centre de la commune/arrondissement. Dans les DEUX
+# cas le point ne désigne pas le bien lui-même : précision 'approximative'
+# (rendu en cercle translucide côté carte). Tout autre type — une position
+# non floutée n'ayant aucune raison de porter un blurInfo — resterait
+# 'exacte' par défaut.
+_FLOUS_BIENICI = {"disk", "cityOrArrondissement"}
+
+
+def _coords_bienici(data: dict) -> tuple[tuple[float, float] | None, str]:
+    """Les coordonnées natives d'une annonce bienici, et leur précision.
+
+    realEstateAds.json porte blurInfo.position.lat/lon ; quand il est absent,
+    l'annonce n'a pas de coordonnée exploitable (None, pas d'invention).
+    """
+    blur_info = data.get("blurInfo") or {}
+    position = blur_info.get("position") or {}
+    coords = extraire_coordonnees(position.get("lat"), position.get("lon"))
+    if not coords:
+        return None, ""
+    precision = (
+        PRECISION_APPROXIMATIVE if blur_info.get("type") in _FLOUS_BIENICI else PRECISION_EXACTE
+    )
+    return coords, precision
+
+
 def _format_price(price, transaction_type: str) -> str:
     if price is None:
         return ""
@@ -99,6 +127,7 @@ def _dict_to_listing(data: dict) -> Listing:
     district = data.get("district") or {}
     price = data.get("price")
     ad_id = data.get("id", "")
+    coords, precision = _coords_bienici(data)
 
     return Listing(
         listing_id=f"bi_{ad_id}",
@@ -131,6 +160,9 @@ def _dict_to_listing(data: dict) -> Listing:
         creation_date=normaliser_creation_date(data.get("publicationDate")),
         update_date=data.get("modificationDate") or "",
         photos=json.dumps(photos),
+        latitude=coords[0] if coords else None,
+        longitude=coords[1] if coords else None,
+        location_precision=precision,
     )
 
 

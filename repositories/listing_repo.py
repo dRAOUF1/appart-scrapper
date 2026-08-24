@@ -91,6 +91,9 @@ class ListingRepository(BaseRepository):
                         item.zip_code, clean(item.property_type), item.is_private, clean(item.phone),
                         item.epc, item.ges, item.is_new, item.is_exclusive, item.has_3d_visit,
                         item.creation_date, item.update_date, clean(item.headline), clean(item.photos),
+                        # Issue #26 : géolocalisation hybride (native ou fallback
+                        # commune) — NULL si la source n'a rien donné.
+                        item.latitude, item.longitude, item.location_precision or None,
                     )
                     for item in listings
                 ]
@@ -101,7 +104,7 @@ class ListingRepository(BaseRepository):
                         description, agency, source, legacy_id, price_value, price_details,
                         city, district, zip_code, property_type, is_private, phone,
                         epc, ges, is_new, is_exclusive, has_3d_visit, creation_date,
-                        update_date, headline, photos
+                        update_date, headline, photos, latitude, longitude, location_precision
                     ) VALUES %s
                     ON CONFLICT (listing_id) DO NOTHING
                 """, listing_data, page_size=100)
@@ -289,6 +292,33 @@ WHERE sl.search_id = %s"""
                 params.extend([limit, offset])
 
                 cur.execute(query, params)
+                return [dict(r) for r in cur.fetchall()]
+        finally:
+            self._release_conn(conn)
+
+    def get_map_points_for_search(self, search_id: int) -> list[dict]:
+        """Les points carte d'une recherche (issue #26) : uniquement les
+        annonces liées porteuses de coordonnées, avec le minimum de champs
+        dont la popup a besoin.
+
+        Une annonce sans coordonnées n'est pas une erreur — elle est
+        simplement absente du résultat (criterion d'acceptation #26). Le
+        filtrage se fait dans le SQL (`latitude IS NOT NULL`) : pas de ligne
+        inutile transférée pour les recherches majoritairement non géoloc.
+        """
+        conn = self._get_conn_for_request()
+        try:
+            with self._dict_cursor(conn) as cur:
+                cur.execute("""
+                    SELECT l.listing_id, l.title, l.price, l.price_value,
+                           l.surface, l.rooms, l.city, l.zip_code, l.url,
+                           l.source, l.agency, l.latitude, l.longitude,
+                           l.location_precision
+                    FROM search_listings sl
+                    JOIN listings l ON l.listing_id = sl.listing_id
+                    WHERE sl.search_id = %s
+                      AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+                """, (search_id,))
                 return [dict(r) for r in cur.fetchall()]
         finally:
             self._release_conn(conn)

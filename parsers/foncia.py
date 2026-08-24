@@ -71,6 +71,7 @@ from core.criteria import (
 )
 from core.geocode import REGION, region_departments
 from models.listing import Listing
+from parsers._coords import PRECISION_EXACTE, extraire_coordonnees
 from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations
 
@@ -339,6 +340,18 @@ def _dict_to_listing(item: dict) -> Listing | None:
 
     display_name = locality.get("libelleDisplay") or city
 
+    # Issue #26 : lire annonce.localisation.geoPoint — JAMAIS
+    # localisation.locality.geoPoint. Vérifié en direct (captures Toulouse,
+    # 23/08/2026) : le geoPoint de `locality` est le CENTROÏDE de la commune,
+    # strictement identique sur toutes les annonces d'une même ville, alors
+    # que celui de `localisation` varie par bien (~83 % de couverture). Le
+    # centroïde mettrait tous les biens d'une ville au même point : c'est
+    # exactement l'effet « empilement » que la carte doit éviter.
+    coords = extraire_coordonnees(
+        (localisation.get("geoPoint") or {}).get("lat"),
+        (localisation.get("geoPoint") or {}).get("lon"),
+    )
+
     return Listing(
         listing_id=f"foncia_{reference}",
         url=url,
@@ -365,6 +378,9 @@ def _dict_to_listing(item: dict) -> Listing | None:
         photos=json.dumps(
             [{"url": photo_url, "alt": "", "key": ""} for photo_url in photos]
         ),
+        latitude=coords[0] if coords else None,
+        longitude=coords[1] if coords else None,
+        location_precision=PRECISION_EXACTE if coords else "",
     )
 
 
