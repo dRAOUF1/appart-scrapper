@@ -676,3 +676,16 @@ class TestCannotSearchReasonTransitOnly:
         )
 
         assert reason == "RentOnly ne référence pas la transaction « Achat »"
+
+    @pytest.mark.parametrize("source_id", sorted(ParserRegistry._parsers))
+    def test_every_registered_source_accepts_a_transit_only_search(self, source_id):
+        """Balayage des sources RÉELLEMENT enregistrées (même esprit que le
+        balayage url_map de test_admin_impersonate) : chaque surcharge de
+        `cannot_search_reason` doit réimporter le fallback « transit-seule »
+        (#28), sinon une recherche sans aucune ville devient refusée chez cette
+        source seule. La liste est dérivée du registre, pas copiée à la main :
+        une future source apparaît ici automatiquement et rougit si sa
+        surcharge oublie le fallback."""
+        critères = {"transit": [make_transit_selection()]}
+
+        assert parsers.get_parser(source_id).cannot_search_reason(critères) is None

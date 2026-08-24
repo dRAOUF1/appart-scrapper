@@ -26,7 +26,7 @@ from core.geocode import CITY, DEPARTMENT, REGION, WHOLE_CITY
 from models.listing import Listing
 from parsers._coords import PRECISION_APPROXIMATIVE, PRECISION_EXACTE, extraire_coordonnees
 from parsers._dates import normaliser_creation_date
-from parsers.base import BaseParser, ParserRegistry, get_locations
+from parsers.base import BaseParser, ParserRegistry, get_locations, has_transit
 
 BASE_URL = "https://www.bienici.com"
 
@@ -450,8 +450,11 @@ class BienIciParser(BaseParser):
         résout désormais aussi bien par code postal/nom de ville que par
         code INSEE (voir services.bienici_geocode), donc toute localisation
         qui passe `get_locations` (ville + code postal, ou périmètre large)
-        satisfait déjà `has_valid_criteria`."""
-        if not self.has_valid_criteria(criteria):
+        satisfait déjà `has_valid_criteria`.
+
+        Fallback #28 : une recherche « transit-seule » reste cherchable —
+        l'expansion produira ses localisations classiques avant `to_native`."""
+        if not self.has_valid_criteria(criteria) and not has_transit(criteria):
             return "aucune localisation exploitable (ville + code postal requis)"
 
         unsupported = self.unsupported_criteria(criteria)

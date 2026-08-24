@@ -43,7 +43,7 @@ from core.criteria import (
 from core.geocode import CITY, REGION
 from models.listing import Listing
 from parsers._dates import normaliser_creation_date
-from parsers.base import BaseParser, ParserRegistry, get_locations
+from parsers.base import BaseParser, ParserRegistry, get_locations, has_transit
 
 BASE_URL = "https://www.guy-hoquet.com"
 RESULT_URL = f"{BASE_URL}/biens/result"
@@ -598,8 +598,10 @@ class GuyHoquetParser(BaseParser):
         return any(is_statically_resolvable(loc) for loc in locations)
 
     def cannot_search_reason(self, criteria: dict) -> str | None:
-        """Même contrat que BaseParser."""
-        if not self.has_valid_criteria(criteria):
+        """Même contrat que BaseParser, fallback #28 compris : une recherche
+        « transit-seule » reste cherchable — l'expansion produira ses
+        localisations classiques avant `to_native`."""
+        if not self.has_valid_criteria(criteria) and not has_transit(criteria):
             return "aucune localisation exploitable (ville, département ou région requis)"
 
         unsupported = self.unsupported_criteria(criteria)
