@@ -238,7 +238,46 @@ class ListingRepository(BaseRepository):
             placeholders = ",".join(["%s"] * len(filters["blacklisted_agencies"]))
             clauses.append(f"{prefix}agency NOT IN ({placeholders})")
             params.extend(filters["blacklisted_agencies"])
+        if filters.get("first_seen_min"):
+            # Issue #20 : ``first_seen`` est une vraie colonne TIMESTAMP (pas
+            # du TEXT comme creation_date) — aucune sentinelle à exclure, et
+            # Postgres caste le littéral ISO étendu en début de journée.
+            clauses.append(f"{prefix}first_seen >= %s")
+            params.append(_borne_date_comparee(filters["first_seen_min"], fin_de_journee=False))
+        if filters.get("first_seen_max"):
+            clauses.append(f"{prefix}first_seen <= %s")
+            params.append(_borne_date_comparee(filters["first_seen_max"], fin_de_journee=True))
+        if filters.get("orphans_only"):
+            # Issue #20 : sémantique « orpheline » IDENTIQUE à celle de
+            # get_orphan_listings_count / delete_orphan_listings (LEFT JOIN
+            # … IS NULL ⇔ NOT EXISTS sur search_listings). Le préfixe qualifie
+            # la colonne corrélée externe ; l'alias interne ne doit jamais
+            # entrer en collision avec celui de la requête appelante.
+            clauses.append(
+                f"NOT EXISTS (SELECT 1 FROM search_listings orphan_sl"
+                f" WHERE orphan_sl.listing_id = {prefix}listing_id)"
+            )
         return " AND ".join(clauses)
+
+    def _build_admin_order_clause(self, sort: str | None = None) -> str:
+        """Allowlist des tris de la liste ADMIN globale (issue #20).
+
+        Distincte de `_build_order_clause` : cette dernière porte des colonnes
+        de la jointure search-scoped (`sl.found_at`) absentes de
+        `get_all_listings` — partager la table produirait du SQL invalide dès
+        qu'un onglet emprunterait le tri de l'autre. Le défaut reste EXACTEMENT
+        celui d'avant l'issue (#20 non-régression) : première détection,
+        plus récent en tête.
+        """
+        sort_map = {
+            "prix_asc": "l.price_value ASC NULLS LAST",
+            "prix_desc": "l.price_value DESC NULLS LAST",
+            "date_asc": "l.first_seen ASC NULLS LAST",
+            "date_desc": "l.first_seen DESC",
+            "source_asc": "l.source ASC",
+            "source_desc": "l.source DESC",
+        }
+        return sort_map.get(sort, "l.first_seen DESC")
 
     def _build_order_clause(self, sort: str = "found_at_desc") -> str:
         sort_map = {
@@ -438,24 +477,39 @@ WHERE sl.search_id = %s""",
         finally:
             self._release_conn(conn)
 
-    def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="") -> list[dict]:
-        query = """SELECT l.*,
-                          (SELECT COUNT(*) FROM search_listings WHERE listing_id = l.listing_id) AS linked_searches
-                   FROM listings l"""
-        conditions = []
-        params = []
+    def _admin_listing_where(self, search_term: str, source_filter: str,
+                             filters: dict | None, params: list) -> str:
+        """WHERE partagé de la liste admin — LA garantie de parité.
 
+        `get_all_listings` et `count_all_listings` reconstruisent chacune leur
+        requête : si elles divergent, le compteur ment sur la pagination
+        (page fantôme, lignes inatteignables). Un seul constructeur pour les
+        deux, comme `_build_filter_clauses` l'impose côté search-scoped.
+        """
+        conditions = []
         if search_term:
             conditions.append("(l.title ILIKE %s OR l.location ILIKE %s OR l.description ILIKE %s)")
             params.extend([f"%{search_term}%", f"%{search_term}%", f"%{search_term}%"])
         if source_filter:
             conditions.append("l.source = %s")
             params.append(source_filter)
+        # Issue #20 : filtres avancés (prix, période de première détection,
+        # orphelines) construits par le MÊME `_build_filter_clauses` que les
+        # autres écrans — aucune clause SQL dupliquée.
+        filter_clauses = self._build_filter_clauses(dict(filters) if filters else {}, params)
+        if filter_clauses:
+            conditions.append(filter_clauses)
+        return (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
+    def get_all_listings(self, limit=50, offset=0, search_term="", source_filter="",
+                         filters=None, sort=None) -> list[dict]:
+        query = """SELECT l.*,
+                          (SELECT COUNT(*) FROM search_listings WHERE listing_id = l.listing_id) AS linked_searches
+                   FROM listings l"""
+        params: list = []
+        query += self._admin_listing_where(search_term, source_filter, filters, params)
 
-        query += " ORDER BY l.first_seen DESC LIMIT %s OFFSET %s"
+        query += f" ORDER BY {self._build_admin_order_clause(sort)} LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         conn = self._get_conn_for_request()
@@ -466,26 +520,40 @@ WHERE sl.search_id = %s""",
         finally:
             self._release_conn(conn)
 
-    def count_all_listings(self, search_term="", source_filter="") -> int:
+    def count_all_listings(self, search_term="", source_filter="", filters=None) -> int:
         query = "SELECT COUNT(DISTINCT l.listing_id) AS cnt FROM listings l"
-        conditions = []
-        params = []
-
-        if search_term:
-            conditions.append("(l.title ILIKE %s OR l.location ILIKE %s OR l.description ILIKE %s)")
-            params.extend([f"%{search_term}%", f"%{search_term}%", f"%{search_term}%"])
-        if source_filter:
-            conditions.append("l.source = %s")
-            params.append(source_filter)
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
+        params: list = []
+        query += self._admin_listing_where(search_term, source_filter, filters, params)
 
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 return cur.fetchone()[0]
+        finally:
+            self._release_conn(conn)
+
+    def delete_listings(self, listing_ids: list[str]) -> int:
+        """Suppression GROUPÉE (issue #20) — retourne le nombre RÉEL supprimé.
+
+        Un seul DELETE paramétré (`= ANY(%s)` avec la liste en unique argument :
+        aucun placeholder compté à la main, cf. mark_listings_notified). Les IDs
+        absents (déjà supprimés entre-temps) réduisent naturellement le
+        rowcount : la route journalise ce compte réel, jamais la taille de la
+        sélection demandée.
+        """
+        if not listing_ids:
+            return 0
+        conn = self._get_conn_for_request()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM listings WHERE listing_id = ANY(%s)",
+                    (list(listing_ids),),
+                )
+                deleted = cur.rowcount
+                conn.commit()
+                return deleted
         finally:
             self._release_conn(conn)
 

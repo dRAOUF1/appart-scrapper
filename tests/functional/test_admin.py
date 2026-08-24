@@ -53,6 +53,9 @@ ADMIN_URLS = [
     pytest.param("GET", "/admin/listings", id="listings"),
     pytest.param("GET", "/admin/listings/sl_1", id="listing-detail"),
     pytest.param("POST", "/admin/listings/sl_1/delete", id="listing-delete"),
+    # Issue #20 : actions groupées + export CSV des annonces.
+    pytest.param("POST", "/admin/listings/bulk-delete", id="listings-bulk-delete"),
+    pytest.param("GET", "/admin/listings/export", id="listings-export-csv"),
     pytest.param("POST", "/admin/listings/cleanup-orphan", id="listings-cleanup-orphan"),
     pytest.param("GET", "/admin/database", id="database"),
     pytest.param("GET", "/admin/database/table/users", id="table-detail"),

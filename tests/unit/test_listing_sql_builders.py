@@ -107,6 +107,31 @@ FILTER_CASES = [
         ["Foncia", "Nexity"],
         id="blacklisted_agencies",
     ),
+    # Issue #20 : période de première détection — first_seen est une vraie
+    # colonne TIMESTAMP, donc PAS d'exclusion de sentinelle texte (contraire-
+    # ment à creation_date), et la borne « AAAA-MM-JJ » est validée puis
+    # étendue en journée complète inclusive.
+    pytest.param(
+        {"first_seen_min": "2026-07-01"},
+        ["l.first_seen >= %s"],
+        ["2026-07-01T00:00:00+00:00"],
+        id="first_seen_min",
+    ),
+    pytest.param(
+        {"first_seen_max": "2026-07-31"},
+        ["l.first_seen <= %s"],
+        ["2026-07-31T23:59:59+00:00"],
+        id="first_seen_max",
+    ),
+    # Issue #20 : « orphelines uniquement » — même sémantique que
+    # get_orphan_listings_count (aucune ligne search_listings liée).
+    pytest.param(
+        {"orphans_only": True},
+        ["NOT EXISTS (SELECT 1 FROM search_listings orphan_sl"
+         " WHERE orphan_sl.listing_id = l.listing_id)"],
+        [],
+        id="orphans_only",
+    ),
 ]
 
 # Filtres testés par *vérité* : une valeur falsy est ignorée.
@@ -120,6 +145,11 @@ TRUTHY_ONLY_FILTERS = {
     "epc": "",
     "ges": "",
     "date_min": "",
+    # Issue #20 : bornes vides (champs de formulaire non remplis) et case
+    # « orphelines » décochée (False, ou ""/0 si forgée) ne filtrent rien.
+    "first_seen_min": "",
+    "first_seen_max": "",
+    "orphans_only": False,
     "blacklisted_agencies": [],
 }
 
@@ -252,6 +282,10 @@ class TestBuildFilterClauses:
             "property_type": "p", "agency": "a", "epc": "e", "ges": "g",
             "is_private": True, "is_new": True, "date_min": "2026-01-01",
             "blacklisted_agencies": ["b"],
+            # Issue #20 : les nouvelles clauses suivent la même règle — y
+            # compris la colonne corrélée du NOT EXISTS.
+            "first_seen_min": "2026-07-01", "first_seen_max": "2026-07-31",
+            "orphans_only": True,
         }
 
         clause = repo._build_filter_clauses(filters, params, prefix=prefix)
@@ -259,7 +293,7 @@ class TestBuildFilterClauses:
         for column in (
             "title", "location", "agency", "description", "price_value", "surface", "rooms",
             "city", "district", "zip_code", "property_type", "epc", "ges", "is_private",
-            "is_new", "creation_date",
+            "is_new", "creation_date", "first_seen", "listing_id",
         ):
             assert f"{prefix}{column}" in clause, f"colonne {column} non préfixée"
         if prefix:
@@ -331,14 +365,39 @@ class TestBuildFilterClauses:
         assert payload in params
         assert count_placeholders(clause) == len(params)
 
-    @pytest.mark.parametrize("filtre", ["date_min", "date_max"])
+    @pytest.mark.parametrize("filtre", ["date_min", "date_max", "first_seen_min", "first_seen_max"])
     @pytest.mark.parametrize("payload", PAYLOADS)
     def test_a_hostile_date_bound_is_rejected_not_parameterized(self, repo, filtre, payload):
-        """🔒 Issue #12 : les bornes de dates sont validées (« AAAA-MM-JJ »)
-        AVANT toute comparaison — une charge hostile lève ValueError au lieu
-        de produire un filtrage silencieusement faux ou une interpolation."""
+        """🔒 Issue #12 (puis #20 pour first_seen) : les bornes de dates sont
+        validées (« AAAA-MM-JJ ») AVANT toute comparaison — une charge hostile
+        lève ValueError au lieu de produire un filtrage silencieusement faux
+        ou une interpolation."""
         with pytest.raises(ValueError, match="AAAA-MM-JJ"):
             repo._build_filter_clauses({filtre: payload}, [])
+
+    def test_issue_20_filters_combine_in_order_with_the_rest(self, repo):
+        """Combinaison #20 : texte + fourchette de prix + période de première
+        détection + orphelines. Les paramètres sont positionnels : l'ordre des
+        valeurs doit suivre exactement celui des clauses émises."""
+        params: list = []
+        filters = {
+            "q": "loft", "price_min": 800, "price_max": 1500,
+            "first_seen_min": "2026-07-01", "first_seen_max": "2026-07-31",
+            "orphans_only": True,
+        }
+
+        clause = repo._build_filter_clauses(filters, params)
+
+        assert clause.index("l.price_value >= %s") < clause.index("l.first_seen >= %s")
+        assert params == [
+            "%loft%", "%loft%", "%loft%", "%loft%",
+            800, 1500,
+            "2026-07-01T00:00:00+00:00", "2026-07-31T23:59:59+00:00",
+        ]
+        assert count_placeholders(clause) == len(params)
+        # La borne date_max inclut toute la dernière journée (23:59:59).
+        assert "2026-07-31T23:59:59+00:00" in params
+        assert "NOT EXISTS" in clause
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +495,74 @@ class TestBuildOrderClause:
 
         for candidate in [*SORT_MAP, "inconnu", "", None, "; DROP TABLE listings"]:
             assert repo._build_order_clause(candidate) in allowed
+
+
+# ---------------------------------------------------------------------------
+# _build_admin_order_clause — allowlist du tri global admin (issue #20)
+# ---------------------------------------------------------------------------
+
+ADMIN_SORT_MAP = {
+    "prix_asc": "l.price_value ASC NULLS LAST",
+    "prix_desc": "l.price_value DESC NULLS LAST",
+    "date_asc": "l.first_seen ASC NULLS LAST",
+    "date_desc": "l.first_seen DESC",
+    "source_asc": "l.source ASC",
+    "source_desc": "l.source DESC",
+}
+ADMIN_DEFAULT_ORDER = "l.first_seen DESC"
+
+
+class TestBuildAdminOrderClause:
+    @pytest.mark.parametrize(("sort", "expected"), sorted(ADMIN_SORT_MAP.items()))
+    def test_every_allowed_sort_maps_to_its_clause(self, repo, sort, expected):
+        """Le tri admin porte UNIQUEMENT sur des colonnes de `listings` : la
+        requête n'a pas d'alias `sl` (pas de jointure search-scoped), un tri
+        emprunté à `_build_order_clause` produirait du SQL invalide."""
+        clause = repo._build_admin_order_clause(sort)
+
+        assert clause == expected
+        assert "sl." not in clause
+
+    def test_the_allowlist_has_exactly_six_entries(self, repo):
+        """Fige la taille de l'allowlist (#20) : prix, date, source × asc/desc.
+        Ajouter un tri sans l'ajouter ici passerait inaperçu."""
+        accepted = {s for s in ADMIN_SORT_MAP if repo._build_admin_order_clause(s) != ADMIN_DEFAULT_ORDER}
+
+        assert accepted == set(ADMIN_SORT_MAP) - {"date_desc"}  # date_desc == défaut
+        assert len(ADMIN_SORT_MAP) == 6
+
+    def test_the_default_is_unchanged_by_issue_20(self, repo):
+        """Non-régression stricte : avant #20, `get_all_listings` triait en dur
+        sur `l.first_seen DESC`. Le défaut doit rester EXACTEMENT cela."""
+        assert repo._build_admin_order_clause() == ADMIN_DEFAULT_ORDER
+        assert repo._build_admin_order_clause(None) == ADMIN_DEFAULT_ORDER
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "; DROP TABLE listings",
+            "price_value; --",
+            "price ASC; DELETE FROM users",
+            "prix_asc UNION SELECT 1",
+            "PRIX_ASC",
+            "prix_asc ",
+            "",
+            None,
+            0,
+            "inconnu",
+            "found_at_desc",
+        ],
+    )
+    def test_hostile_values_fall_back_to_the_default(self, repo, hostile):
+        """🔒 `sort` arrive brut depuis `request.args` et est interpolé dans
+        ORDER BY : l'allowlist est l'unique défense. Toute valeur non exacte
+        rend le défaut — y compris les tris valides de l'AUTRE allowlist
+        (`found_at_desc` référence `sl.found_at`, absent d'ici)."""
+        clause = repo._build_admin_order_clause(hostile)
+
+        assert clause == ADMIN_DEFAULT_ORDER
+        if isinstance(hostile, str) and hostile.strip():
+            assert hostile not in clause
 
 
 # ---------------------------------------------------------------------------
@@ -759,6 +886,109 @@ class TestListCountParity:
             assert " WHERE " not in count_sql.rsplit("FROM listings l", 1)[1]
         assert list_params[:-2] == count_params
         assert list_params[-2:] == [25, 50]
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            pytest.param({"price_min": 800, "price_max": 1500}, id="fourchette-prix"),
+            pytest.param(
+                {"first_seen_min": "2026-07-01", "first_seen_max": "2026-07-31"},
+                id="periode-premiere-detection",
+            ),
+            pytest.param({"orphans_only": True}, id="orphelines"),
+            pytest.param(
+                {"q": "duplex", "price_min": 500, "first_seen_max": "2026-08-01",
+                 "orphans_only": True},
+                id="filtres-combines",
+            ),
+        ],
+    )
+    def test_admin_advanced_filters_keep_list_and_count_in_parity(self, filters):
+        """🔒 Issue #20 : les filtres avancés doivent produire EXACTEMENT le
+        même WHERE pour la liste et pour le compteur — sinon la pagination
+        ment (pages fantômes) et « l'export reflète les filtres actifs »
+        devient faux. La parité est garantie STRUCTURELLEMENT (WHERE construit
+        par un helper commun), ce test la fige."""
+        list_conn = RecordingConnection(results=[[]])
+        count_conn = RecordingConnection(results=[{"cnt": 0}])
+
+        bind_repository(ListingRepository, list_conn).get_all_listings(
+            limit=30, offset=60, filters=filters,
+        )
+        bind_repository(ListingRepository, count_conn).count_all_listings(filters=filters)
+
+        list_sql, list_params = list_conn.executed[0]
+        count_sql, count_params = count_conn.executed[0]
+
+        assert where_body(list_sql, " WHERE ") == where_body(count_sql, " WHERE ")
+        # Vraie assertion de paramètres : mêmes valeurs, dans le même ordre.
+        assert list_params[:-2] == count_params
+        assert list_params[-2:] == [30, 60]
+
+    def test_admin_listing_sort_travels_through_the_order_clause(self):
+        """Le tri demandé atteint le SQL via `_build_admin_order_clause` — une
+        valeur hors allowlist ne casse rien (défaut), mais une valeur valide
+        ne doit pas être écrasée en route."""
+        conn = RecordingConnection(results=[[]])
+
+        bind_repository(ListingRepository, conn).get_all_listings(sort="prix_asc")
+
+        sql, _params = conn.executed[0]
+        assert "ORDER BY l.price_value ASC NULLS LAST" in sql
+
+
+# ---------------------------------------------------------------------------
+# delete_listings — suppression groupée (issue #20)
+# ---------------------------------------------------------------------------
+
+class TestDeleteListings:
+    def test_an_empty_selection_touches_neither_database_nor_pool(self):
+        """La barre d'actions peut partir vide (JS désactivé, case décochée
+        entre-temps) : aucun DELETE ne doit être envoyé."""
+        conn = RecordingConnection()
+        repo = bind_repository(ListingRepository, conn)
+
+        assert repo.delete_listings([]) == 0
+        assert conn.executed == []
+        assert conn.commits == 0
+
+    def test_ids_are_passed_as_a_single_array_parameter(self):
+        """`= ANY(%s)` avec la liste en unique paramètre : pas de placeholders
+        comptés à la main (cf. mark_listings_notified), donc pas de décalage
+        possible entre SQL et paramètres."""
+        conn = RecordingConnection(results=[[None] * 2])
+        repo = bind_repository(ListingRepository, conn)
+
+        deleted = repo.delete_listings(["sl_1", "sl_2"])
+
+        (sql, params), = conn.executed
+        assert "DELETE FROM listings" in sql
+        assert "ANY(%s)" in sql
+        assert params == (["sl_1", "sl_2"],)
+        assert deleted == 2
+        assert conn.commits == 1
+
+    def test_the_returned_count_is_the_real_rowcount(self):
+        """Le log d'audit journalise CE compte : si des IDs avaient déjà
+        disparu (double clic, cleanup concurrent), le récapitulatif doit dire
+        le nombre RÉELLEMENT supprimé, jamais la taille de la sélection."""
+        conn = RecordingConnection(results=[["sl_1"]])
+        repo = bind_repository(ListingRepository, conn)
+
+        assert repo.delete_listings(["sl_1", "sl_2"]) == 1
+
+    @pytest.mark.parametrize("payload", PAYLOADS)
+    def test_ids_stay_parameters_never_sql(self, payload):
+        """🔒 Les IDs viennent du form (`request.form.getlist`) : une charge
+        hostile doit rester un paramètre, jamais rejoindre la chaîne SQL."""
+        conn = RecordingConnection(results=[[None]])
+        repo = bind_repository(ListingRepository, conn)
+
+        repo.delete_listings([payload])
+
+        sql, params = conn.executed[0]
+        assert payload not in sql
+        assert params == ([payload],)
 
     @pytest.mark.parametrize("payload", PAYLOADS)
     def test_the_admin_listing_search_term_stays_a_parameter(self, payload):

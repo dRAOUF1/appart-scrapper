@@ -12,8 +12,10 @@ au journal d'audit qu'avant le socle HTMX.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import (
@@ -33,6 +35,8 @@ from loguru import logger
 
 from core.web_utils import format_criteria_lisible, to_int
 from parsers import list_sources, remember_manual_overrides
+from parsers._dates import DATE_INCONNUE
+from repositories.listing_repo import _borne_date_comparee
 from routes.auth import require_admin
 from routes.web import (
     _location_error_message,
@@ -48,6 +52,16 @@ admin_bp = Blueprint("admin", __name__)
 # allowlist : une valeur inconnue de `?tab=` est ramenée au dashboard, jamais
 # passée telle quelle au loader de templates.
 _TABS = ("dashboard", "users", "searches", "listings", "scrapes", "database", "logs")
+
+# Issue #20 — export CSV des annonces : plafond documenté de lignes. Au-delà,
+# le fichier est tronqué (et le dit dans son en-tête de commentaire) : un
+# export n'a pas vocation à vider la table, et un tampon non borné est une
+# DoS mémoire à soi tout seul.
+EXPORT_CSV_PLAFOND = 50_000
+
+# En-têtes français de l'export CSV (#20), dans l'ordre des colonnes.
+COLONNES_CSV = ["id", "titre", "source", "prix", "surface", "pièces",
+                "date publication", "première détection", "ville", "url"]
 
 
 # ---------------------------------------------------------------------------
@@ -269,20 +283,106 @@ def _contexte_recherches(storage) -> dict:
             "search_count": len(searches)}
 
 
+def _lire_filtres_annonces() -> tuple[dict, list[str]]:
+    """Filtres avancés des annonces (#20), lus via `request.values`.
+
+    Pattern #19 : les valeurs viennent d'args GET **et** du form POST — les
+    champs cachés des formulaires d'action transportent les filtres courants,
+    la vue filtrée/paginée survit donc à l'action.
+
+    Une borne malformée est signalée dans la liste retournée (jamais
+    silencieuse : l'utilisateur voit pourquoi son filtre n'a pas mordu) et
+    écartée ; les autres filtres restent appliqués. Le repository reste la
+    dernière ligne de défense — il relève ValueError si on lui passe quand
+    même une borne invalide.
+    """
+    filtres: dict = {}
+    erreurs: list[str] = []
+
+    for cle, libelle in (("price_min", "Prix minimum"), ("price_max", "Prix maximum")):
+        brut = request.values.get(cle, "").strip()
+        if not brut:
+            continue
+        try:
+            filtres[cle] = int(brut)
+        except ValueError:
+            erreurs.append(f"{libelle} invalide (« {brut} ») — filtre ignoré")
+
+    for cle, libelle in (("first_seen_min", "Première détection (depuis le)"),
+                         ("first_seen_max", "Première détection (jusqu'au)")):
+        brut = request.values.get(cle, "").strip()
+        if not brut:
+            continue
+        try:
+            _borne_date_comparee(brut, fin_de_journee=(cle == "first_seen_max"))
+            filtres[cle] = brut
+        except ValueError:
+            erreurs.append(f"{libelle} : date invalide (« {brut} », format attendu AAAA-MM-JJ) — filtre ignoré")
+
+    if request.values.get("orphelines") in ("1", "true", "on"):
+        filtres["orphans_only"] = True
+
+    return filtres, erreurs
+
+
+def _parametres_annonces_courants(search_term: str, source_filter: str, sort: str,
+                                  filtres: dict) -> dict:
+    """Querystring aplatie de l'état courant de la vue (#20).
+
+    Sert à la fois aux liens de pagination, aux en-têtes de tri, aux champs
+    cachés du formulaire de suppression groupée et au lien d'export : un seul
+    endroit garantit que « l'export reflète exactement les filtres actifs » et
+    que « la pagination est conservée après action groupée ».
+    """
+    params = {"search": search_term, "source": source_filter, "sort": sort}
+    for cle, valeur in filtres.items():
+        # La case « orphelines » voyage SOUS LE NOM DU FORMULAIRE : les URLs
+        # (pagination, export, champs cachés du bulk) sont relues tel quel par
+        # `_lire_filtres_annonces`, qui ne connaît que ce nom-là.
+        if cle == "orphans_only":
+            params["orphelines"] = "1"
+        else:
+            params[cle] = valeur
+    return params
+
+
 def _contexte_annonces(storage) -> dict:
-    page = to_int(request.args.get("page", 1), 1)
+    page = max(1, to_int(request.values.get("page", 1), 1))
     per_page = 30
     offset = (page - 1) * per_page
-    search_term = request.args.get("search", "")
-    source_filter = request.args.get("source", "")
+    search_term = request.values.get("search", "")
+    source_filter = request.values.get("source", "")
+    sort = request.values.get("sort", "")
+    filtres, erreurs_filtre = _lire_filtres_annonces()
+
     listings = storage.listings.get_all_listings(
-        limit=per_page, offset=offset, search_term=search_term, source_filter=source_filter
+        limit=per_page, offset=offset, search_term=search_term,
+        source_filter=source_filter, filters=filtres, sort=sort,
     )
-    total = storage.listings.count_all_listings(search_term=search_term, source_filter=source_filter)
-    return {"listings": listings, "total": total, "page": page,
-            "total_pages": max(1, (total + per_page - 1) // per_page),
-            "search_term": search_term, "source_filter": source_filter,
-            "orphan_count": storage.listings.get_orphan_listings_count()}
+    total = storage.listings.count_all_listings(
+        search_term=search_term, source_filter=source_filter, filters=filtres,
+    )
+    return {
+        "listings": listings,
+        "total": total,
+        "page": page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "search_term": search_term,
+        "source_filter": source_filter,
+        "sort": sort,
+        "filtres": filtres,
+        "erreurs_filtre": erreurs_filtre,
+        # Deux vues du même état : AVEC tri (export, champs cachés du bulk)
+        # et SANS (pagination, en-têtes cliquables qui passent leur propre
+        # sort — un doublon de clé ferait lever url_for).
+        "params_courants": _parametres_annonces_courants(search_term, source_filter, sort, filtres),
+        "params_sans_sort": {
+            cle: valeur for cle, valeur in _parametres_annonces_courants(
+                search_term, source_filter, sort, filtres
+            ).items() if cle != "sort"
+        },
+        "orphan_count": storage.listings.get_orphan_listings_count(),
+    }
 
 
 def _contexte_base(storage, **extras) -> dict:
@@ -962,6 +1062,115 @@ def admin_delete_listing(listing_id):
     return _reponse_action(
         "Annonce supprimée", "success",
         url_for("admin.admin_listings"), "listings", **_CONTEXTE_ONGLETS["listings"](storage),
+    )
+
+
+@admin_bp.route("/admin/listings/bulk-delete", methods=["POST"])
+@require_admin
+def admin_bulk_delete_listings():
+    """Suppression GROUPÉE des annonces cochées (issue #20).
+
+    Le repository reçoit la sélection brute et renvoie le nombre RÉELlement
+    supprimé (IDs déjà disparus compris) : c'est CE compte qui est journalisé
+    — un seul log récapitulatif `listings_bulk_deleted` portant LA LISTE des
+    IDs demandés, jamais un log par ligne. Les filtres et la page courants
+    voyagent en champs cachés (pattern #19) : le fragment reconstruit par
+    `_contexte_annonces` (qui lit `request.values`) retombe exactement sur la
+    vue d'où venait l'action.
+    """
+    storage = current_app.storage
+    ids = [identifiant.strip() for identifiant in request.form.getlist("ids") if identifiant.strip()]
+
+    supprimees = storage.listings.delete_listings(ids)
+    storage.admin.log_admin_action(
+        "listings_bulk_deleted",
+        f"{supprimees} listing(s) deleted from a selection of {len(ids)}"
+        f" [{', '.join(ids) or 'none'}] by {g.user['username']}",
+        g.user["username"],
+    )
+
+    if not ids:
+        message, categorie = "Aucune annonce sélectionnée", "info"
+    elif supprimees == len(ids):
+        message, categorie = f"{supprimees} annonce(s) supprimée(s)", "success"
+    else:
+        message = (
+            f"{supprimees} annonce(s) supprimée(s) sur {len(ids)} sélectionnée(s)"
+            " — les autres avaient déjà disparu"
+        )
+        categorie = "warning"
+
+    return _reponse_action(
+        message, categorie,
+        url_for("admin.admin_listings"), "listings",
+        **_CONTEXTE_ONGLETS["listings"](storage),
+    )
+
+
+def _cellule_publication(creation_date) -> str:
+    """Date de PUBLICATION (#12) formatée pour l'export : vide si sentinelle.
+
+    `creation_date` est du TEXT ISO-8601 UTC ou la sentinelle « unknown » ;
+    une valeur non parsable reste brute plutôt que perdue.
+    """
+    if not creation_date or creation_date == DATE_INCONNUE:
+        return ""
+    try:
+        return datetime.fromisoformat(str(creation_date).replace("Z", "+00:00")).strftime("%d/%m/%Y")
+    except ValueError:
+        return str(creation_date)
+
+
+def _cellules_csv_annonce(li: dict) -> list[str]:
+    """Une ligne d'annonce → les colonnes françaises de l'export (#20)."""
+    premiere_detection = li.get("first_seen")
+    return [
+        str(li.get("listing_id") or ""),
+        li.get("title") or "",
+        li.get("source") or "",
+        li.get("price") or "",
+        li.get("surface") or "",
+        li.get("rooms") or "",
+        _cellule_publication(li.get("creation_date")),
+        premiere_detection.strftime("%d/%m/%Y %H:%M") if premiere_detection else "",
+        li.get("city") or "",
+        li.get("url") or "",
+    ]
+
+
+@admin_bp.route("/admin/listings/export")
+@require_admin
+def admin_listings_export():
+    """Export CSV du résultat filtré courant (issue #20).
+
+    MÊMES filtres / recherche / tri que la vue (lus depuis request.args, sans
+    pagination), plafonnés à EXPORT_CSV_PLAFOND lignes documenté. Format FR :
+    séparateur « ; », CRLF, BOM UTF-8 pour qu'Excel ouvre le fichier sans
+    mojibake. La réponse n'est PAS rendue via HTMX : un téléchargement ne swap
+    rien, le navigateur gère l'attachment tout seul.
+    """
+    storage = current_app.storage
+    search_term = request.args.get("search", "")
+    source_filter = request.args.get("source", "")
+    sort = request.args.get("sort", "")
+    filtres, _erreurs = _lire_filtres_annonces()
+
+    lignes = storage.listings.get_all_listings(
+        limit=EXPORT_CSV_PLAFOND, offset=0, search_term=search_term,
+        source_filter=source_filter, filters=filtres, sort=sort,
+    )
+
+    tampon = io.StringIO()
+    writer = csv.writer(tampon, delimiter=";", lineterminator="\r\n")
+    writer.writerow(COLONNES_CSV)
+    for ligne in lignes:
+        writer.writerow(_cellules_csv_annonce(ligne))
+
+    nom_fichier = f"annonces_{datetime.now(UTC):%Y%m%d}.csv"
+    return Response(
+        "\ufeff" + tampon.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={nom_fichier}"},
     )
 
 
