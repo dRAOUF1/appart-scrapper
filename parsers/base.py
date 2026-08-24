@@ -243,15 +243,8 @@ class BaseParser(ABC):
         is the universal location contract — every source is expected to
         work from this, en résolvant elle-même son propre identifiant de
         lieu depuis la localisation canonique (voir to_native).
-
-        Issue #28 : une recherche « transit-seule » est aussi valide. Les
-        parsers ne lisent jamais `transit` (l'expansion en fait des
-        localisations classiques avant to_native, voir
-        services/transit_expansion) : l'accepter ici ne leur fait rien voir,
-        ça garantit juste qu'une telle recherche n'est pas rejetée à la
-        création/planification alors que le pipeline saura la servir.
         """
-        return bool(get_locations(criteria)) or has_transit(criteria)
+        return bool(get_locations(criteria))
 
     def unsupported_criteria(self, criteria: dict) -> list[str]:
         """Les critères demandés que cette source ne sait pas honorer, en
@@ -284,8 +277,15 @@ class BaseParser(ABC):
         est utilisable : validation à la création d'une recherche (front),
         pipeline de scrape, reconstruction d'URL. Une seule formulation, au
         même endroit.
+
+        Issue #28 : une recherche « transit-seule » reste cherchable pour
+        TOUTES les sources — l'expansion (services/transit_expansion)
+        produira ses localisations classiques avant to_native, les parsers
+        ne lisent donc jamais `transit`. L'accepter ici garantit qu'une telle
+        recherche n'est rejetée ni à la création ni au scrape, sans avoir à
+        répéter la règle dans chaque surcharge de has_valid_criteria.
         """
-        if not self.has_valid_criteria(criteria):
+        if not self.has_valid_criteria(criteria) and not has_transit(criteria):
             return "aucune localisation exploitable (ville + code postal requis)"
 
         unsupported = self.unsupported_criteria(criteria)

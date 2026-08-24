@@ -359,7 +359,7 @@ def _normalize_transit(criteria: dict) -> list[dict]:
         stop_ids = sorted({
             str(stop).strip()
             for stop in _as_list(entry.get("stop_ids"))
-            if str(stop).strip()
+            if stop is not None and str(stop).strip()
         })
         if stop_ids:
             normalized["stop_ids"] = stop_ids

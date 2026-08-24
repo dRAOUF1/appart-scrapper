@@ -87,6 +87,8 @@ class ScrapeService:
             except Exception as e:
                 logger.error(f"[search:{search_id}] Expansion des transports échouée : {e}")
                 avertissements_transit = [f"Expansion des transports impossible : {e}"]
+                # Même en échec, la clé ne passe jamais aux parsers.
+                criteria = {k: v for k, v in criteria.items() if k != "transit"}
             for message in avertissements_transit:
                 logger.warning(f"[search:{search_id}] Transit : {message}")
 

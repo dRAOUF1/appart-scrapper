@@ -64,6 +64,20 @@ def make_criteria(**overrides) -> dict:
     return criteria
 
 
+def make_transit_selection(
+    line_id: str = "IDFM:C01388",
+    mode: str = "metro",
+    stop_ids: tuple[str, ...] = ("STIF:StopArea:SP:43135:",),
+    radius_m: int = 1000,
+    **extras,
+) -> dict:
+    """Une sélection de transport canonique (#28). stop_ids vide = toute la
+    ligne ; extras pour tester la tolérance aux clés inconnues (line_label…)."""
+    selection = {"line_id": line_id, "mode": mode, "stop_ids": list(stop_ids), "radius_m": radius_m}
+    selection.update(extras)
+    return selection
+
+
 # ---------------------------------------------------------------------------
 # Annonces
 # ---------------------------------------------------------------------------

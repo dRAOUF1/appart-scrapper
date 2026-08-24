@@ -44,9 +44,19 @@ class Search:
         Each source encodes location differently (opaque placeIds vs.
         city/postal code, ...), so validity is delegated to the parsers
         rather than checking a single hardcoded key here.
+
+        Issue #28 : une recherche « transit-seule » est valide pour toutes
+        les sources — l'expansion produira ses localisations avant le scrape
+        (services/transit_expansion), les parsers ne voient jamais `transit`.
         """
         if not self.criteria or not isinstance(self.criteria, dict):
             return False
+
+        from core.criteria import has_transit
+
+        if has_transit(self.criteria):
+            return True
+
         from parsers import get_parser
 
         for src in (self.sources or [self.source]):
