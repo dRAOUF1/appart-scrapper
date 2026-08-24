@@ -166,6 +166,8 @@ def _normalise_element(element: dict) -> PointPoi | None:
     Un nom manquant retombe sur le libellé du type (« Arrêt de bus ») : mieux
     qu'un popup vide, et le front n'a aucun fallback à coder.
     """
+    if not isinstance(element, dict):
+        return None
     tags = element.get("tags")
     if not isinstance(tags, dict):
         return None
