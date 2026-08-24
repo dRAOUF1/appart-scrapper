@@ -72,6 +72,24 @@ class ScrapeService:
             )
             return 0
 
+        # Issue #28 : les sélections de transports (`transit`) sont étendues
+        # en localisations classiques AVANT la boucle des sources — les
+        # parsers ne voient jamais cette clé. Best effort : un échec
+        # d'expansion ne doit pas tuer un scrape qui aurait des villes
+        # classiques ; sans celles-ci, les sources refuseront proprement
+        # (cannot_search_reason) et le journal dira pourquoi.
+        avertissements_transit: list[str] = []
+        if criteria.get("transit"):
+            try:
+                from services.transit_expansion import etendre_criteres
+
+                criteria, avertissements_transit = etendre_criteres(criteria, storage)
+            except Exception as e:
+                logger.error(f"[search:{search_id}] Expansion des transports échouée : {e}")
+                avertissements_transit = [f"Expansion des transports impossible : {e}"]
+            for message in avertissements_transit:
+                logger.warning(f"[search:{search_id}] Transit : {message}")
+
         sources = search.get("sources") or [search.get("source", "seloger")]
 
         # Chaque source encode la localisation différemment (placeIds opaques,
@@ -218,7 +236,15 @@ class ScrapeService:
             search_id, "success",
             listings_found=len(listings),
             new_listings=len(new_listings),
-            details={"already_known": len(already), "per_source": per_source},
+            details={
+                "already_known": len(already),
+                "per_source": per_source,
+                # Issue #28 : les avertissements d'expansion transit
+                # (plafond atteint, stations inconnues, calculs indisponibles)
+                # remontent dans le journal de scrape.
+                **({"avertissements_transit": avertissements_transit}
+                   if avertissements_transit else {}),
+            },
             started_at=started_at,
         )
 
