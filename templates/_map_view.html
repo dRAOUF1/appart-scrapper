@@ -1,0 +1,60 @@
+{# Vue Carte d'une recherche (#26) : les biens géolocalisés de la recherche +
+   les repères personnels GLOBAUX de l'utilisateur.
+
+   - Init PARESSEUSE : rien n'est construit au chargement de la page ; la carte
+     et ses données ne sont demandées qu'au premier affichage de l'onglet
+     (static/map.js).
+   - Ne touche PAS au mécanisme de scroll infini (#14), qui vit entièrement
+     dans #liste-view : masquer l'un n'interrompt pas l'autre.
+   - Le jeton CSRF est porté par le formulaire d'ajout ; toutes les mutations
+     JS le rejouent (routes de session web_bp). #}
+<section id="carte-view" class="carte-view" data-search-id="{{ search.id }}" hidden>
+  <div class="map-toolbar">
+    <button type="button" id="pin-add-btn" class="btn btn-primary btn-sm">📍 Ajouter un repère</button>
+    <span id="pin-hint" class="map-hint" hidden>Cliquez sur la carte à l'endroit de votre repère…</span>
+    <span id="map-count" class="map-count" aria-live="polite"></span>
+  </div>
+
+  <div id="map-empty" class="empty-state map-empty-state" hidden>
+    <div class="empty-icon">🗺️</div>
+    <h3>Aucune annonce géolocalisée</h3>
+    <p>Les annonces sans coordonnées n'apparaissent pas sur la carte — vos repères personnels restent disponibles.</p>
+  </div>
+
+  <div class="map-layout">
+    <div id="map-canvas" class="map-canvas" role="application" aria-label="Carte des biens de la recherche"></div>
+
+    <aside id="pin-panel" class="map-pin-panel">
+      <h3>Mes repères (<span id="pin-count">0</span>)</h3>
+      <ul id="pin-list" class="pin-list"></ul>
+      <p id="pin-none" class="map-hint">Aucun repère pour l'instant — ajoutez-en depuis la carte.</p>
+
+      <form id="pin-form" class="map-add-form" hidden>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="latitude">
+        <input type="hidden" name="longitude">
+        <p class="map-add-coords" id="pin-form-coords"></p>
+        <label>Libellé
+          <input type="text" name="label" maxlength="80" required placeholder="Ex. Bon quartier">
+        </label>
+        <label>Note
+          <textarea name="note" maxlength="500" rows="2" placeholder="Optionnel — ce qui compte pour vous ici"></textarea>
+        </label>
+        <label>Icône
+          <select name="icon">
+            <option value="📍">📍 Épingle</option>
+            <option value="🏠">🏠 Maison</option>
+            <option value="⭐">⭐ Coup de cœur</option>
+            <option value="🚉">🚉 Transport</option>
+            <option value="🏫">🏫 École</option>
+            <option value="🛒">🛒 Commerces</option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm">Enregistrer</button>
+          <button type="button" id="pin-cancel" class="btn btn-ghost btn-sm">Annuler</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+</section>

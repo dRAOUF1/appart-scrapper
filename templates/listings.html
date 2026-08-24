@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ search.label }} — Annonces{% endblock %}
 
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('web.static', filename='vendor/leaflet.css') }}">
+{% endblock %}
+
 {% block content %}
 <div class="page-header">
   <div>
@@ -204,6 +208,17 @@
 </details>
 {% endif %}
 
+{# Onglets Liste / Carte (#26). La carte est initialisée paresseusement au
+   premier clic — aucune requête ni tuile chargée tant qu'on ne l'ouvre pas.
+   Le scroll infini (#14) vit dans #liste-view et n'est pas altéré. #}
+<div class="view-tabs" role="tablist" aria-label="Vue des résultats">
+  <button type="button" id="tab-liste" class="view-tab active" role="tab"
+          aria-selected="true" aria-controls="liste-view">📋 Liste</button>
+  <button type="button" id="tab-carte" class="view-tab" role="tab"
+          aria-selected="false" aria-controls="carte-view">🗺️ Carte</button>
+</div>
+
+<section id="liste-view">
 {% if listings %}
 <div class="listing-grid" id="listing-grid">
   {# Issue #14 : première tranche rendue par le partial partagé avec
@@ -242,10 +257,15 @@
   <a href="{{ url_for('web.searches') }}" class="btn btn-primary">Voir le lien POST</a>
 </div>
 {% endif %}
+</section>
+
+{% include "_map_view.html" %}
 
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('web.static', filename='vendor/leaflet.js') }}" defer></script>
+<script src="{{ url_for('web.static', filename='map.js') }}" defer></script>
 <script src="{{ url_for('web.static', filename='listings_scroll.js') }}" defer></script>
 <script>
 function toggleAdvanced() {

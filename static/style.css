@@ -2554,3 +2554,269 @@ flex-direction: column;
 width: 100%;
 }
 }
+
+/* ==========================================================================
+   Carte d'une recherche + repères personnels (#26)
+   ========================================================================== */
+
+/* Onglets Liste / Carte */
+.view-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.view-tab {
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-secondary);
+    padding: 0.5rem 1.1rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.15s ease;
+}
+
+.view-tab:hover {
+    background: var(--glass-bg-hover);
+    color: var(--text-primary);
+}
+
+.view-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* Barre d'outils de la carte */
+.map-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.map-hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.map-hint-error {
+    color: #ff6b6b;
+}
+
+.map-count {
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+}
+
+/* État « aucune annonce géolocalisée » */
+.map-empty-state {
+    margin-bottom: 1rem;
+}
+
+/* Disposition carte + panneau des repères */
+.map-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(220px, 1fr);
+    gap: 1rem;
+    align-items: stretch;
+}
+
+@media (max-width: 900px) {
+    .map-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+.map-canvas {
+    height: 520px;
+    border-radius: var(--radius-md, 14px);
+    border: 1px solid var(--glass-border);
+    z-index: 0; /* reste sous la navbar / les toasts */
+}
+
+.map-canvas.map-adding {
+    cursor: crosshair;
+}
+
+/* Panneau latéral des repères perso */
+.map-pin-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    border-radius: var(--radius-md, 14px);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur-sm));
+    max-height: 520px;
+    overflow-y: auto;
+}
+
+.map-pin-panel h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.pin-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.pin-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: var(--radius-sm, 8px);
+    background: var(--glass-bg-hover);
+}
+
+.pin-row-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+}
+
+/* Mini-formulaire d'ajout de repère */
+.map-add-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--glass-border);
+}
+
+.map-add-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.map-add-form input[type="text"],
+.map-add-form textarea,
+.map-add-form select {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm, 8px);
+    color: var(--text-primary);
+    padding: 0.45rem 0.6rem;
+    font-size: 0.88rem;
+}
+
+.map-add-coords {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    font-family: monospace;
+}
+
+.form-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Marqueurs Leaflet (divIcon — aucun asset image requis) */
+.bien-marker {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+}
+
+.bien-marker.bien-exact {
+    background: #0a84ff;
+    box-shadow: 0 0 6px rgba(10, 132, 255, 0.9), inset 0 0 2px rgba(255, 255, 255, 0.7);
+}
+
+.bien-marker.bien-approx,
+.bien-marker.bien-commune {
+    background: transparent;
+    border: 2px dashed rgba(10, 132, 255, 0.85);
+    opacity: 0.8;
+}
+
+.bien-marker.bien-commune {
+    border-color: rgba(255, 159, 10, 0.85);
+}
+
+.bien-circle-approx {
+    stroke: rgba(10, 132, 255, 0.6);
+    fill: rgba(10, 132, 255, 0.12);
+}
+
+.bien-circle-commune {
+    stroke: rgba(255, 159, 10, 0.55);
+    fill: rgba(255, 159, 10, 0.08);
+}
+
+.pin-marker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    font-size: 20px;
+    line-height: 1;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+}
+
+/* Popups : lisibles sur le thème sombre comme clair (fond OSM standard) */
+.bien-popup,
+.pin-popup {
+    min-width: 180px;
+    font-family: inherit;
+}
+
+.bien-popup-title,
+.pin-popup-label {
+    display: block;
+    font-size: 0.95rem;
+    margin-bottom: 0.2rem;
+}
+
+.bien-popup-price {
+    font-weight: 600;
+    color: #0a84ff;
+    margin-bottom: 0.15rem;
+}
+
+.bien-popup-meta {
+    font-size: 0.82rem;
+    color: #555;
+    margin-bottom: 0.15rem;
+}
+
+.bien-popup-precision {
+    font-size: 0.78rem;
+    font-style: italic;
+    color: #777;
+    margin-bottom: 0.35rem;
+}
+
+.bien-popup-link {
+    display: inline-block;
+    margin-top: 0.25rem;
+}
+
+.pin-popup-note {
+    margin: 0.15rem 0 0;
+    font-size: 0.85rem;
+    white-space: pre-line;
+}
