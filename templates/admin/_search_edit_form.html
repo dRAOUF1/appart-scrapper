@@ -1,0 +1,221 @@
+{# Formulaire d'édition admin d'une recherche (issue #18), rendu DANS la fiche
+   détail de l'onglet recherches. Même mécanique que le formulaire utilisateur
+   (templates/search_edit.html) : champ texte doublé d'un payload canonique
+   caché par localisation, sources multi-cases, filtres optionnels, flag
+   notify_enabled (#10) avec son marqueur obligatoire.
+
+   L'autocomplete côté client est le MÊME script que l'espace utilisateur
+   (static/search_form.js), chargé en fin de partial : htmx évalue les scripts
+   d'un fragment swappé, la page complète l'exécute au chargement — les deux
+   chemins fonctionnent. window.SOURCE_CAPABILITIES alimente son avertissement
+   « critère non honoré », comme dans search_edit.html.
+
+   `form_values` (après une erreur de validation) pré-remplit les champs
+   simples avec CE QUI A ÉTÉ SAISI, pour ne pas perdre la correction en cours ;
+   absent (première ouverture), tout vient des critères stockés. #}
+
+<div class="card" id="admin-edit-form">
+    <h3>✏️ Éditer la recherche</h3>
+    {% set f = form_values if form_values else None %}
+    {% set criteres = search_detail.criteria or {} %}
+    <form method="POST" action="{{ url_for('admin.admin_edit_search', search_id=search_detail.id) }}"
+          hx-post="{{ url_for('admin.admin_edit_search', search_id=search_detail.id) }}"
+          hx-target="#admin-content" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="form-section">
+            <div class="form-section-label">Informations générales</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="label">Label</label>
+                    <input type="text" id="label" name="label"
+                           value="{{ (f.get('label') if f else '') or search_detail.label }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="ntfy_topic">Topic ntfy</label>
+                    <input type="text" id="ntfy_topic" name="ntfy_topic"
+                           value="{{ (f.get('ntfy_topic') if f else '') or search_detail.ntfy_topic }}" required>
+                </div>
+                <div class="form-group">
+                    <label for="scrape_interval">Intervalle (min)</label>
+                    <input type="number" id="scrape_interval" name="scrape_interval"
+                           value="{{ (f.get('scrape_interval') if f else '') or search_detail.scrape_interval or 5 }}"
+                           min="1" max="1440">
+                </div>
+                <div class="form-group">
+                    {# Marqueur obligatoire : une case décochée n'est pas envoyée
+                       par le navigateur, lui seul permet de distinguer
+                       « décoché » de « champ absent » (#10). #}
+                    <input type="hidden" name="notify_enabled_present" value="1">
+                    <label>Notifications ntfy</label>
+                    <div class="pill-toggle-group">
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="notify_enabled"
+                                {% set _notify_post = f.get('notify_enabled') if f else none %}
+                                {% if (_notify_post is not none and _notify_post) or (f is none and search_detail.notify_enabled) %}checked{% endif %}>
+                            <span class="pill-toggle-label">🔔 Notifier les nouvelles annonces</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <p class="text-muted text-sm" style="margin-top: 0.5rem;">
+                Propriétaire : <strong>{{ search_detail.username }}</strong> — l'édition ne transfère
+                jamais la recherche vers votre compte.
+            </p>
+        </div>
+
+        <div class="form-section">
+            <div class="form-section-label">📍 Localisation</div>
+            {% set _locations = criteres.locations or [None] %}
+            <div class="location-list" data-location-list>
+                {% for loc in _locations %}
+                <div class="location-row" data-location-row>
+                    <div class="location-autocomplete">
+                        <input type="text" name="location_city"
+                            value="{{ location_label(loc) if loc else '' }}"
+                            placeholder="Ville, département ou région" aria-label="Localisation"
+                            autocomplete="off" data-location-input>
+                        <ul class="location-suggestions" data-location-suggestions hidden></ul>
+                    </div>
+                    <input type="hidden" name="location_payload"
+                        value="{{ loc | tojson if loc else '' }}" data-location-payload>
+                    <button type="button" class="location-remove-btn" aria-label="Retirer cette localisation">✕</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une localisation</button>
+        </div>
+
+        <div class="form-section">
+            <div class="form-section-label">Sources</div>
+            <div class="source-picker">
+                {% set _cochees = (f.getlist('sources') if f else none)
+                                  or (search_detail.sources or [search_detail.source]) %}
+                {% for src in sources %}
+                <label class="source-card">
+                    <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
+                        {% if src.id in _cochees %}checked{% endif %}>
+                    <span class="source-card-body">
+                        <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
+                        <span class="source-card-name">{{ src.name }}</span>
+                        <span class="source-card-check">✓</span>
+                    </span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="form-section">
+            <div class="form-section-label">Filtres (optionnels)</div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="price_min">Prix min (€)</label>
+                    <input type="number" id="price_min" name="price_min"
+                        value="{{ (f.get('price_min') if f else '') or criteres.priceMin or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="price_max">Prix max (€)</label>
+                    <input type="number" id="price_max" name="price_max"
+                        value="{{ (f.get('price_max') if f else '') or criteres.priceMax or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="surface_min">Surface min (m²)</label>
+                    <input type="number" id="surface_min" name="surface_min"
+                        value="{{ (f.get('surface_min') if f else '') or criteres.surfaceMin or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="surface_max">Surface max (m²)</label>
+                    <input type="number" id="surface_max" name="surface_max"
+                        value="{{ (f.get('surface_max') if f else '') or criteres.surfaceMax or '' }}">
+                </div>
+                <div class="form-group">
+                    <label for="transaction">Type de transaction</label>
+                    {% set _tx = (f.get('transaction') if f else '') or criteres.transaction %}
+                    <select id="transaction" name="transaction">
+                        <option value="rent" {% if _tx != 'buy' %}selected{% endif %}>Location</option>
+                        <option value="buy" {% if _tx == 'buy' %}selected{% endif %}>Achat</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
+                <div class="form-group">
+                    <label>Type de bien</label>
+                    <div class="pill-toggle-group">
+                        {% set _types_coches = (f.getlist('property_types') if f else none)
+                                               or (criteres.propertyTypes or ['apartment']) %}
+                        {% for value, label in [('apartment', 'Appartement'), ('house', 'Maison'), ('parking', 'Parking'), ('land', 'Terrain')] %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="property_types" value="{{ value }}"
+                                data-property-type="{{ value }}"
+                                {% if value in _types_coches %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <small class="form-help" data-property-type-warning hidden></small>
+                </div>
+            </div>
+            <div class="form-grid" style="margin-top: 1rem;">
+                {# Après erreur : les cases suivent CE QUI A ÉTÉ POSTÉ ; à
+                   l'ouverture initiale, les critères stockés. #}
+                {% set _rooms_post = f.getlist('rooms') if f else None %}
+                {% set _beds_post = f.getlist('bedrooms') if f else None %}
+                <div class="form-group">
+                    <label>Pièces</label>
+                    <div class="pill-toggle-group">
+                        {% for n in [1, 2, 3, 4, 5] %}
+                        {% set _coche = (n|string in _rooms_post) if _rooms_post is not none
+                                        else (criteres.rooms and n in criteres.rooms) %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="rooms" value="{{ n }}" {% if _coche %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Chambres</label>
+                    <div class="pill-toggle-group">
+                        {% for n in [1, 2, 3, 4, 5] %}
+                        {% set _coche = (n|string in _beds_post) if _beds_post is not none
+                                        else (criteres.bedrooms and n in criteres.bedrooms) %}
+                        <label class="pill-toggle">
+                            <input type="checkbox" name="bedrooms" value="{{ n }}" {% if _coche %}checked{% endif %}>
+                            <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% set _override_sources = sources | selectattr('manual_override_label') | list %}
+        {% if _override_sources %}
+        <details class="form-section" style="margin-top: 1rem;">
+            <summary style="cursor: pointer; color: var(--text-secondary); font-size: 0.9rem;">
+                ⚙️ Options avancées — identifiants de lieu par source
+            </summary>
+            {% for src in _override_sources %}
+            {% set _current = (criteres.sourceOverrides or {}).get(src.id, {}) %}
+            <div class="form-group" style="margin-top: 0.75rem;">
+                <label for="override_{{ src.id }}">{{ src.name }} — {{ src.manual_override_label }}</label>
+                <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}"
+                    value="{{ _current.placeIds | join(', ') if _current.placeIds else '' }}"
+                    placeholder="Ex: AD08FR31096">
+                <small class="form-help">{{ src.manual_override_help }}</small>
+            </div>
+            {% endfor %}
+        </details>
+        {% endif %}
+
+        <div class="form-actions" style="margin-top: 1.5rem; display: flex; gap: 0.75rem;">
+            <button type="submit" class="btn btn-primary">💾 Enregistrer</button>
+            <a href="{{ url_for('admin.admin_search_detail', search_id=search_detail.id) }}" class="btn btn-ghost"
+               hx-get="{{ url_for('admin.admin_search_detail', search_id=search_detail.id) }}"
+               hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">Annuler</a>
+        </div>
+    </form>
+</div>
+
+<script>window.SOURCE_CAPABILITIES = {{ sources | tojson }};</script>
+<script src="{{ url_for('web.static', filename='search_form.js') }}"></script>
