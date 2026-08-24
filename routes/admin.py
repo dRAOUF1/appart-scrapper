@@ -39,7 +39,7 @@ admin_bp = Blueprint("admin", __name__)
 # Onglets servis par la vue principale. Le nom du partial rendu dépend de cette
 # allowlist : une valeur inconnue de `?tab=` est ramenée au dashboard, jamais
 # passée telle quelle au loader de templates.
-_TABS = ("dashboard", "users", "searches", "listings", "database", "logs")
+_TABS = ("dashboard", "users", "searches", "listings", "scrapes", "database", "logs")
 
 
 # ---------------------------------------------------------------------------
@@ -299,12 +299,103 @@ def _contexte_logs(storage) -> dict:
             "action_filter": action_filter, "date_from": date_from, "date_to": date_to}
 
 
+def _contexte_scrapes(storage) -> dict:
+    """Contexte de l'onglet SCRAPES (#19) : historique global + cartes santé.
+
+    Les filtres sont lus via `request.values` (args GET **et** form POST) : le
+    formulaire de relance transporte les filtres courants en champs cachés, la
+    réponse HTMX de l'action reconstruit donc exactement la vue filtrée/paginée
+    d'où elle vient — la pagination et les filtres survivent à l'action.
+
+    La source n'existe pas dans les entrées de log (stockage fichier par
+    recherche) : filtrer par source revient à restreindre aux recherches qui
+    la déclarent ; idem pour le filtre « recherche ». Le repository reçoit une
+    liste `search_ids`, jamais de logique métier.
+    """
+    page = max(1, to_int(request.values.get("page", 1), 1))
+    per_page = 20
+    statut_filter = request.values.get("statut", "")
+    source_filter = request.values.get("source", "")
+    recherche_filter = request.values.get("recherche", "")
+    date_from = request.values.get("date_from", "")
+    date_to = request.values.get("date_to", "")
+
+    recherches = storage.searches.get_all_searches()
+    par_id = {s["id"]: s for s in recherches}
+
+    search_ids = None
+    if recherche_filter:
+        try:
+            search_ids = [int(recherche_filter)]
+        except ValueError:
+            search_ids = []  # valeur non numérique : aucun résultat, pas d'erreur 500
+    elif source_filter:
+        search_ids = [
+            sid for sid, s in par_id.items()
+            if source_filter in (s.get("sources") or [s.get("source")])
+        ]
+
+    kwargs_filtres = {
+        "status_filter": statut_filter,
+        "search_ids": search_ids,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    offset = (page - 1) * per_page
+    logs = storage.scrape_logs.get_all_scrape_logs(limit=per_page, offset=offset, **kwargs_filtres)
+    total = storage.scrape_logs.count_all_scrape_logs(**kwargs_filtres)
+
+    lignes = []
+    for log in logs:
+        recherche = par_id.get(log.get("search_id"))
+        lignes.append({
+            **log,
+            "search_label": (recherche or {}).get("label") or f"Recherche #{log.get('search_id')}",
+            "search_source": (recherche or {}).get("source") or "—",
+            # Le bouton « Relancer » n'a de sens que si la recherche existe
+            # ENCORE et reste active (défense en profondeur côté route aussi).
+            "peut_relancer": bool(recherche) and bool(recherche.get("is_active", True)),
+        })
+
+    return {
+        "logs": lignes,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "statut_filter": statut_filter,
+        "source_filter": source_filter,
+        "recherche_filter": recherche_filter,
+        "date_from": date_from,
+        "date_to": date_to,
+        "recherches": [{"id": s["id"], "label": s.get("label") or f"Recherche #{s['id']}"} for s in recherches],
+        "sources_disponibles": sorted({
+            src for s in recherches for src in (s.get("sources") or [s.get("source")]) if src
+        }),
+        "stats_globales": storage.scrape_logs.get_global_scrape_stats(),
+    }
+
+
+def _contexte_scrape_log_detail(storage, log_id: int) -> dict | None:
+    """Contexte du viewer de log brut (#19) dans l'onglet scrapes.
+
+    `get_scrape_log_raw` SANS user_id : l'admin consulte les logs de TOUTES les
+    recherches (la restriction propriétaire est le chemin utilisateur web.py).
+    """
+    entree = storage.scrape_logs.get_scrape_log_raw(log_id)
+    if not entree:
+        return None
+    recherche = storage.searches.get_search(entree.get("search_id"))
+    return {"scrape_log_detail": entree, "scrape_log_recherche": recherche}
+
+
 # Onglet → constructeur de son contexte de vue.
 _CONTEXTE_ONGLETS = {
     "dashboard": _contexte_dashboard,
     "users": _contexte_utilisateurs,
     "searches": _contexte_recherches,
     "listings": _contexte_annonces,
+    "scrapes": _contexte_scrapes,
     "database": lambda storage: _contexte_base(storage),
     "logs": _contexte_logs,
 }
@@ -416,6 +507,89 @@ def admin_users():
     return _render_admin_tab("users", **_CONTEXTE_ONGLETS["users"](current_app.storage))
 
 
+# ---------------------------------------------------------------------------
+# Historique & diagnostic des scrapes (issue #19) — tab globale, viewer brut,
+# relance d'un scrape en échec
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/admin/scrapes")
+@require_admin
+def admin_scrapes():
+    """Onglet SCRAPES (#19) : historique paginé de tous les scrape_logs."""
+    return _render_admin_tab("scrapes", **_CONTEXTE_ONGLETS["scrapes"](current_app.storage))
+
+
+@admin_bp.route("/admin/scrapes/logs/<int:log_id>")
+@require_admin
+def admin_scrape_log_detail(log_id):
+    """Viewer du log brut (#19), rendu dans la tab scrapes.
+
+    Réutilise le rendu du log brut de l'espace utilisateur via la macro
+    partagée `log_brut` (templates/_macros.html) — même mise en évidence
+    INFO/WARNING/ERROR, sans polling ni rechargement lourd.
+    """
+    storage = current_app.storage
+    ctx = _contexte_scrape_log_detail(storage, log_id)
+    if ctx is None:
+        flash("Log de scrape introuvable", "error")
+        return redirect(url_for("admin.admin_scrapes"))
+    return _render_admin_tab("scrapes", **ctx)
+
+
+@admin_bp.route("/admin/scrapes/<int:search_id>/retry", methods=["POST"])
+@require_admin
+def admin_retry_scrape(search_id):
+    """Relance d'un scrape en ÉCHEC (#19) — même mécanique qu'un lancement manuel.
+
+    Passe par submit_scrape : la déduplication existante refuse de doubler un
+    scrape déjà en cours/en file, et la file séquentielle (max_workers=1) est
+    respectée. Conditions défendues ici ET au rendu du bouton : le log doit
+    être un échec et la recherche exister ENCORE et être active. La pause
+    globale (#17) ne bloque pas les lancements manuels ; son état reste
+    visible (bandeau hors bande + badge de l'onglet).
+    """
+    storage = current_app.storage
+    search = storage.searches.get_search(search_id)
+    if not search:
+        return _reponse_action(
+            "Recherche introuvable — relance impossible", "error",
+            url_for("admin.admin_scrapes"), "scrapes", **_CONTEXTE_ONGLETS["scrapes"](storage),
+        )
+    if not search.get("is_active", True):
+        return _reponse_action(
+            f"Recherche « {search['label']} » en pause — activez-la avant de relancer",
+            "warning",
+            url_for("admin.admin_scrapes"), "scrapes", **_CONTEXTE_ONGLETS["scrapes"](storage),
+        )
+
+    from core.scrape_control import file_dattente, submit_scrape
+
+    application = current_app._get_current_object()
+    ok, msg = submit_scrape(application, search_id, search["user_id"])
+    if ok:
+        rang = next(
+            (e["rang"] for e in file_dattente(application) if e["search_id"] == search_id),
+            None,
+        )
+        storage.admin.log_admin_action(
+            "scrape_retried",
+            f"Scrape relancé après échec pour '{search['label']}' (ID:{search_id})"
+            f" — rang en file {rang} by {g.user['username']}",
+            g.user["username"],
+        )
+        message = f"Scrape relancé — rang en file : {rang}"
+        categorie = "success"
+    else:
+        # Refus de déduplication (« déjà en cours ») : on l'annonce tel quel.
+        message = msg
+        categorie = "warning"
+
+    return _reponse_action(
+        message, categorie,
+        url_for("admin.admin_scrapes"), "scrapes", **_CONTEXTE_ONGLETS["scrapes"](storage),
+    )
+
+
 @admin_bp.route("/admin/users/<int:user_id>")
 @require_admin
 def admin_user_detail(user_id):
@@ -481,7 +655,11 @@ def admin_search_detail(search_id):
     if not search:
         flash("Recherche introuvable", "error")
         return redirect(url_for("admin.admin_searches"))
-    return _render_admin_tab("searches", search_detail=search)
+    # Issue #19 : bloc santé des scrapes de CETTE recherche dans la fiche.
+    return _render_admin_tab(
+        "searches", search_detail=search,
+        scrape_stats=storage.scrape_logs.get_scrape_stats(search_id),
+    )
 
 
 @admin_bp.route("/admin/searches/<int:search_id>/delete", methods=["POST"])

@@ -23,6 +23,10 @@
        class="admin-tab {% if active_tab == 'searches' %}active{% endif %}"
        hx-get="{{ url_for('admin.admin_searches') }}" hx-target="#admin-content"
        hx-swap="outerHTML" hx-push-url="true">Recherches</a>
+    <a href="{{ url_for('admin.admin_scrapes') }}"
+       class="admin-tab {% if active_tab == 'scrapes' %}active{% endif %}"
+       hx-get="{{ url_for('admin.admin_scrapes') }}" hx-target="#admin-content"
+       hx-swap="outerHTML" hx-push-url="true">Scrapes</a>
     <a href="{{ url_for('admin.admin_listings') }}"
        class="admin-tab {% if active_tab == 'listings' %}active{% endif %}"
        hx-get="{{ url_for('admin.admin_listings') }}" hx-target="#admin-content"

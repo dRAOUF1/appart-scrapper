@@ -18,3 +18,15 @@
         Date inconnue
     {%- endif -%}
 {%- endmacro %}
+
+{#
+  Rendu d'un log brut de scrape, échappé puis colorisé (INFO/WARNING/ERROR/DEBUG).
+
+  Issue #19 : extrait TEL QUEL de templates/search_log_raw.html pour que le
+  viewer admin et la page utilisateur partagent EXACTEMENT le même rendu —
+  l'échappement (& < >) précède l'injection des <br> et des <span>, l'ordre
+  des replace est donc porteur de sûreté : ne pas réordonner.
+#}
+{% macro log_brut(contenu) -%}
+    {{ contenu | replace('&', '&amp;') | replace('<', '&lt;') | replace('>', '&gt;') | replace('\n', '<br>') | replace('ERROR', '<span class="log-error">ERROR</span>') | replace('WARNING', '<span class="log-warning">WARNING</span>') | replace('INFO', '<span class="log-info">INFO</span>') | replace('DEBUG', '<span class="log-debug">DEBUG</span>') | safe }}
+{%- endmacro %}
