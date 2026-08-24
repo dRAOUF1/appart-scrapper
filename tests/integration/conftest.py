@@ -28,7 +28,8 @@ _THIS_DIR = Path(__file__).resolve().parent
 
 # Truncated together (in one statement) so CASCADE handles FK ordering
 # regardless of listing order.
-_TABLES = ["search_listings", "listings", "searches", "users", "admin_logs", "app_settings"]
+_TABLES = ["map_pins", "search_listings", "listings", "searches", "users",
+           "admin_logs", "app_settings"]
 
 
 def pytest_collection_modifyitems(config, items):
@@ -94,14 +95,15 @@ def clean_geo_cache(clean_db, storage):
     utilisateur). L'ancienne suite compensait par des nettoyages manuels en fin
     de test et une dépendance d'ordre assumée en commentaire : une fixture
     dédiée règle le problème une fois pour toutes, sans toucher à la logique de
-    `clean_db`. Toute nouvelle table de cache géo doit être ajoutée ici.
+    `clean_db`. Toute nouvelle table de cache géo doit être ajoutée ici —
+    `commune_centres` (#26) y figure désormais aussi.
     """
     conn = storage._get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "TRUNCATE seloger_place_ids, bienici_zone_ids, century21_geo_ids,"
-                " foncia_geo_ids, orpi_geo_ids, pap_geo_ids"
+                " foncia_geo_ids, orpi_geo_ids, pap_geo_ids, commune_centres"
             )
         conn.commit()
     finally:

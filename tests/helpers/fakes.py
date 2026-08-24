@@ -21,9 +21,11 @@ from notifier import Notifier
 from repositories.admin_repo import AdminRepository
 from repositories.bienici_geo_repo import BienIciGeoRepository
 from repositories.century21_geo_repo import Century21GeoRepository
+from repositories.commune_geo_repo import CommuneGeoRepository
 from repositories.foncia_geo_repo import FonciaGeoRepository
 from repositories.guyhoquet_geo_repo import GuyHoquetGeoRepository
 from repositories.listing_repo import ListingRepository
+from repositories.map_pin_repo import MapPinRepository
 from repositories.orpi_geo_repo import OrpiGeoRepository
 from repositories.pap_geo_repo import PapGeoRepository
 from repositories.scrape_log_repo import ScrapeLogRepository
@@ -47,6 +49,9 @@ _REPOSITORIES = {
     "guyhoquet_geo": GuyHoquetGeoRepository,
     "orpi_geo": OrpiGeoRepository,
     "pap_geo": PapGeoRepository,
+    # Issue #26 : repères perso + cache du fallback géocodage commune.
+    "map_pins": MapPinRepository,
+    "commune_geo": CommuneGeoRepository,
 }
 
 
@@ -88,6 +93,9 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.guyhoquet_geo.get_cached.return_value = None
     storage.orpi_geo.get_cached.return_value = None
     storage.pap_geo.get_cached.return_value = None
+    # Issue #26 : valeurs par défaut neutres pour les nouveaux repos.
+    storage.map_pins.list_for_user.return_value = []
+    storage.commune_geo.get_cached.return_value = None
 
     for name, value in repo_overrides.items():
         setattr(storage, name, value)
