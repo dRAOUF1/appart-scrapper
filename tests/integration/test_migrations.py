@@ -188,16 +188,22 @@ _EXPECTED_TABLES = {
     "users", "searches", "listings", "search_listings",
     "admin_logs", "app_settings", "seloger_place_ids", "bienici_zone_ids",
     "century21_geo_ids", "guyhoquet_geo_ids",
+    # Issue #26 : carte (repères perso, centres communes) + coords listings.
+    "map_pins", "commune_centres",
+    # Issue #28 : référentiel transports GTFS.
+    "transit_lines", "transit_stops", "transit_line_stops",
+    "transit_communes_rayon",
 }
 
 
 def test_run_migrations_on_a_virgin_database_builds_a_fully_usable_schema(blank_db):
     """Le cas du premier déploiement : rien en base, tout doit être créé.
 
-    Régression historique couverte au passage : `CREATE INDEX
-    idx_searches_user_active(user_id, is_active)` tournait avant l'`ALTER
-    TABLE` qui ajoute `is_active`, ce qui échouait sur une base neuve. Ici
-    l'échec serait immédiat, avant même l'aller-retour.
+    Régressions historiques couvertes au passage : `CREATE INDEX
+    idx_searches_user_active(user_id, is_active)` puis `idx_listings_coords`
+    (issue #26) tournaient avant les `ALTER TABLE` qui ajoutent leurs
+    colonnes, ce qui échouait sur une base neuve. Ici l'échec serait
+    immédiat, avant même l'aller-retour.
     """
     url = blank_db()
     assert _tables_of(url) == set(), "la base doit être réellement vierge"
@@ -205,6 +211,15 @@ def test_run_migrations_on_a_virgin_database_builds_a_fully_usable_schema(blank_
     Storage.run_migrations(url)
 
     assert _EXPECTED_TABLES.issubset(_tables_of(url))
+    with psycopg2.connect(url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM pg_indexes WHERE indexname = 'idx_listings_coords'"
+            )
+            assert cur.fetchone(), (
+                "l'index partiel des coordonnées (#26) doit exister sur une "
+                "base vierge — il dépend des colonnes posées par alter_listings"
+            )
     _round_trip_whole_schema(url)
 
 
