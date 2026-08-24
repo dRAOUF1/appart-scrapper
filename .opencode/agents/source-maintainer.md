@@ -46,6 +46,8 @@ Mémoire des leçons durement acquises qui ne tiennent pas à une source précis
 
 <!-- Les entrées s'ajoutent ci-dessous, la plus récente en premier. -->
 
+- `2026-08-24 — Une surcharge de `cannot_search_reason` DOIT réimporter le fallback transit-seule (`has_transit`) du module de base : récidive — bienici.py et guyhoquet.py dupliquaient la validation SANS le fallback #28, une recherche transit-seule était refusée chez ces deux sources seules alors que le contrat documente « cherchable pour TOUTES ». La règle est désormais GARDE-MÉCANIQUE : test de balayage dérivé de `ParserRegistry._parsers` dans tests/unit/test_parsers_base.py (toute future source y apparaît automatiquement et rougit si sa surcharge oublie le fallback). Ne jamais recopier la condition de la base dans une surcharge — importer le helper. (revue post-fusions, récurrence de l'incident seloger #28)`
+
 - `2026-08-09 — Le blob __UFRN_FETCHER__ a deux étages fragiles (regex + décodage) : un 200 + marqueur ≠ blob parsé. Une description contenant `")` tronquait la regex `(.+?)` (27 Ko capturés au lieu de 350 Ko) et `unicode_escape` explosait sur un `\` isolé en fin de blob → TOUT le scrape tombait sous « IP bloquée par DataDome » sans aucun log d'encodage. Décodage robuste : `json.loads(f'"{raw}"')` → `encode("utf-16","surrogatepass").decode("utf-16")` (fusionne les paires de substituts) → `json.loads`. Toujours vérifier la taille de capture complète, pas seulement « ça matche ». (bug prod search_id=9)`
 - `2026-08-09 — Matcher un string literal JS : préférer la regex unrolled `((?:\\.|[^"\\])*)` à `(.+?)` — les alternatives sont mutuellement exclusives (`\\.` exige `\`, `[^"\\]` l'exclut) → matching linéaire, sans ReDoS ni troncature au premier `"` non échappé. (review blob search_id=9)`
 
