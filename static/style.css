@@ -691,6 +691,73 @@ code {
     margin-top: 0.75rem;
 }
 
+/* --- Bloc Transports (#28) ---------------------------------------------
+ * Une sélection = une ligne (autocomplete), ses stations épinglables en
+ * pills, un rayon en radios. Réutilise les styles location/pill existants ;
+ * seuls les agencements spécifiques sont définis ici.
+ */
+.transit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.transit-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 0.75rem;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.2);
+    position: relative;
+}
+
+.transit-row > .location-autocomplete {
+    flex-basis: 100%;
+}
+
+/* Même signal qu'une localisation retouchée sans re-choisir sa suggestion. */
+.transit-row.has-error input[data-transit-line-input] {
+    border-color: var(--red);
+    box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.18);
+}
+
+.transit-row-error-message {
+    width: 100%;
+    color: var(--red);
+    font-size: 0.8rem;
+}
+
+.transit-row-error-message[hidden] {
+    display: none;
+}
+
+.transit-stations {
+    flex-basis: 100%;
+}
+
+.transit-stations-group {
+    max-height: 12rem;
+    overflow-y: auto;
+    padding: 0.25rem;
+}
+
+.transit-error {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--red);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 69, 58, 0.1);
+    color: var(--red);
+    font-size: 0.9rem;
+}
+
+.transit-error[hidden] {
+    display: none;
+}
+
 /* Autocomplete de ville : la liste flotte au-dessus du reste du formulaire,
    ancrée sur le champ (le wrapper porte le position: relative). */
 .location-autocomplete {
