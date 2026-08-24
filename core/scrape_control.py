@@ -29,6 +29,41 @@ CLE_VERROU_SCHEDULER = 727271
 # file d'attente sans changer le contrat du dict lui-même (un Future).
 _soumissions: dict[int, float] = {}
 
+# Issue #21 : état du DERNIER passage du scheduler, écrit par le tick
+# (main.scheduled_scrape_job) et lu par l'onglet Système de l'admin. État
+# PROCESS LOCAL : seul le process qui détient le verrou consultatif tick,
+# donc c'est sa vue qui est affichée — un process sans scheduler affiche
+# « aucun passage », ce qui est la vérité.
+_tick_lock = threading.Lock()
+_dernier_tick: dict | None = None
+
+
+def enregistrer_tick(statut: str, detail: str = "") -> None:
+    """Mémorise le résultat du dernier passage planifié (#21).
+
+    `statut` vaut 'ok', 'pause' ou 'erreur' ; `detail` porte le message court
+    destiné à l'affichage admin. Thread-safe : APScheduler configure le job
+    avec max_instances=1, mais rien n'interdit qu'une lecture admin arrive
+    pendant l'écriture.
+    """
+    global _dernier_tick
+    with _tick_lock:
+        _dernier_tick = {"statut": statut, "detail": detail, "_monotonic": time.monotonic()}
+
+
+def dernier_tick() -> dict | None:
+    """Snapshot du dernier tick : {statut, detail, age_s}, ou None si aucun.
+
+    `age_s` est calculé ici (et non stocké) pour rester juste au moment de la
+    lecture ; l'horloge monotone ne recule jamais, max() n'est qu'un garde-fou.
+    """
+    with _tick_lock:
+        if _dernier_tick is None:
+            return None
+        snapshot = dict(_dernier_tick)
+    snapshot["age_s"] = max(0, int(time.monotonic() - snapshot.pop("_monotonic")))
+    return snapshot
+
 
 def submit_scrape(app, search_id: int, user_id: int) -> tuple[bool, str]:
     """Submit a scrape job for search_id if one isn't already running.

@@ -35,6 +35,10 @@
        class="admin-tab {% if active_tab == 'database' %}active{% endif %}"
        hx-get="{{ url_for('admin.admin_database') }}" hx-target="#admin-content"
        hx-swap="outerHTML" hx-push-url="true">Base de données</a>
+    <a href="{{ url_for('admin.admin_system') }}"
+       class="admin-tab {% if active_tab == 'systeme' %}active{% endif %}"
+       hx-get="{{ url_for('admin.admin_system') }}" hx-target="#admin-content"
+       hx-swap="outerHTML" hx-push-url="true">Système</a>
     <a href="{{ url_for('admin.admin_logs') }}"
        class="admin-tab {% if active_tab == 'logs' %}active{% endif %}"
        hx-get="{{ url_for('admin.admin_logs') }}" hx-target="#admin-content"

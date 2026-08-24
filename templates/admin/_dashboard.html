@@ -127,10 +127,10 @@
         <h2>⚡ Actions rapides</h2>
         <div class="action-bar">
             <form method="POST" action="{{ url_for('admin.admin_cleanup') }}" class="inline-form"
-                  data-confirm="Supprimer les annonces de plus de 4 jours ?"
+                  data-confirm="Supprimer les annonces de plus de {{ retention_listings_days }} jours (réglage de l'onglet Système) ?"
                   hx-post="{{ url_for('admin.admin_cleanup') }}" hx-target="#admin-content" hx-swap="outerHTML">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-primary">🧹 Nettoyer annonces (&gt;4j)</button>
+                <button type="submit" class="btn btn-primary">🧹 Nettoyer annonces (&gt;{{ retention_listings_days }} j)</button>
             </form>
             {% if stats.orphan_listings > 0 %}
             <form method="POST" action="{{ url_for('admin.admin_cleanup_orphan') }}" class="inline-form"

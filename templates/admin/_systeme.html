@@ -1,0 +1,101 @@
+{#
+  Onglet SYSTÈME du panel admin (issue #21).
+
+  Trois blocs :
+  - la santé du process (partial _sante_zone.html, pollé toutes les 30 s) ;
+  - les caches géo : compteurs par source + purge scoping registre, chaque
+    purge confirmée via la modale générique (data-confirm) et auditée ;
+  - les paramètres de scraping éditables — la pause scheduler n'est PAS ici :
+    c'est le toggle du dashboard (#17), volontairement non dupliqué.
+
+  Le partial est enveloppé dans #admin-content : cible HTMX commune (socle
+  #16), le même gabarit sert au rendu inline et aux fragments.
+#}
+
+<div id="admin-content">
+    {% include "admin/_sante_zone.html" %}
+
+    <!-- Caches géo (#21) -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h2>🌍 Caches géo par source</h2>
+        <p class="text-muted text-sm" style="margin-bottom: 1rem;">
+            Chaque source mémorise ses identifiants de lieu résolus
+            (placeId, zoneId, slug…) pour éviter de re-interroger son site.
+            « Manquées » compte les échecs MÉMORISÉS (identifiant à NULL,
+            réessayé après cooldown) ; purger force une résolution fraîche au
+            prochain scrape.
+        </p>
+        <div class="table-wrapper">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Source</th>
+                        <th>Entrées</th>
+                        <th>Résolutions manquées</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in caches_geo %}
+                    <tr>
+                        <td><strong>{{ c.source }}</strong></td>
+                        <td>{{ c.entrees }}</td>
+                        <td>
+                            {{ c.manquees_lisible }}
+                            {% if not c.suivi_echecs %}
+                            <span class="text-muted text-sm">(échecs non mémorisés)</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <form method="POST" action="{{ url_for('admin.admin_purge_geo_cache') }}" class="inline-form"
+                                  data-confirm="Purger le cache « {{ c.source }} » ? Les {{ c.entrees }} entrée(s) actuelle(s) seront supprimées — elles seront re-résolues au prochain scrape."
+                                  hx-post="{{ url_for('admin.admin_purge_geo_cache') }}" hx-target="#admin-content" hx-swap="outerHTML">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="table" value="{{ c.table }}">
+                                <button type="submit" class="btn btn-sm btn-danger">Purger</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-muted">Compteurs indisponibles.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Paramètres de scraping (#21) -->
+    <div class="card">
+        <h2>⚙️ Paramètres de scraping</h2>
+        <p class="text-muted text-sm" style="margin-bottom: 1rem;">
+            Valeurs appliquées À CHAQUE usage concerné : un changement est
+            effectif au prochain nettoyage / purge, sans redémarrage. La pause
+            globale du scheduler se pilote depuis le tableau de bord (#17).
+        </p>
+        <form method="POST" action="{{ url_for('admin.admin_save_settings') }}"
+              hx-post="{{ url_for('admin.admin_save_settings') }}" hx-target="#admin-content" hx-swap="outerHTML">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="detail-grid">
+                <div class="detail-card">
+                    <h3>🗑 Rétention des annonces</h3>
+                    <p class="text-muted text-sm">Durée de conservation des annonces purgées
+                    par l'action « Nettoyer annonces ».</p>
+                    <label for="retention_listings_days">Jours de conservation (1–365)</label>
+                    <input type="number" id="retention_listings_days" name="retention_listings_days"
+                           min="1" max="365" required value="{{ retention_listings_days }}"
+                           style="width: 110px; padding: 0.3rem 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+                </div>
+                <div class="detail-card">
+                    <h3>📋 Purge des logs d'audit</h3>
+                    <p class="text-muted text-sm">Durée de conservation des logs d'activité admin
+                    (bouton « Purger anciens logs » de l'onglet Logs).</p>
+                    <label for="purge_logs_days">Jours de conservation (1–365)</label>
+                    <input type="number" id="purge_logs_days" name="purge_logs_days"
+                           min="1" max="365" required value="{{ purge_logs_days }}"
+                           style="width: 110px; padding: 0.3rem 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">💾 Enregistrer les paramètres</button>
+        </form>
+    </div>
+</div>

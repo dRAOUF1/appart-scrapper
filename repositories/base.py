@@ -117,3 +117,30 @@ class BaseRepository:
     def _dict_cursor(self, conn):
         """Return a RealDictCursor for the connection."""
         return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+
+def statistiques_pool(database_url: str) -> dict | None:
+    """État du pool partagé de CE process — lecture pure (issue #21).
+
+    Lit les compteurs internes du ThreadedConnectionPool psycopg2 sous son
+    propre verrou, sans modifier aucun comportement d'emprunt/retour :
+      - `libres` : connexions ouvertes disponibles dans le pool ;
+      - `utilisees` : connexions actuellement empruntées.
+
+    Retourne None si le pool n'existe pas encore pour cette URL (aucun
+    emprunt depuis le démarrage) ou si la structure interne du driver a
+    changé — l'appelant affiche alors un état neutre, jamais une erreur.
+    """
+    pool = BaseRepository._pools.get(database_url)
+    if pool is None:
+        return None
+    try:
+        with pool._lock:
+            return {
+                "min": pool.minconn,
+                "max": pool.maxconn,
+                "libres": len(pool._pool),
+                "utilisees": len(pool._used),
+            }
+    except Exception:
+        return None

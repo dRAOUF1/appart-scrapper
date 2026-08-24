@@ -5,11 +5,10 @@
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
         <h2 style="margin-bottom: 0;">📋 Logs d'activité ({{ total_logs }})</h2>
         <form method="POST" action="{{ url_for('admin.admin_purge_logs') }}" class="inline-form"
-              data-confirm="Supprimer les logs de plus de X jours ?"
+              data-confirm="Supprimer les logs de plus de {{ purge_logs_days }} jours ? (réglage modifiable dans l'onglet Système)"
               hx-post="{{ url_for('admin.admin_purge_logs') }}" hx-target="#admin-content" hx-swap="outerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="number" name="days" value="30" min="1" max="365" style="width: 70px; padding: 0.3rem 0.5rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.8rem;">
-            <button type="submit" class="btn btn-sm btn-danger">Purger anciens logs</button>
+            <button type="submit" class="btn btn-sm btn-danger">Purger anciens logs (&gt;{{ purge_logs_days }} j)</button>
         </form>
     </div>
 
