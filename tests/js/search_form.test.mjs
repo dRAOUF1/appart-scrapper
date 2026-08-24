@@ -226,9 +226,10 @@ describe("autocomplete d'une ligne de localisation", () => {
 });
 
 /** Les alertes de soumission rendues sous la liste. NB : on cherche PAR
- * CLASSE et non par [data-location-submit-error] — la box créée
- * dynamiquement ne porte pas cet attribut (voir rapport : showListError la
- * recrée à chaque échec au lieu de la réutiliser, constat dispatché). */
+ * CLASSE pour rester indépendant de l'attribut ; le scénario anti-doublon
+ * vérifie en plus que la boîte créée porte bien [data-location-submit-error]
+ * (sans lui, showListError recréait une div à chaque échec et clearListError
+ * était un no-op — écart audit n°2, corrigé). */
 function findAlerts(container) {
     return container.children.filter((child) => /location-submit-error/.test(child.className));
 }
@@ -298,6 +299,38 @@ describe('garde de soumission du formulaire', () => {
         assert.match(alerts[0].textContent, /Renseignez au moins une localisation\./);
     });
 
+    it("(d-ter) réutilise la même boîte d'erreur (aucun empilement) et la masque à la soumission valide", async () => {
+        suggestionsServies = [PARIS];
+        const ctx = makeLocationForm({ rows: 1 });
+        const [line] = ctx.rows;
+        line.input.value = 'Paris tapé à la main'; // texte SANS payload
+
+        // 1er échec : la boîte est créée, identifiable par son attribut.
+        ctx.form.emit('submit');
+        let alerts = findAlerts(ctx.container);
+        assert.equal(alerts.length, 1, "exactement une boîte après le premier échec");
+        assert.notEqual(
+            alerts[0].getAttribute('data-location-submit-error'), null,
+            "la boîte porte l'attribut qui permet de la retrouver",
+        );
+
+        // 2e échec : aucune nouvelle boîte — l'existante est réutilisée.
+        ctx.form.emit('submit');
+        alerts = findAlerts(ctx.container);
+        assert.equal(alerts.length, 1, "pas de doublon au second échec");
+        assert.equal(alerts[0].hidden, false);
+
+        // La ligne est réparée : la soumission part et la boîte est masquée.
+        await chooseSuggestion(line, PARIS);
+        const event = ctx.form.emit('submit');
+        assert.equal(event.prevented, false, 'la ligne réparée laisse partir le formulaire');
+        alerts = findAlerts(ctx.container);
+        assert.equal(alerts.length, 1, "toujours une seule boîte, jamais recréée");
+        assert.equal(
+            alerts[0].hidden, true,
+            "clearListError masque la boîte existante (fini le no-op)",
+        );
+    });
 });
 
 // ---------------------------------------------------------------------------

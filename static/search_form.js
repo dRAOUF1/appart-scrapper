@@ -265,6 +265,10 @@
         if (!box) {
             box = document.createElement('div');
             box.className = 'location-submit-error';
+            // L'attribut est ce qui permet de RETROUVER la boîte au prochain
+            // passage (et à clearListError) : sans lui, chaque soumission
+            // invalide empilerait une nouvelle div.
+            box.setAttribute('data-location-submit-error', '');
             box.setAttribute('role', 'alert');
             list.parentElement.insertBefore(box, list);
         }
