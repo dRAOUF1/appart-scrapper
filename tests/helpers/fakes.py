@@ -82,6 +82,8 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.listings.get_unnotified_listings_for_search.return_value = []
     storage.listings.get_filter_options.return_value = {}
     storage.listings.save_and_link.return_value = ([], [])
+    # Suppression groupée (#20) : retour neutre « rien supprimé ».
+    storage.listings.delete_listings.return_value = 0
     storage.scrape_logs.get_scrape_logs.return_value = []
     storage.scrape_logs.count_scrape_logs.return_value = 0
     storage.scrape_logs.get_scrape_stats.return_value = {}
