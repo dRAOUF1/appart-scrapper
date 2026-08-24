@@ -201,6 +201,7 @@ def reset_global_state():
     from parsers.base import ParserRegistry
     from repositories.base import BaseRepository
     from scrape_logs import storage as log_storage
+    from services import poi_overpass
 
     parsers_snapshot = dict(ParserRegistry._parsers)
 
@@ -211,6 +212,7 @@ def reset_global_state():
     ):
         cache.clear()
     log_storage._LOCKS.clear()
+    poi_overpass.vider_cache()
 
     yield
 
@@ -221,6 +223,7 @@ def reset_global_state():
     ):
         cache.clear()
     log_storage._LOCKS.clear()
+    poi_overpass.vider_cache()
     ParserRegistry._parsers.clear()
     ParserRegistry._parsers.update(parsers_snapshot)
     BaseRepository._pools.clear()
