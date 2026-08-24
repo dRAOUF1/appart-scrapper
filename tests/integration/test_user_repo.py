@@ -125,24 +125,36 @@ class TestCounts:
         assert len(detail["recent_listings"]) == 10
         assert all(item["search_label"] == "Avec annonces" for item in detail["recent_listings"])
 
-    def test_user_stats_counts_only_today_as_new(self, storage, user, sql):
-        """`new_today` repose sur `sl.found_at >= CURRENT_DATE`, évalué par le
-        serveur : c'est sa notion de « aujourd'hui », pas celle du process
-        Python. On vieillit une ligne pour le prouver."""
+    def test_user_stats_counts_the_windows_by_database_time(self, storage, user, sql):
+        """Les fenêtres 7 j / 30 j (issue #22) sont évaluées PAR POSTGRES :
+        on vieillit une ligne hors 7 jours mais dans 30 jours pour prouver
+        que les deux compteurs divergent."""
         search = insert_search(storage, user["id"], "Stats")
         storage.listings.save_and_link(
-            [make_listing(listing_id="hier"), make_listing(listing_id="aujourdhui")], search["id"],
+            [make_listing(listing_id="vieux"), make_listing(listing_id="recent")], search["id"],
         )
         sql.exec(
-            "UPDATE search_listings SET found_at = NOW() - INTERVAL '2 days' WHERE listing_id = 'hier'",
+            "UPDATE search_listings SET found_at = NOW() - INTERVAL '10 days' WHERE listing_id = 'vieux'",
         )
 
         stats = storage.users.get_user_stats(user["id"])
 
-        assert stats == {"searches": 1, "total_listings": 2, "new_today": 1}
+        assert stats["annonces_7j"] == 1
+        assert stats["annonces_30j"] == 2
+        # insert_search crée la recherche avec la colonne legacy `source`
+        # renseignée : l'UNION jsonb/legacy la fait remonter.
+        assert stats["sources_utilisees"] == ["seloger"]
 
     def test_user_stats_of_an_unknown_user_are_all_zero(self, storage):
-        assert storage.users.get_user_stats(999_999) == {"searches": 0, "total_listings": 0, "new_today": 0}
+        stats = storage.users.get_user_stats(999_999)
+        assert stats == {
+            "recherches_total": 0,
+            "recherches_actives": 0,
+            "recherches_inactives": 0,
+            "annonces_7j": 0,
+            "annonces_30j": 0,
+            "sources_utilisees": [],
+        }
 
     def test_counts_never_leak_between_users(self, storage, user, other_user):
         mine = insert_search(storage, user["id"], "À moi")
@@ -152,8 +164,10 @@ class TestCounts:
             [make_listing(listing_id="t1"), make_listing(listing_id="t2")], theirs["id"],
         )
 
-        assert storage.users.get_user_stats(user["id"])["total_listings"] == 1
-        assert storage.users.get_user_stats(other_user["id"])["total_listings"] == 2
+        mine_stats = storage.users.get_user_stats(user["id"])
+        theirs_stats = storage.users.get_user_stats(other_user["id"])
+        assert mine_stats["annonces_30j"] == 1
+        assert theirs_stats["annonces_30j"] == 2
         assert storage.users.get_user_detail(user["id"])["listing_count"] == 1
 
 
@@ -197,14 +211,18 @@ class TestDeleteUser:
 class TestGetUserById:
     def test_the_session_resolution_reads_a_real_row(self, storage, user):
         """`get_user_by_id` est ce que les décorateurs de session appellent à
-        CHAQUE requête : il doit relire la vraie ligne, `created_at` compris."""
+        CHAQUE requête : il doit relire la vraie ligne, `created_at` compris.
+        La fixture `user` (issue de `create_user`, qui ne retourne pas la
+        date) est recoupée avec `get_user_by_username`."""
+        reference = storage.users.get_user_by_username(user["username"])
         found = storage.users.get_user_by_id(user["id"])
 
         assert found == {
             "id": user["id"],
             "username": "alice",
-            "created_at": user["created_at"],
+            "created_at": reference["created_at"],
         }
+        assert reference["created_at"] is not None
 
     def test_an_unknown_id_returns_none_instead_of_raising(self, storage):
         """Un `user_id` de session qui ne correspond plus à rien (compte

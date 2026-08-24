@@ -294,10 +294,17 @@ class ListingRepository(BaseRepository):
             # vide hérité d'une base pas encore migrée, NULL défensif — sont
             # repoussés EN DERNIER dans les deux sens par un drapeau de tri
             # (NULLS LAST seul ne suffit plus : ce ne sont pas des NULL).
+            # Au sein du compartiment dégénéré, l'ordre reste ASC dans les
+            # DEUX sens : le tri desc ne doit pas inverser un ordre sans
+            # sémantique chronologique. (Deux CASE sans ELSE : chaque clé
+            # ne porte que son compartiment, l'autre vaut NULL partout.)
             "date_desc": (
                 f"CASE WHEN l.creation_date IN ('{DATE_INCONNUE}', '') "
                 "OR l.creation_date IS NULL THEN 1 ELSE 0 END ASC, "
-                "l.creation_date DESC"
+                f"CASE WHEN l.creation_date IN ('{DATE_INCONNUE}', '') "
+                "OR l.creation_date IS NULL THEN l.creation_date END ASC, "
+                f"CASE WHEN l.creation_date IN ('{DATE_INCONNUE}', '') "
+                "OR l.creation_date IS NULL THEN NULL ELSE l.creation_date END DESC"
             ),
             "date_asc": (
                 f"CASE WHEN l.creation_date IN ('{DATE_INCONNUE}', '') "

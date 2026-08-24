@@ -1178,13 +1178,18 @@ class TestDateSortAndBounds:
     ):
         """La migration bascule les NULL vers « unknown », mais une ligne NULL
         insérée par contournement ne doit pas remonter en tête du tri pour
-        autant (le drapeau de tri couvre IS NULL)."""
+        autant (le drapeau de tri couvre IS NULL).
+
+        Ordre attendu dans le compartiment dégénéré (asc) : vide hérité,
+        sentinelle « unknown », puis NULL en tout dernier (NULLS LAST par
+        défaut de Postgres sur la clé secondaire).
+        """
         sql.exec("INSERT INTO listings (listing_id, url) VALUES ('n_5', 'https://x/n_5')")
         sql.exec("INSERT INTO search_listings (search_id, listing_id) VALUES (%s, 'n_5')", (dated_search["id"],))
         sql.exec("UPDATE listings SET creation_date = NULL WHERE listing_id = 'n_5'")
 
         listings = storage.listings.get_listings_for_search(dated_search["id"], sort="date_asc")
-        assert [li["listing_id"] for li in listings][-2:] == ["g_4", "n_5"]
+        assert [li["listing_id"] for li in listings] == ["a_1", "b_2", "g_4", "u_3", "n_5"]
 
     def test_date_min_excludes_unknown_and_includes_the_bounded_day(
         self, storage, dated_search,
