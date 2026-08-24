@@ -47,6 +47,10 @@ ADMIN_URLS = [
     pytest.param("POST", "/admin/searches/1/logs/import", id="logs-import"),
     pytest.param("POST", "/admin/scheduler/pause", id="scheduler-pause-toggle"),
     pytest.param("POST", "/admin/scrapes/bulk", id="scrapes-bulk"),
+    # Issue #21 : tab Système — purge des caches géo, paramètres éditables.
+    pytest.param("GET", "/admin/system", id="system-tab"),
+    pytest.param("POST", "/admin/system/caches-geo/purge", id="system-geo-cache-purge"),
+    pytest.param("POST", "/admin/system/settings", id="system-settings-save"),
     pytest.param("GET", "/admin/scrapes", id="scrapes-tab"),
     pytest.param("GET", "/admin/scrapes/logs/1", id="scrape-log-detail"),
     pytest.param("POST", "/admin/scrapes/1/retry", id="scrape-retry"),
@@ -84,6 +88,10 @@ def admin_views(storage):
     storage.admin.execute_query.return_value = ([], 0, None)
     storage.admin.truncate_table.return_value = True
     storage.admin.purge_old_logs.return_value = 0
+    # Onglet Système (#21) : retours neutres pour que la tab reste rendable
+    # dans les tests de privilège sans configuration explicite.
+    storage.admin.get_geo_cache_stats.return_value = []
+    storage.admin.purge_geo_cache.return_value = 0
     storage.users.get_all_users.return_value = []
     storage.users.get_user_detail.return_value = None
     storage.searches.get_all_searches.return_value = []

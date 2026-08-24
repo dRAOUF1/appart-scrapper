@@ -87,6 +87,10 @@ def fake_storage(**repo_overrides) -> MagicMock:
     storage.listings.save_and_link.return_value = ([], [])
     # Suppression groupée (#20) : retour neutre « rien supprimé ».
     storage.listings.delete_listings.return_value = 0
+    # Onglet Système (#21) : registre des caches vide et purge neutre, pour
+    # que le rendu de la tab reste possible sans configuration explicite.
+    storage.admin.get_geo_cache_stats.return_value = []
+    storage.admin.purge_geo_cache.return_value = 0
     storage.scrape_logs.get_scrape_logs.return_value = []
     storage.scrape_logs.count_scrape_logs.return_value = 0
     storage.scrape_logs.get_scrape_stats.return_value = {}
