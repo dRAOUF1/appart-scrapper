@@ -36,6 +36,7 @@ from flask import (
     render_template,
     request,
     send_file,
+    session,
     url_for,
 )
 from loguru import logger
@@ -55,7 +56,13 @@ from parsers._dates import DATE_INCONNUE
 from repositories.admin_repo import CACHES_GEO
 from repositories.base import statistiques_pool
 from repositories.listing_repo import _borne_date_comparee
-from routes.auth import require_admin
+from routes.auth import (
+    CLE_IMPERSONE_USERNAME,
+    demarrer_impersonation,
+    est_impersonation_active,
+    require_admin,
+    terminer_impersonation,
+)
 from routes.web import (
     _location_error_message,
     _parse_notify_enabled_from_form,
@@ -999,7 +1006,119 @@ def admin_user_detail(user_id):
     if not user:
         flash("Utilisateur introuvable", "error")
         return redirect(url_for("admin.admin"))
-    return _render_admin_tab("users", user_detail=user)
+    # Issue #22 : cartes statistiques du compte. Les fenêtres 7 j / 30 j et les
+    # comptes actif/inactif sortent d'UNE requête agrégée (user_repo), le
+    # dernier scrape réussi/échec d'une passe sur les logs JSONL des recherches
+    # DE CET utilisateur (scrape_log_repo). Un échec de lecture ne prive que sa
+    # carte : chaque pièce retombe sur un état neutre affiché « — ».
+    try:
+        stats_utilisateur = storage.users.get_user_stats(user_id) or {}
+    except Exception as e:
+        logger.error(f"Impossible de lire les stats de l'utilisateur {user_id}: {e}")
+        stats_utilisateur = {}
+    derniers_scrapes: dict = {}
+    try:
+        ids_recherches = [s["id"] for s in user.get("searches") or []]
+        derniers_scrapes = storage.scrape_logs.get_dernier_scrape_resultat(ids_recherches) or {}
+    except Exception as e:
+        logger.error(f"Impossible de lire les derniers scrapes de l'utilisateur {user_id}: {e}")
+    return _render_admin_tab(
+        "users",
+        user_detail=user,
+        stats_utilisateur=stats_utilisateur,
+        dernier_scrape_succes=derniers_scrapes.get("dernier_succes"),
+        dernier_scrape_echec=derniers_scrapes.get("dernier_echec"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Vue administrateur lecture seule (issue #22) — entrée et sortie.
+#
+# Choix documenté : pendant une impersonation, TOUTES les routes admin sont
+# inaccessibles SAUF la sortie (`require_admin` renvoie 403, cf. routes/auth.py).
+# Un admin qui consulte un compte ne peut rien piloter « depuis » cette vue ;
+# la seule action admin disponible est de la quitter proprement. La sortie vit
+# donc SANS @require_admin : elle n'exige que la marque d'impersonation dans la
+# session — clé qu'un tiers ne peut pas poser (l'entrée est admin-only + CSRF).
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/admin/users/<int:user_id>/impersonate", methods=["POST"])
+@require_admin
+def admin_impersonate_start(user_id):
+    """Entrée en vue administrateur : la session bascule vers la cible.
+
+    Refus explicites (message français, session INTACTE, audit non écrit) :
+    - s'impersonner soi-même ;
+    - impersonner le compte administrateur (cascade impossible autrement,
+      cf. require_admin bloqué pendant l'impersonation) ;
+    - cible inexistante.
+    """
+    storage = current_app.storage
+
+    if est_impersonation_active():
+        # Défense en profondeur : require_admin bloque déjà toute route admin
+        # en impersonation ; ce test explicite garde le refus si le décorateur
+        # évolue un jour.
+        flash("Une vue administrateur est déjà active — quittez-la d'abord", "error")
+        return redirect(url_for("web.dashboard"))
+
+    if user_id == g.user["id"]:
+        flash("Impossible de consulter votre propre compte : vous y êtes déjà", "error")
+        return redirect(url_for("admin.admin_user_detail", user_id=user_id))
+
+    cible = storage.users.get_user_by_id(user_id)
+    if not cible:
+        flash("Utilisateur introuvable", "error")
+        return redirect(url_for("admin.admin_users"))
+
+    admin_username = os.environ.get("ADMIN_USERNAME")
+    if admin_username and cible["username"] == admin_username:
+        flash("Le compte administrateur ne peut pas être ouvert en vue lecture seule", "error")
+        return redirect(url_for("admin.admin_user_detail", user_id=user_id))
+
+    demarrer_impersonation(session, g.user, cible)
+    storage.admin.log_admin_action(
+        "impersonation_started",
+        f"Vue administrateur ouverte : admin '{g.user['username']}'"
+        f" (ID:{g.user['id']}) consulte '{cible['username']}' (ID:{cible['id']})",
+        g.user["username"],
+    )
+    flash(f"Vue administrateur : vous consultez « {cible['username']} » en lecture seule", "warning")
+    return redirect(url_for("web.dashboard"))
+
+
+@admin_bp.route("/admin/impersonate/exit", methods=["POST"])
+def admin_impersonation_exit():
+    """Sortie de la vue administrateur — restauration GARANTIE de l'admin.
+
+    La session est restaurée depuis les clés figées à l'entrée : la cible a pu
+    être supprimée entre-temps sans conséquence (ses données ne sont plus
+    lues). Si l'ADMIN lui-même a disparu, aucune identité valide ne peut être
+    reconstituée : la session est purgée et on repasse par /login plutôt que de
+    laisser un cookie à moitié restauré.
+    """
+    if not est_impersonation_active():
+        if "user_id" not in session:
+            return redirect(url_for("web.login"))
+        flash("Aucune vue administrateur active", "info")
+        return redirect(url_for("web.dashboard"))
+
+    cible_consultee = session.get(CLE_IMPERSONE_USERNAME, "")
+    storage = current_app.storage
+    admin_restaure = terminer_impersonation(session, storage)
+
+    if admin_restaure is None:
+        flash("Session administrateur introuvable — reconnectez-vous", "error")
+        return redirect(url_for("web.login"))
+
+    storage.admin.log_admin_action(
+        "impersonation_ended",
+        f"Vue administrateur fermée : admin '{admin_restaure['username']}'"
+        f" (ID:{admin_restaure['id']}) quitte la consultation de '{cible_consultee}'",
+        admin_restaure["username"],
+    )
+    flash(f"Vue administrateur terminée — bon retour, {admin_restaure['username']}", "success")
+    return redirect(url_for("admin.admin"))
 
 
 @admin_bp.route("/admin/users/<int:user_id>/delete", methods=["POST"])

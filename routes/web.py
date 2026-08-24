@@ -29,7 +29,7 @@ from core.geocode import CITY
 from core.web_utils import to_int
 from parsers import list_sources, remember_manual_overrides
 from parsers._coords import coordonnee_valide
-from routes.auth import require_login
+from routes.auth import _reponse_lecture_seule, est_impersonation_active, require_login
 from services import poi_overpass
 
 web_bp = Blueprint(
@@ -37,6 +37,34 @@ web_bp = Blueprint(
     template_folder="templates",
     static_folder="static",
 )
+
+# Méthodes HTTP considérées MUTANTES par le guard d'impersonation (#22).
+# GET/HEAD/OPTIONS restent ouverts — c'est tout l'objet de la vue administrateur :
+# voir le compte comme son propriétaire. Tout le reste est une écriture.
+_METHODES_MUTANTES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@web_bp.before_request
+def refuser_mutations_en_impersonation():
+    """GUARD SERVEUR de la vue administrateur lecture seule (issue #22).
+
+    Choix d'implémentation, documenté : un hook `before_request` AU NIVEAU DU
+    BLUEPRINT plutôt qu'un décorateur à recopier sur chaque route mutante. Un
+    décorateur oublié sur UNE route est un trou silencieux ; ici, toute route
+    future ajoutée à web_bp avec une méthode de `_METHODES_MUTANTES` est
+    automatiquement bloquée en impersonation — l'oubli est structurellement
+    impossible. Le balayage dynamique des tests (test_admin_impersonate.py)
+    rejoue chaque règle mutante de l'url_map pour vérifier ce contrat.
+
+    Le contrôle est côté SERVEUR, avant même la résolution de l'utilisateur :
+    la bannière et les boutons masqués du front ne sont qu'un confort UI, jamais
+    la protection. Réponse : 403 avec page française « Lecture seule ».
+    """
+    if request.method not in _METHODES_MUTANTES:
+        return None
+    if not est_impersonation_active():
+        return None
+    return _reponse_lecture_seule()
 
 
 def _form_list(form_data: dict, key: str) -> list:

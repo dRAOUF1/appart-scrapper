@@ -130,6 +130,67 @@ class UserRepository(BaseRepository):
         finally:
             self._release_conn(conn)
 
+    def get_user_stats(self, user_id: int) -> dict:
+        """Stats détaillées d'un utilisateur pour la fiche admin (#22).
+
+        Une SEULE requête SQL agrégée (sous-requêtes scalaires, même motif que
+        get_dashboard_data) — jamais une boucle Python qui ferait un aller-
+        retour par recherche. Les fenêtres 7 j / 30 j sont évaluées PAR
+        POSTGRES (`CURRENT_TIMESTAMP - INTERVAL`) : les bornes suivent l'horloge
+        de la base, comme les autres stats existantes.
+
+        `COALESCE(is_active, TRUE)` reprend la convention du code Python
+        (`searches.get("is_active", True)`) : NULL vaut actif, et le compte des
+        inactives est son complément exact.
+
+        `sources_utilisees` est la deuxième requête du couple : les recherches
+        portent leur liste JSONB `sources`, les plus anciennes seulement la
+        colonne legacy `source` — l'UNION dédoublonne les deux vocabulaires.
+        """
+        conn = self._get_conn_for_request()
+        try:
+            with self._dict_cursor(conn) as cur:
+                cur.execute(
+                    """SELECT
+                        (SELECT COUNT(*) FROM searches WHERE user_id = %s)
+                            AS recherches_total,
+                        (SELECT COUNT(*) FROM searches
+                          WHERE user_id = %s AND COALESCE(is_active, TRUE))
+                            AS recherches_actives,
+                        (SELECT COUNT(*) FROM searches
+                          WHERE user_id = %s AND NOT COALESCE(is_active, TRUE))
+                            AS recherches_inactives,
+                        (SELECT COUNT(DISTINCT sl.listing_id)
+                          FROM search_listings sl
+                          JOIN searches s2 ON s2.id = sl.search_id
+                          WHERE s2.user_id = %s
+                            AND sl.found_at >= CURRENT_TIMESTAMP - INTERVAL '7 days')
+                            AS annonces_7j,
+                        (SELECT COUNT(DISTINCT sl.listing_id)
+                          FROM search_listings sl
+                          JOIN searches s2 ON s2.id = sl.search_id
+                          WHERE s2.user_id = %s
+                            AND sl.found_at >= CURRENT_TIMESTAMP - INTERVAL '30 days')
+                            AS annonces_30j""",
+                    (user_id, user_id, user_id, user_id, user_id),
+                )
+                stats = dict(cur.fetchone())
+
+                cur.execute(
+                    """SELECT DISTINCT src FROM (
+                           SELECT jsonb_array_elements_text(sources) AS src
+                           FROM searches WHERE user_id = %s AND sources IS NOT NULL
+                           UNION
+                           SELECT source AS src
+                           FROM searches WHERE user_id = %s AND source IS NOT NULL
+                       ) t ORDER BY src""",
+                    (user_id, user_id),
+                )
+                stats["sources_utilisees"] = [row["src"] for row in cur.fetchall()]
+                return stats
+        finally:
+            self._release_conn(conn)
+
     def delete_user(self, user_id: int) -> bool:
         conn = self._get_conn_for_request()
         try:

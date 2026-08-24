@@ -33,6 +33,9 @@ ADMIN_URLS = [
     pytest.param("GET", "/admin/users/1", id="user-detail"),
     pytest.param("POST", "/admin/users/1/delete", id="user-delete"),
     pytest.param("POST", "/admin/users/create", id="user-create"),
+    # Issue #22 : vue administrateur lecture seule — entrée et sortie.
+    pytest.param("POST", "/admin/users/1/impersonate", id="user-impersonate"),
+    pytest.param("POST", "/admin/impersonate/exit", id="impersonate-exit"),
     pytest.param("GET", "/admin/searches", id="searches"),
     pytest.param("GET", "/admin/searches/1", id="search-detail"),
     # Issue #18 : édition critères, duplication, URLs sources.
