@@ -496,13 +496,10 @@ class Storage:
                     CREATE INDEX IF NOT EXISTS idx_admin_logs_action
                         ON admin_logs(action);
                 """)
-                # Issue #26 : la lecture carte ne parcourt que les annonces
-                # géolocalisées — l'index partiel épouse exactement ce filtre.
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_listings_coords
-                        ON listings(latitude, longitude)
-                        WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
-                """)
+                # NB : idx_listings_coords (issue #26) est créé APRÈS la phase
+                # alter_listings — les colonnes latitude/longitude n'existent
+                # sur une base vierge qu'après cet ALTER (cf. régression
+                # « index créé avant sa colonne » déjà vue sur is_active).
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_map_pins_user
                         ON map_pins(user_id);
@@ -550,6 +547,16 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
                         ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
                         ADD COLUMN IF NOT EXISTS location_precision TEXT;
+                """)
+                # Issue #26 : la lecture carte ne parcourt que les annonces
+                # géolocalisées — l'index partiel épouse exactement ce filtre.
+                # Placé APRÈS l'ALTER qui crée les colonnes : sur une base
+                # vierge elles n'existent qu'à partir d'ici (régression
+                # « index créé avant sa colonne », cf. idx_searches_user_active).
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_listings_coords
+                        ON listings(latitude, longitude)
+                        WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
                 """)
                 phase_start = _log_phase("alter_listings")
 
