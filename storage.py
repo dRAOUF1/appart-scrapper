@@ -589,6 +589,68 @@ class Storage:
                         ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE,
                         ADD COLUMN IF NOT EXISTS dedup_key TEXT;
                 """)
+                # La v1 ne portait pas de discriminant immobilier assez fort.
+                # On invalide ses clés plutôt que de conserver des fusions
+                # potentiellement erronées. Les annonces revues par un scrape
+                # recevront ensuite une v2 via ListingRepository.
+                cur.execute("""
+                    UPDATE search_listings SET dedup_key = NULL
+                    WHERE dedup_key LIKE 'listing:v1:%';
+                """)
+                cur.execute("""
+                    UPDATE listings SET dedup_key = NULL
+                    WHERE dedup_key LIKE 'listing:v1:%';
+                """)
+                # Rattrape uniquement les empreintes v2 déjà calculées sur la
+                # ligne source. Le lien déjà marqué v2 gagne s'il existe ; à
+                # défaut, le plus ancien gagne. L'état notifié est fusionné par
+                # OR afin qu'une variante déjà envoyée ne soit jamais renotifiée.
+                cur.execute("""
+                    WITH candidats AS (
+                        SELECT sl.search_id, sl.listing_id, l.dedup_key,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                                   ORDER BY (sl.dedup_key = l.dedup_key) DESC NULLS LAST,
+                                            sl.found_at, sl.listing_id
+                               ) AS rang,
+                               MIN(sl.found_at) OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                               ) AS premiere_vue,
+                               BOOL_OR(sl.notified) OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                               ) AS groupe_notifie
+                        FROM search_listings AS sl
+                        JOIN listings AS l ON l.listing_id = sl.listing_id
+                        WHERE l.dedup_key LIKE 'listing:v2:%'
+                    )
+                    UPDATE search_listings AS sl
+                    SET dedup_key = candidats.dedup_key,
+                        found_at = candidats.premiere_vue,
+                        notified = candidats.groupe_notifie
+                    FROM candidats
+                    WHERE sl.search_id = candidats.search_id
+                      AND sl.listing_id = candidats.listing_id
+                      AND candidats.rang = 1;
+                """)
+                # Neutralise les doublons visibles sans toucher aux lignes
+                # `listings`, qui conservent toutes les URLs et sources.
+                cur.execute("""
+                    WITH candidats AS (
+                        SELECT sl.search_id, sl.listing_id, l.dedup_key,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                                   ORDER BY (sl.dedup_key = l.dedup_key) DESC NULLS LAST,
+                                            sl.found_at, sl.listing_id
+                               ) AS rang
+                        FROM search_listings AS sl
+                        JOIN listings AS l ON l.listing_id = sl.listing_id
+                        WHERE l.dedup_key LIKE 'listing:v2:%'
+                    )
+                    DELETE FROM search_listings AS sl USING candidats
+                    WHERE sl.search_id = candidats.search_id
+                      AND sl.listing_id = candidats.listing_id
+                      AND candidats.rang > 1;
+                """)
                 # Une clé NULL signifie « preuves insuffisantes » : l'annonce
                 # reste alors distincte. La contrainte partielle ne rapproche
                 # que les empreintes fortes, et seulement au sein d'une même
