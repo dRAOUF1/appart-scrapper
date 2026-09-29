@@ -190,6 +190,7 @@ class TestListSources:
             "description": "Une description",
             "supported_transactions": ["rent", "buy"],
             "supported_property_types": ["apartment", "house", "parking", "land"],
+            "supports_bedrooms": False,
             "manual_override_label": "",
             "manual_override_help": "",
             "url_note": "",
@@ -411,6 +412,14 @@ class TestUnsupportedCriteria:
         assert parser.unsupported_criteria(make_criteria(
             transaction="buy", propertyTypes=["apartment", "house", "parking", "land"]
         )) == []
+
+    def test_bedrooms_are_rejected_by_default_and_accepted_when_declared(self):
+        assert make_parser_class("sans_chambres")().unsupported_criteria({"bedrooms": [2]}) == [
+            "le nombre de chambres"
+        ]
+        assert make_parser_class("avec_chambres", SUPPORTS_BEDROOMS=True)().unsupported_criteria(
+            {"bedrooms": [2]}
+        ) == []
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,10 @@
         <div class="stat-label">Erreurs</div>
     </div>
     <div class="stat-card">
+        <div class="stat-value" style="color: var(--orange);">{{ stats.partial_count or 0 }}</div>
+        <div class="stat-label">Partiels</div>
+    </div>
+    <div class="stat-card">
         <div class="stat-value" style="color: var(--text-secondary);">{{ stats.empty_count or 0 }}</div>
         <div class="stat-label">Aucun résultat</div>
     </div>
@@ -69,9 +73,10 @@
 {% if stats.last_scrape %}
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <span class="badge {% if stats.last_scrape.status == 'success' %}badge-active{% elif stats.last_scrape.status == 'empty' %}badge-warning{% else %}badge-inactive{% endif %}">
+        <span class="badge {% if stats.last_scrape.status == 'success' %}badge-active{% elif stats.last_scrape.status in ('empty', 'partial') %}badge-warning{% else %}badge-inactive{% endif %}">
             {% if stats.last_scrape.status == 'success' %}✅
             {% elif stats.last_scrape.status == 'empty' %}ℹ️
+            {% elif stats.last_scrape.status == 'partial' %}⚠️
             {% else %}❌{% endif %}
             {{ stats.last_scrape.status }}
         </span>
@@ -97,6 +102,8 @@
            class="btn btn-sm {% if status_filter == 'error' %}btn-danger{% else %}btn-ghost{% endif %}">❌ Erreurs</a>
         <a href="{{ url_for('web.search_logs', search_id=search.id, status='empty') }}"
            class="btn btn-sm {% if status_filter == 'empty' %}btn-primary{% else %}btn-ghost{% endif %}">ℹ️ Aucun résultat</a>
+        <a href="{{ url_for('web.search_logs', search_id=search.id, status='partial') }}"
+           class="btn btn-sm {% if status_filter == 'partial' %}btn-primary{% else %}btn-ghost{% endif %}">⚠️ Partiels</a>
     </div>
 </div>
 
@@ -174,8 +181,11 @@
     <div class="empty-icon">📭</div>
     <h3>Aucun log</h3>
     <p>Les logs de scraping apparaîtront ici après le premier scrape.</p>
-    <a href="{{ url_for('web.scrape_search_web', search_id=search.id) }}" class="btn btn-primary"
-       onclick="return confirm('Lancer le scraping maintenant ?')">🔄 Lancer un scrape</a>
+    <form method="POST" action="{{ url_for('web.scrape_search_web', search_id=search.id) }}"
+          onsubmit="return confirm('Lancer le scraping maintenant ?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">🔄 Lancer un scrape</button>
+    </form>
 </div>
 {% endif %}
 

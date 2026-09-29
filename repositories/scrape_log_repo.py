@@ -70,6 +70,10 @@ class ScrapeLogRepository(BaseRepository):
         total = len(logs)
         success_count = sum(1 for log in logs if log.get("status") == "success")
         error_count = sum(1 for log in logs if log.get("status") == "error")
+        # "partial" = au moins une source a réussi et au moins une autre a
+        # échoué. Ce n'est ni un succès complet, ni une erreur totale : garder
+        # un compteur autonome évite de fausser les agrégats historiques.
+        partial_count = sum(1 for log in logs if log.get("status") == "partial")
         # "empty" = ran fine, legitimately found nothing (e.g. no listing
         # matches the requested location/filters right now) — distinct from
         # "error" (something actually broke) so it isn't shown/counted as a
@@ -90,6 +94,7 @@ class ScrapeLogRepository(BaseRepository):
             "total": total,
             "success_count": success_count,
             "error_count": error_count,
+            "partial_count": partial_count,
             "empty_count": empty_count,
             "avg_listings": avg_listings,
             "avg_new": avg_new,
@@ -262,12 +267,15 @@ class ScrapeLogRepository(BaseRepository):
         - taux_succes_24h / taux_succes_7j : part des scrapes SANS ERREUR sur
           la fenêtre, en %. Un scrape « empty » n'est PAS un échec (il a tourné
           et n'a légitimement rien trouvé — cf. get_scrape_stats) ; il compte
-          donc au numérateur. `None` quand la fenêtre ne contient aucun scrape :
-          « pas de donnée » n'est pas « 0 % ».
+          donc au numérateur. Un scrape « partial » reste au dénominateur mais
+          pas au numérateur : une ou plusieurs sources ont échoué. `None` quand
+          la fenêtre ne contient aucun scrape : « pas de donnée » n'est pas
+          « 0 % ».
         - duree_moyenne_7j : moyenne des duration_sec sur 7 jours (tous statuts).
-        - top_erreurs : messages d'échec regroupés après troncature, avec leur
-          nombre d'occurrences et la dernière survenue — triés par fréquence
-          puis récence, plafonnés aux 5 premiers.
+        - top_erreurs : messages d'échec total, plus erreurs par source des
+          scrapes partiels, regroupés après troncature avec leur nombre
+          d'occurrences et la dernière survenue — triés par fréquence puis
+          récence, plafonnés aux 5 premiers.
 
         Les timestamps stockés sont naïfs UTC (héritage create_scrape_log) : la
         référence « maintenant » est construite tz-aware puis rendue naïve UTC
@@ -298,8 +306,21 @@ class ScrapeLogRepository(BaseRepository):
                 nb_24h += 1
                 if statut in ("success", "empty"):
                     nb_succes_24h += 1
+            messages_erreur = []
             if statut == "error":
-                message = str(log.get("error_message") or "Erreur inconnue")[:_TAILLE_MESSAGE_ERREUR]
+                messages_erreur.append(log.get("error_message") or "Erreur inconnue")
+            elif statut == "partial":
+                details_log = log.get("details") or {}
+                par_source = details_log.get("per_source") or {} if isinstance(details_log, dict) else {}
+                if not isinstance(par_source, dict):
+                    par_source = {}
+                messages_erreur.extend(
+                    details_source.get("error")
+                    for details_source in par_source.values()
+                    if isinstance(details_source, dict) and details_source.get("error")
+                )
+            for erreur in messages_erreur:
+                message = str(erreur)[:_TAILLE_MESSAGE_ERREUR]
                 groupe = erreurs.setdefault(message, {"occurrences": 0, "derniere": debut})
                 groupe["occurrences"] += 1
                 groupe["derniere"] = max(groupe["derniere"], debut)

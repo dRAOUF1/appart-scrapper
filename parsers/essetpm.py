@@ -356,6 +356,7 @@ class EssetPmParser(BaseParser):
     JSON publique (bo-back.esset-pm.com)."""
 
     SOURCE_ID = "essetpm"
+    SUPPORTS_BEDROOMS = True
     SOURCE_NAME = "Esset Property Management"
     SOURCE_DESCRIPTION = (
         "locations.esset-pm.com — lots gérés en location, API JSON publique "

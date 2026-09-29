@@ -171,6 +171,7 @@ class BienIciParser(BaseParser):
     """Scrape bienici.com via son API JSON publique (realEstateAds.json)."""
 
     SOURCE_ID = "bienici"
+    SUPPORTS_BEDROOMS = True
     SOURCE_NAME = "Bien'ici"
     SOURCE_DESCRIPTION = "Bienici.com — API JSON publique"
 

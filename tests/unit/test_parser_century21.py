@@ -860,7 +860,7 @@ class TestBuildSearchUrls:
             f"{BASE_URL}/annonces/f/achat-appartement-maison/v-montrouge/",
         ]
 
-    def test_two_resolved_cities_produce_one_url_with_fused_city_segments(self):
+    def test_two_resolved_cities_produce_independent_page_series(self):
         """🔒 Issue #7 : deux villes résolues automatiquement -> UNE SEULE URL
         portant les deux périmètres fusionnés en un segment homogène. Avant
         la fix, chaque ville partait dans SA propre série de pages."""
@@ -876,8 +876,10 @@ class TestBuildSearchUrls:
         with slug_resolver(**{"92120": "v-montrouge", "44000": "v-nantes"}):
             urls = parser.build_search_urls(criteria)
 
-        # Un seul type demandé mais une fusion : la forme « f » s'impose.
-        assert urls == [f"{BASE_URL}/annonces/f/achat-appartement/v-montrouge-nantes/"]
+        assert urls == [
+            f"{BASE_URL}/annonces/achat-appartement/v-montrouge/",
+            f"{BASE_URL}/annonces/achat-appartement/v-nantes/",
+        ]
 
     def test_cities_and_departments_share_one_url_in_separate_level_segments(self):
         """🔒 Villes ET département demandés ensemble -> toujours UNE seule
@@ -895,7 +897,10 @@ class TestBuildSearchUrls:
         with slug_resolver(**{"92120": "v-montrouge", "33": "d-33_gironde"}):
             urls = parser.build_search_urls(criteria)
 
-        assert urls == [f"{BASE_URL}/annonces/f/location/v-montrouge/d-33_gironde/"]
+        assert urls == [
+            f"{BASE_URL}/annonces/f/location/v-montrouge/",
+            f"{BASE_URL}/annonces/f/location/d-33_gironde/",
+        ]
 
     def test_a_region_alone_keeps_its_single_fused_url(self):
         """Une région seule : UNE URL portant tous ses départements — le
@@ -931,7 +936,10 @@ class TestBuildSearchUrls:
             urls = parser.build_search_urls(criteria)
 
         expected_dept = "d-75_nom-" + "-".join(f"{c}_nom" for c in IDF["departments"][1:])
-        assert urls == [f"{BASE_URL}/annonces/f/location/v-montrouge/{expected_dept}/"]
+        assert urls == [
+            f"{BASE_URL}/annonces/f/location/v-montrouge/",
+            f"{BASE_URL}/annonces/f/location/{expected_dept}/",
+        ]
 
     def test_a_single_auto_resolved_location_is_byte_for_byte_unregressed(self):
         """Non-régression mono-localisation (auto-résolue) : même URL qu'avant
@@ -966,7 +974,7 @@ class TestBuildSearchUrls:
             shown = parser.build_search_url(criteria)
             urls = parser.build_search_urls(criteria)
 
-        assert len(urls) == 1
+        assert len(urls) == 2
         assert shown == urls[0]
 
     @pytest.mark.parametrize(
@@ -1053,9 +1061,7 @@ class TestSlugs:
         ):
             slugs = parser._slugs({"locations": [GIRONDE, PARIS_1ER]}, [GIRONDE, PARIS_1ER])
 
-        assert slugs == [
-            ([GIRONDE, PARIS_1ER], "v-paris/d-33_slug"),
-        ]
+        assert slugs == [([PARIS_1ER], "v-paris"), ([GIRONDE], "d-33_slug")]
         assert not any(level == "WARNING" for level, _ in logged)
 
     def test_every_resolved_location_joins_the_same_fused_entry(self, logged):
@@ -1071,7 +1077,9 @@ class TestSlugs:
             slugs = parser._slugs({"locations": locations}, locations)
 
         assert slugs == [
-            ([PARIS_1ER, MONTROUGE, NANTES], "v-montrouge-nantes/cp-75001"),
+            ([MONTROUGE], "v-montrouge"),
+            ([NANTES], "v-nantes"),
+            ([PARIS_1ER], "cp-75001"),
         ]
         assert not any(level == "WARNING" for level, _ in logged)
 
@@ -1469,6 +1477,7 @@ class TestPagination:
         elles ne passent le filtre que si le scope couvre bien les deux."""
         session = FakeSession([
             page(card("111", zip_code="92120")),
+            EMPTY_PAGE_HTML,
             page(card("222", zip_code="44000")),
             page(card("222", zip_code="44000")),
         ])
@@ -1484,8 +1493,9 @@ class TestPagination:
         with slug_resolver(**{"92120": "v-montrouge", "44000": "v-nantes"}):
             listings = run_scrape(criteria, session, parser)
 
-        base = f"{BASE_URL}/annonces/f/achat-appartement/v-montrouge-nantes/"
-        assert session.urls == [base, f"{base}page-2/", f"{base}page-3/"]
+        montrouge = f"{BASE_URL}/annonces/achat-appartement/v-montrouge/"
+        nantes = f"{BASE_URL}/annonces/achat-appartement/v-nantes/"
+        assert session.urls == [montrouge, f"{montrouge}page-2/", nantes, f"{nantes}page-2/"]
         assert len(listings) == 2
 
 

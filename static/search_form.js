@@ -287,7 +287,7 @@
      * après le premier scrape.
      */
     function setupCapabilityWarning() {
-        const warning = document.querySelector('[data-property-type-warning]');
+        const warning = document.querySelector('[data-capability-warning]');
         const capabilities = window.SOURCE_CAPABILITIES;
         if (!warning || !Array.isArray(capabilities)) return;
 
@@ -299,11 +299,17 @@
             const checkedTypes = Array.from(
                 document.querySelectorAll('[data-property-type]:checked')
             ).map(function (cb) { return cb.value; });
+            const transaction = document.querySelector('[name="transaction"]');
+            const bedrooms = document.querySelectorAll('[data-bedroom]:checked');
 
             const problems = [];
             capabilities
                 .filter(function (src) { return checkedSources.indexOf(src.id) !== -1; })
                 .forEach(function (src) {
+                    const transactions = src.supported_transactions || [];
+                    if (transaction && transactions.indexOf(transaction.value) === -1) {
+                        problems.push('⛔ ' + src.name + ' ne prend pas en charge cette transaction');
+                    }
                     const supported = src.supported_property_types || [];
                     const missing = checkedTypes.filter(function (t) {
                         return supported.indexOf(t) === -1;
@@ -314,21 +320,48 @@
                         });
                         problems.push('⚠️ ' + src.name + ' ne référence pas : ' + labels.join(', '));
                     }
+                    if (bedrooms.length && src.supports_bedrooms === false) {
+                        problems.push('⛔ ' + src.name + ' ne filtre pas le nombre de chambres');
+                    }
                 });
 
             warning.textContent = problems.join(' · ');
             warning.hidden = problems.length === 0;
+            const message = problems.length ? 'Certains critères ne sont pas pris en charge par les sources choisies.' : '';
+            if (transaction) transaction.setCustomValidity(message);
         }
 
-        document.querySelectorAll('.source-checkbox, [data-property-type]').forEach(function (cb) {
+        document.querySelectorAll('.source-checkbox, [data-property-type], [data-bedroom], [name="transaction"]').forEach(function (cb) {
             cb.addEventListener('change', sync);
         });
         sync();
     }
 
+    function setupBoundValidation() {
+        document.querySelectorAll('form').forEach(function (form) {
+            ['price', 'surface'].forEach(function (kind) {
+                const minimum = form.querySelector('[data-bound-min="' + kind + '"]');
+                const maximum = form.querySelector('[data-bound-max="' + kind + '"]');
+                if (!minimum || !maximum) return;
+
+                function sync() {
+                    maximum.setCustomValidity('');
+                    if (minimum.value !== '' && maximum.value !== ''
+                        && Number(minimum.value) > Number(maximum.value)) {
+                        maximum.setCustomValidity('La borne maximale doit être supérieure ou égale à la borne minimale.');
+                    }
+                }
+                minimum.addEventListener('input', sync);
+                maximum.addEventListener('input', sync);
+                sync();
+            });
+        });
+    }
+
     document.querySelectorAll('[data-location-list]').forEach(setupLocationList);
     document.querySelectorAll('[data-location-row]').forEach(attachAutocomplete);
     setupCapabilityWarning();
+    setupBoundValidation();
 
     /* --- Bloc Transports (issue #28) -------------------------------------
      * Une sélection de transport = une ligne ferrée francilienne, des

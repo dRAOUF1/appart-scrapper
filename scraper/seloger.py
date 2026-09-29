@@ -35,6 +35,14 @@ MOBILE_UA = (
     " (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 
+# Littéral JavaScript passé à JSON.parse. Les alternatives sont
+# mutuellement exclusives, contrairement à `(.+?)` qui tronque le blob
+# lorsqu'une description contient `\")` (incident vérifié le 2026-08-09).
+_FETCHER_RE = re.compile(
+    r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("((?:\\.|[^"\\])*)"\)',
+    re.DOTALL,
+)
+
 _PROXY_CACHE: list[str] = []
 _PROXY_CACHE_TIME: float = 0
 
@@ -332,6 +340,23 @@ def _agency_name(item: dict) -> str:
     return ""
 
 
+def _decode_fetcher_blob(html: str) -> dict:
+    """Extrait le blob en respectant ses échappements JSON et Unicode."""
+    match = _FETCHER_RE.search(html)
+    if not match:
+        raise ValueError("blob __UFRN_FETCHER__ absent ou format HTML inattendu")
+
+    try:
+        decoded = json.loads(f'"{match.group(1)}"')
+        decoded = decoded.encode("utf-16", "surrogatepass").decode("utf-16")
+        outer = json.loads(decoded)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("blob __UFRN_FETCHER__ illisible") from exc
+    if not isinstance(outer, dict):
+        raise ValueError("schéma __UFRN_FETCHER__ inattendu")
+    return outer
+
+
 def get_detailed_listings(criteria: dict, order: str | None = None, max_retries: int = 3) -> list[dict]:
     """Récupère les données détaillées depuis le HTML compressé.
 
@@ -341,6 +366,8 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
     """
     url = build_search_url(criteria, order)
     logger.debug(f"  URL de recherche: {url[:120]}...")
+    blocked = False
+    last_data_error: Exception | None = None
 
     for attempt in range(max_retries):
         resp = None
@@ -365,6 +392,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
 
             if resp.status_code == 403 or "__UFRN_FETCHER__" not in resp.text:
                 # IP bloquée — essayer avec proxies
+                blocked = True
                 logger.warning("    IP bloquée ou pas de données, tentative avec proxies gratuits...")
                 resp = _try_with_proxies(url)
                 if resp is None:
@@ -381,20 +409,11 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 logger.warning("    Pas de données trouvées dans le HTML")
                 continue
 
-            match = re.search(
-                r'window\["__UFRN_FETCHER__"\]\s*=\s*JSON\.parse\("(.+?)"\)',
-                resp.text, re.DOTALL,
-            )
-            if not match:
-                logger.warning("    Format HTML inattendu")
-                continue
-
-            raw = match.group(1)
-            # Fix double-encoded UTF-8 (unicode_escape produces mojibake,
-            # so encode back to latin-1 and decode as proper UTF-8)
-            decoded = raw.encode("utf-8").decode("unicode_escape").encode("latin-1").decode("utf-8")
-            outer = json.loads(decoded)
-            raw_data = outer["data"]["classified-serp-init-data"]
+            outer = _decode_fetcher_blob(resp.text)
+            try:
+                raw_data = outer["data"]["classified-serp-init-data"]
+            except (KeyError, TypeError) as exc:
+                raise ValueError("schéma __UFRN_FETCHER__ inattendu") from exc
 
             # SeLoger a changé le format : maintenant un dict JSON direct,
             # mais on garde le fallback LZ-string au cas où.
@@ -402,8 +421,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                 lzs = lzstring.LZString()
                 decompressed = lzs.decompressFromBase64(raw_data)
                 if not decompressed:
-                    logger.warning("    Échec décodage LZ-string")
-                    continue
+                    raise ValueError("blob LZ-string vide ou illisible")
                 data = json.loads(decompressed)
             else:
                 data = raw_data
@@ -453,6 +471,7 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
                     "photos": [
                         {"url": img["url"], "alt": img.get("alt", ""), "key": img.get("key", "")}
                         for img in gallery.get("images", [])
+                        if isinstance(img, dict) and img.get("url")
                     ],
                     "agency": _agency_name(item),
                     "isPrivate": provider.get("isPrivateOwner", False),
@@ -473,14 +492,19 @@ def get_detailed_listings(criteria: dict, order: str | None = None, max_retries:
         except requests.exceptions.RequestException as e:
             logger.error(f"    Erreur réseau: {e}")
             continue
-        except Exception as e:
-            logger.error(f"    Erreur: {e}")
+        except (KeyError, TypeError, UnicodeError, json.JSONDecodeError, ValueError) as e:
+            last_data_error = e
+            logger.error(f"    Données SeLoger invalides: {e}")
             continue
 
-    raise ValueError(
-        "Toutes les tentatives ont échoué. Ton IP est bloquée par DataDome."
-        " Attends 15-30 minutes et réessaie."
-    )
+    if last_data_error is not None:
+        raise ValueError(f"Toutes les tentatives ont échoué : réponse SeLoger invalide ({last_data_error})")
+    if blocked:
+        raise ValueError(
+            "Toutes les tentatives ont échoué. Blocage DataDome probable ; "
+            "attends 15-30 minutes et réessaie."
+        )
+    raise ValueError("Toutes les tentatives ont échoué à cause d'une erreur réseau SeLoger")
 
 
 def scrape(criteria: dict) -> list[dict]:

@@ -598,6 +598,24 @@ class TestDictToListingFlatFormat:
         assert listing.price == "16 505 €"
         assert listing.price_value == 16505.0
 
+    def test_direct_coordinates_are_exact(self):
+        listing = _dict_to_listing(flat_marker(latitude="43.6045", longitude="1.4440"))
+
+        assert (listing.latitude, listing.longitude) == (43.6045, 1.444)
+        assert listing.location_precision == "exacte"
+
+    def test_alentourweb_coordinates_are_approximate(self):
+        listing = _dict_to_listing(flat_marker(informations=[{"field": "alentourweb", "value": "43.60,1.44"}]))
+
+        assert (listing.latitude, listing.longitude) == (43.6, 1.44)
+        assert listing.location_precision == "approximative"
+
+    def test_serialized_alentourweb_coordinates_are_supported(self):
+        informations = json.dumps([{"field": "alentourweb", "value": "43.61,1.45"}])
+        listing = _dict_to_listing(flat_marker(informations=informations))
+
+        assert (listing.latitude, listing.longitude) == (43.61, 1.45)
+
 
 class TestDictToListingEdgeCases:
     def test_a_missing_id_yields_no_url_at_all(self):

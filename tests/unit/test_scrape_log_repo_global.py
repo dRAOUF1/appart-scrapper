@@ -173,6 +173,12 @@ class TestGetGlobalScrapeStats:
 
         assert stats["taux_succes_24h"] == 100.0
 
+    def test_un_scrape_partial_reste_un_echec_dans_le_taux(self, log_dirs):
+        ecrire_entree(1, status="success", started_at=FROZEN - timedelta(hours=1))
+        ecrire_entree(1, status="partial", started_at=FROZEN - timedelta(hours=2))
+
+        assert REPO.get_global_scrape_stats()["taux_succes_24h"] == 50.0
+
     def test_les_fenetres_24h_et_7j_sont_distinctes(self, log_dirs):
         ecrire_entree(1, status="error", started_at=FROZEN - timedelta(days=6))   # hors 24h
         ecrire_entree(1, status="error", started_at=FROZEN - timedelta(hours=10)) # dans 24h
@@ -209,6 +215,25 @@ class TestGetGlobalScrapeStats:
         assert premier["message"].startswith("TimeoutError")
         assert len(premier["message"]) <= 120
         assert stats["top_erreurs"][1]["message"] == "HTTP 403 anti-bot"
+
+    def test_le_top_erreurs_inclut_chaque_erreur_source_d_un_scrape_partiel(self, log_dirs):
+        ecrire_entree(
+            1,
+            status="partial",
+            error_message="résumé agrégé à ignorer",
+            details={
+                "per_source": {
+                    "seloger": {"error": "DataDome"},
+                    "bienici": {"error": "HTTP 503"},
+                    "laforet": {"found": 4},
+                },
+            },
+            started_at=FROZEN - timedelta(hours=1),
+        )
+
+        stats = REPO.get_global_scrape_stats()
+
+        assert {entry["message"] for entry in stats["top_erreurs"]} == {"DataDome", "HTTP 503"}
 
     def test_a_occurrence_egale_l_erreur_la_plus_recente_passe_devant(self, log_dirs):
         vieille = ecrire_entree(1, status="error", error_message="A", started_at=FROZEN - timedelta(days=2))

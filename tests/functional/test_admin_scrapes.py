@@ -496,7 +496,7 @@ class TestBlocStatsRecherche:
 
     def test_la_fiche_detail_expose_les_stats_de_scrapes(self, admin_client, storage, fiche):
         storage.scrape_logs.get_scrape_stats.return_value = {
-            "total": 12, "success_count": 10, "error_count": 1, "empty_count": 1,
+            "total": 13, "success_count": 10, "error_count": 1, "partial_count": 1, "empty_count": 1,
             "avg_listings": 8.5, "avg_new": 1.5, "avg_duration": 31.2,
             "last_scrape": {"status": "success",
                             "started_at": datetime(2026, 7, 26, 9, 0),
@@ -507,8 +507,26 @@ class TestBlocStatsRecherche:
 
         storage.scrape_logs.get_scrape_stats.assert_called_once_with(1)
         assert "Exécutés" in page
-        assert "10 succès · 1 vides · 1 échecs" in page
+        assert "10 succès · 1 vides · 1 partiels · 1 échecs" in page
         assert "31.2s" in page
+
+    def test_un_log_partiel_detaille_le_resultat_de_chaque_source(self, admin_client, storage):
+        storage.scrape_logs.get_scrape_log_raw.return_value = {
+            **make_scrape_log_entry(id=12, status="partial", error_message="seloger: blocage"),
+            "raw_logs": "",
+            "details": {
+                "per_source": {
+                    "seloger": {"error": "blocage anti-bot"},
+                    "laforet": {"found": 3},
+                },
+            },
+        }
+
+        page = admin_client.get("/admin/scrapes/logs/12").data.decode()
+
+        assert "Résultat par source" in page
+        assert "blocage anti-bot" in page
+        assert "3 annonce(s) trouvée(s)" in page
 
     def test_une_recherche_jamais_scrapee_n_affiche_pas_de_bloc_vide(self, storage, fiche):
         storage.scrape_logs.get_scrape_stats.return_value = {"total": 0}

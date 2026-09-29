@@ -63,6 +63,31 @@ beforeEach(() => {
     requetesFetch = [];
 });
 
+describe('validation des bornes min/max', () => {
+    it('bloque une borne maximale inférieure puis efface le message après correction', () => {
+        const freshDocument = createFakeDocument();
+        const form = new FakeElement('form');
+        const minimum = new FakeElement('input', { attributes: { 'data-bound-min': 'price' } });
+        const maximum = new FakeElement('input', { attributes: { 'data-bound-max': 'price' } });
+        minimum.value = '1200';
+        maximum.value = '800';
+        form.appendChild(minimum);
+        form.appendChild(maximum);
+        freshDocument.body.appendChild(form);
+
+        globalThis.document = freshDocument;
+        delete require.cache[require.resolve('../../static/search_form.js')];
+        require('../../static/search_form.js');
+
+        assert.match(maximum.validationMessage, /supérieure ou égale/);
+        maximum.value = '1500';
+        maximum.emit('input');
+        assert.equal(maximum.validationMessage, '');
+
+        globalThis.document = createFakeDocument();
+    });
+});
+
 function makeLocationRow() {
     const input = new FakeElement('input', { attributes: { 'data-location-input': '' } });
     const payload = new FakeElement('input', { attributes: { 'data-location-payload': '' } });

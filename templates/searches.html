@@ -2,6 +2,7 @@
 {% block title %}Recherches — Appart Scraper{% endblock %}
 
 {% block content %}
+{% set f = form_values %}
 <div class="page-header">
     <h1>Mes Recherches</h1>
     <p class="text-muted">Renseigne une ville et les sources à surveiller — le serveur scrape automatiquement.</p>
@@ -19,11 +20,11 @@
             <div class="form-grid">
                 <div class="form-group">
                     <label for="label">Label</label>
-                    <input type="text" id="label" name="label" placeholder="Ex: Paris 13e T2" required>
+                    <input type="text" id="label" name="label" value="{{ (f.get('label', [''])[0]) if f else '' }}" placeholder="Ex: Paris 13e T2" required>
                 </div>
                 <div class="form-group">
                     <label for="ntfy_topic">Topic ntfy</label>
-                    <input type="text" id="ntfy_topic" name="ntfy_topic" placeholder="Ex: mes-alertes-appart" required>
+                    <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ (f.get('ntfy_topic', [''])[0]) if f else '' }}" placeholder="Ex: mes-alertes-appart" required>
                     <small class="form-help">Notifications sur <code>ntfy.sh/votre-topic</code></small>
                 </div>
                 <div class="form-group">
@@ -34,7 +35,7 @@
                     <label>Notifications ntfy</label>
                     <div class="pill-toggle-group">
                         <label class="pill-toggle">
-                            <input type="checkbox" id="notify_enabled" name="notify_enabled" checked>
+                            <input type="checkbox" id="notify_enabled" name="notify_enabled" {% if not f or f.get('notify_enabled') %}checked{% endif %}>
                             <span class="pill-toggle-label">🔔 Notifier les nouvelles annonces</span>
                         </label>
                     </div>
@@ -42,23 +43,40 @@
                 </div>
                 <div class="form-group">
                     <label for="scrape_interval">Intervalle (min)</label>
-                    <input type="number" id="scrape_interval" name="scrape_interval" value="5" min="1" max="1440">
+                    <input type="number" id="scrape_interval" name="scrape_interval" value="{{ f.get('scrape_interval', ['5'])[0] if f else '5' }}" min="1" max="1440" required>
                 </div>
             </div>
         </div>
 
+        <div class="form-section" data-transit-block>
+            <div class="form-section-label">🚇 Transports</div>
+            <input type="hidden" name="transit_payload"
+                value="{{ f.get('transit_payload', [''])[0] if f else '' }}" data-transit-payload>
+            <div class="transit-list" data-transit-list></div>
+            <button type="button" class="btn btn-ghost btn-sm" data-add-transit>+ Ajouter une ligne</button>
+            <div class="transit-error" data-transit-error role="alert" hidden></div>
+            <small class="form-help" style="display: block; margin-top: 0.5rem;">
+                Choisis une ligne ferrée francilienne, éventuellement certaines stations, puis un rayon.
+                Une annonce remonte si elle est dans tes localisations ou près des stations choisies.
+            </small>
+        </div>
+
         <div class="form-section">
             <div class="form-section-label">📍 Localisation</div>
+            {% set _location_cities = f.get('location_city', []) if f else [] %}
+            {% set _location_payloads = f.get('location_payload', []) if f else [] %}
             <div class="location-list" data-location-list>
+                {% for city in _location_cities or [''] %}
                 <div class="location-row" data-location-row>
                     <div class="location-autocomplete">
-                        <input type="text" name="location_city" placeholder="Ville, département ou région"
+                        <input type="text" name="location_city" value="{{ city }}" placeholder="Ville, département ou région"
                             aria-label="Localisation" autocomplete="off" data-location-input>
                         <ul class="location-suggestions" data-location-suggestions hidden></ul>
                     </div>
-                    <input type="hidden" name="location_payload" value="" data-location-payload>
+                    <input type="hidden" name="location_payload" value="{{ _location_payloads[loop.index0] if loop.index0 < _location_payloads|length else '' }}" data-location-payload>
                     <button type="button" class="location-remove-btn" aria-label="Retirer cette localisation">✕</button>
                 </div>
+                {% endfor %}
             </div>
             <button type="button" class="btn btn-ghost btn-sm add-location-btn" data-add-location>+ Ajouter une localisation</button>
             <small class="form-help" style="display: block; margin-top: 0.5rem;">
@@ -75,7 +93,7 @@
                 {% for src in sources %}
                 <label class="source-card">
                     <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
-                        {% if src.id == 'seloger' %}checked{% endif %}>
+                        {% if (f and src.id in f.get('sources', [])) or (not f and loop.first) %}checked{% endif %}>
                     <span class="source-card-body">
                         <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
                         <span class="source-card-name">{{ src.name }}</span>
@@ -95,25 +113,26 @@
             <div class="form-grid">
                 <div class="form-group">
                     <label for="price_min">Prix min (€)</label>
-                    <input type="number" id="price_min" name="price_min" placeholder="600">
+                    <input type="number" id="price_min" name="price_min" value="{{ f.get('price_min', [''])[0] if f else '' }}" min="0" placeholder="600" data-bound-min="price">
                 </div>
                 <div class="form-group">
                     <label for="price_max">Prix max (€)</label>
-                    <input type="number" id="price_max" name="price_max" placeholder="850">
+                    <input type="number" id="price_max" name="price_max" value="{{ f.get('price_max', [''])[0] if f else '' }}" min="0" placeholder="850" data-bound-max="price">
                 </div>
                 <div class="form-group">
                     <label for="surface_min">Surface min (m²)</label>
-                    <input type="number" id="surface_min" name="surface_min" placeholder="19">
+                    <input type="number" id="surface_min" name="surface_min" value="{{ f.get('surface_min', [''])[0] if f else '' }}" min="0" placeholder="19" data-bound-min="surface">
                 </div>
                 <div class="form-group">
                     <label for="surface_max">Surface max (m²)</label>
-                    <input type="number" id="surface_max" name="surface_max" placeholder="80">
+                    <input type="number" id="surface_max" name="surface_max" value="{{ f.get('surface_max', [''])[0] if f else '' }}" min="0" placeholder="80" data-bound-max="surface">
                 </div>
                 <div class="form-group">
                     <label for="transaction">Transaction</label>
                     <select id="transaction" name="transaction">
-                        <option value="rent">Location</option>
-                        <option value="buy">Achat</option>
+                        {% set _transaction = f.get('transaction', ['rent'])[0] if f else 'rent' %}
+                        <option value="rent" {% if _transaction == 'rent' %}selected{% endif %}>Location</option>
+                        <option value="buy" {% if _transaction == 'buy' %}selected{% endif %}>Achat</option>
                     </select>
                 </div>
             </div>
@@ -125,12 +144,12 @@
                         <label class="pill-toggle">
                             <input type="checkbox" name="property_types" value="{{ value }}"
                                 data-property-type="{{ value }}"
-                                {% if value == 'apartment' %}checked{% endif %}>
+                                {% if (f and value in f.get('property_types', [])) or (not f and value == 'apartment') %}checked{% endif %}>
                             <span class="pill-toggle-label">{{ label }}</span>
                         </label>
                         {% endfor %}
                     </div>
-                    <small class="form-help" data-property-type-warning hidden></small>
+                    <small class="form-help" data-capability-warning role="alert" hidden></small>
                 </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
@@ -139,7 +158,7 @@
                     <div class="pill-toggle-group">
                         {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
-                            <input type="checkbox" name="rooms" value="{{ n }}">
+                            <input type="checkbox" name="rooms" value="{{ n }}" {% if f and n|string in f.get('rooms', []) %}checked{% endif %}>
                             <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
@@ -150,7 +169,7 @@
                     <div class="pill-toggle-group">
                         {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
-                            <input type="checkbox" name="bedrooms" value="{{ n }}">
+                            <input type="checkbox" name="bedrooms" value="{{ n }}" data-bedroom {% if f and n|string in f.get('bedrooms', []) %}checked{% endif %}>
                             <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
@@ -172,7 +191,7 @@
             {% for src in _override_sources %}
             <div class="form-group" style="margin-top: 0.75rem;">
                 <label for="override_{{ src.id }}">{{ src.name }} — {{ src.manual_override_label }}</label>
-                <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}" placeholder="Ex: AD08FR31096">
+                <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}" value="{{ f.get('override_' ~ src.id, [''])[0] if f else '' }}" placeholder="{{ src.manual_override_label }}">
                 <small class="form-help">{{ src.manual_override_help }}</small>
             </div>
             {% endfor %}
@@ -347,7 +366,7 @@
 <div class="empty-state">
     <div class="empty-icon">🔍</div>
     <h3>Aucune recherche</h3>
-    <p>Collez l'URL d'une recherche SeLoger ci-dessus pour commencer.</p>
+    <p>Créez une recherche ci-dessus et choisissez les sources à surveiller.</p>
 </div>
 {% endif %}
 
@@ -388,7 +407,7 @@ const sections = sources.map(s => {
     const urlBlocks = urls.map(url => `
 <div class="url-preview">${escapeHtml(url)}</div>
 <div class="url-actions">
-<a href="${escapeHtml(url)}" target="_blank" class="btn btn-primary">
+<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="btn btn-primary">
 Ouvrir dans un nouvel onglet ↗
 </a>
 <button class="btn btn-ghost" onclick="copyUrl('${escapeHtml(url).replace(/'/g, "\\'")}')">
@@ -402,10 +421,10 @@ Copier l'URL
 <h4 style="margin-bottom: 0.4rem;">${escapeHtml(s.source_name || s.source)}${urls.length > 1 ? ` (${urls.length} localisations)` : ''}</h4>
 ${urls.length ? `
 ${urlBlocks}
-${s.note ? `<p class="text-muted" style="font-size: 0.85rem; margin-top: 0.5rem;">ℹ️ ${escapeHtml(s.note)}</p>` : ''}
 ` : `
 <p class="text-muted">URL non disponible pour cette source${s.error ? ' (' + escapeHtml(s.error) + ')' : ''}</p>
 `}
+${s.note ? `<p class="text-muted" style="font-size: 0.85rem; margin-top: 0.5rem;">ℹ️ ${escapeHtml(s.note)}</p>` : ''}
 </div>
 `;
 }).join('');

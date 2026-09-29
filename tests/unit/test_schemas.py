@@ -55,6 +55,26 @@ def test_an_empty_dict_is_accepted_and_normalizes_to_an_empty_dict():
     assert validate_criteria({}) == {}
 
 
+@pytest.mark.parametrize("field", ["priceMin", "priceMax", "surfaceMin", "surfaceMax", "spaceMin", "spaceMax"])
+def test_numeric_bounds_cannot_be_negative(field):
+    with pytest.raises(ValueError, match="Critères invalides"):
+        validate_criteria({field: -1})
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"priceMin": 1200, "priceMax": 800}, "borne minimale de prix"),
+        ({"surfaceMin": 80, "surfaceMax": 40}, "borne minimale de surface"),
+        ({"rooms": [0]}, "nombre de pièces"),
+        ({"bedrooms": [-1]}, "nombre de chambres"),
+    ],
+)
+def test_incoherent_ranges_and_counts_are_rejected(payload, message):
+    with pytest.raises(ValueError, match=message):
+        validate_criteria(payload)
+
+
 # ---------------------------------------------------------------------------
 # validate_criteria : erreurs de type sur les champs connus
 # ---------------------------------------------------------------------------

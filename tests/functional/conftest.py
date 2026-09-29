@@ -324,6 +324,7 @@ def make_scrape_stats(**overrides) -> dict:
         "total": 12,
         "success_count": 10,
         "error_count": 1,
+        "partial_count": 0,
         "empty_count": 1,
         "avg_listings": 8.5,
         "avg_duration": 31.2,

@@ -444,6 +444,72 @@ def test_migration_backfills_sources_from_source_on_pre_existing_rows(blank_db):
     assert _query(url, "SELECT sources FROM searches WHERE id = %s", (search_id,))[0][0] == ["laforet"]
 
 
+def test_migration_adds_inter_site_dedup_columns_and_partial_unique_index(blank_db):
+    url = blank_db()
+    Storage.run_migrations(url)
+
+    assert "dedup_key" in _columns_of(url, "listings")
+    assert "dedup_key" in _columns_of(url, "search_listings")
+    indexes = _query(
+        url,
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_search_listings_search_dedup'",
+    )
+    assert len(indexes) == 1
+    assert "UNIQUE INDEX" in indexes[0][0]
+    assert "WHERE (dedup_key IS NOT NULL)" in indexes[0][0]
+
+    Storage.run_migrations(url)
+
+
+def test_migration_merges_historical_v2_links_and_preserves_source_listings(blank_db):
+    url = blank_db()
+    Storage.run_migrations(url)
+    storage = Storage(url)
+    user = storage.users.create_user("dedup_migration")
+    search = storage.searches.create_search(
+        user["id"], "Historique", ntfy_topic="topic", source="seloger", criteria={}
+    )
+    first = make_listing(
+        listing_id="sl_historique", source="seloger", url="https://seloger.test/sl", legacy_id="LOT-SL-101"
+    )
+    second = make_listing(
+        listing_id="bi_historique", source="bienici", url="https://bienici.test/bi", legacy_id="LOT-BI-202"
+    )
+    storage.listings.save_and_link([first, second], search["id"])
+    assert _query(url, "SELECT COUNT(*) FROM search_listings WHERE search_id = %s", (search["id"],))[0][0] == 2
+    dedup_key = "listing:v2:" + "a" * 64
+    _exec(url, "DROP INDEX idx_search_listings_search_dedup")
+    _exec(url, "UPDATE listings SET dedup_key = %s", (dedup_key,))
+    _exec(
+        url,
+        """
+        UPDATE search_listings
+        SET dedup_key = CASE WHEN listing_id = 'bi_historique' THEN %s ELSE NULL END,
+            found_at = CASE WHEN listing_id = 'sl_historique' THEN TIMESTAMP '2025-01-01 10:00:00'
+                            ELSE TIMESTAMP '2025-02-01 10:00:00' END,
+            notified = (listing_id = 'sl_historique')
+        """,
+        (dedup_key,),
+    )
+
+    Storage.run_migrations(url)
+
+    assert _query(url, "SELECT COUNT(*) FROM listings")[0][0] == 2
+    assert set(_query(url, "SELECT source, url FROM listings")) == {
+        ("seloger", "https://seloger.test/sl"),
+        ("bienici", "https://bienici.test/bi"),
+    }
+    row = _query(
+        url,
+        "SELECT listing_id, found_at::text, notified, dedup_key FROM search_listings WHERE search_id = %s",
+        (search["id"],),
+    )[0]
+    assert row == ("bi_historique", "2025-01-01 10:00:00", True, dedup_key)
+
+    Storage.run_migrations(url)
+    assert _query(url, "SELECT COUNT(*) FROM search_listings WHERE search_id = %s", (search["id"],))[0][0] == 1
+
+
 def test_migration_adds_notified_to_a_pre_existing_search_listings_table(blank_db):
     """Le bug rencontré en production : la colonne `notified` a été ajoutée au
     DDL, mais `run_migrations` n'est pas jouée au démarrage — une base déjà

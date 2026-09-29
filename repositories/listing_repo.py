@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+import unicodedata
 from datetime import date
 
 import psycopg2
@@ -47,6 +51,86 @@ def _clean_string(s: str) -> str:
     return s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
+def _normalize_fingerprint_text(value: object) -> str:
+    """Normalise un texte uniquement pour construire une empreinte stable."""
+    if value is None:
+        return ""
+    text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _numeric_token(value: object, precision: int) -> str:
+    """Retourne une valeur numérique canonique, ou une chaîne vide."""
+    if value in (None, ""):
+        return ""
+    match = re.search(r"\d+(?:[.,]\d+)?", str(value).replace(" ", ""))
+    if not match:
+        return ""
+    number = float(match.group().replace(",", "."))
+    if number <= 0:
+        return ""
+    return f"{number:.{precision}f}"
+
+
+def _dedup_key(listing) -> str | None:
+    """Construit une empreinte inter-sites volontairement conservatrice.
+
+    Une annonce sans description longue, sans attributs structurants ou sans
+    référence/adresse précise reste distincte. Cela privilégie les faux
+    négatifs aux rapprochements erronés (notamment les lots d'un programme).
+    """
+    description = _normalize_fingerprint_text(listing.description)
+    price = _numeric_token(listing.price_value if listing.price_value is not None else listing.price, 0)
+    surface = _numeric_token(listing.surface, 1)
+    location = _normalize_fingerprint_text(listing.zip_code) or _normalize_fingerprint_text(listing.city)
+    property_type = _normalize_fingerprint_text(listing.property_type)
+    reference = _normalize_fingerprint_text(listing.legacy_id)
+    adresse = _normalize_fingerprint_text(listing.location)
+    agence = _normalize_fingerprint_text(listing.agency)
+    titre = _normalize_fingerprint_text(listing.title)
+    pieces = _numeric_token(listing.rooms, 0)
+    adresse_precise = bool(
+        re.search(r"\b\d+[a-z]?\b", adresse)
+        and re.search(
+            r"\b(rue|avenue|boulevard|chemin|impasse|allee|route|quai|place|cours|passage)\b",
+            adresse,
+        )
+    )
+    if len(reference) >= 5 and any(character.isdigit() for character in reference):
+        discriminant = f"reference:{reference}"
+    elif adresse_precise:
+        discriminant = f"adresse:{adresse}"
+    elif (
+        listing.location_precision == "exacte"
+        and listing.latitude is not None
+        and listing.longitude is not None
+        and len(agence) >= 4
+        and len(titre) >= 15
+        and pieces
+    ):
+        # Signal réellement disponible chez bienici/Orpi/Guy Hoquet/Foncia :
+        # coordonnées natives exactes (jamais le fallback « commune »), agence,
+        # titre et nombre de pièces identiques. L'arrondi à 4 décimales tolère
+        # les écarts de projection d'environ 10 m entre deux portails.
+        coordonnees = f"{float(listing.latitude):.4f},{float(listing.longitude):.4f}"
+        discriminant = f"geo:{coordonnees}:{agence}:{titre}:{pieces}"
+    else:
+        return None
+    if len(description) < 120 or not all((price, surface, location, property_type)):
+        return None
+
+    payload = {
+        "description": description,
+        "discriminant": discriminant,
+        "location": location,
+        "price": price,
+        "property_type": property_type,
+        "surface": surface,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return f"listing:v2:{digest}"
+
+
 class ListingRepository(BaseRepository):
     """Listing CRUD operations."""
 
@@ -75,12 +159,23 @@ class ListingRepository(BaseRepository):
         if not listings:
             return [], []
 
+        # Une source peut répéter une annonce entre deux pages. PostgreSQL ne
+        # permet pas à un même INSERT ... ON CONFLICT DO UPDATE d'affecter deux
+        # fois la même ligne, et conserver les doublons provoquerait aussi deux
+        # notifications. La première occurrence, déjà la plus récente dans
+        # l'ordre des parsers, devient l'unique représentante du lot.
+        unique_listings = {}
+        for item in listings:
+            unique_listings.setdefault(item.listing_id, item)
+        listings = list(unique_listings.values())
+
         conn = self._get_conn_for_request()
         try:
             with conn.cursor() as cur:
                 def clean(v):
                     return _clean_string(v) if isinstance(v, str) else v
 
+                fingerprinted_listings = [(item, _dedup_key(item)) for item in listings]
                 listing_data = [
                     (
                         item.listing_id, item.url, clean(item.title), clean(item.price), item.surface, item.rooms,
@@ -94,8 +189,9 @@ class ListingRepository(BaseRepository):
                         # Issue #26 : géolocalisation hybride (native ou fallback
                         # commune) — NULL si la source n'a rien donné.
                         item.latitude, item.longitude, item.location_precision or None,
+                        dedup_key,
                     )
-                    for item in listings
+                    for item, dedup_key in fingerprinted_listings
                 ]
 
                 execute_values(cur, """
@@ -104,17 +200,96 @@ class ListingRepository(BaseRepository):
                         description, agency, source, legacy_id, price_value, price_details,
                         city, district, zip_code, property_type, is_private, phone,
                         epc, ges, is_new, is_exclusive, has_3d_visit, creation_date,
-                        update_date, headline, photos, latitude, longitude, location_precision
+                        update_date, headline, photos, latitude, longitude, location_precision,
+                        dedup_key
                     ) VALUES %s
-                    ON CONFLICT (listing_id) DO NOTHING
+                    ON CONFLICT (listing_id) DO UPDATE SET dedup_key = CASE
+                        WHEN listings.dedup_key IS NULL OR listings.dedup_key LIKE 'listing:v1:%%'
+                        THEN EXCLUDED.dedup_key
+                        ELSE listings.dedup_key
+                    END
                 """, listing_data, page_size=100)
 
                 # notified=FALSE explicitly on every new link, regardless of the
                 # column's DEFAULT TRUE (which exists only to backfill pre-existing
                 # rows as "already notified" when the column was introduced).
-                link_data = [(search_id, item.listing_id, False) for item in listings]
+                link_data = [
+                    (search_id, item.listing_id, False, dedup_key)
+                    for item, dedup_key in fingerprinted_listings
+                ]
+                # Rattrapage prudent des liens historiques : uniquement quand
+                # cette même annonce source reparaît et qu'aucun autre lien de
+                # la recherche ne porte déjà l'empreinte forte. Les liaisons
+                # perdantes sont supprimées dans la même instruction, jamais
+                # les annonces (leurs URLs/sources restent dans `listings`).
+                execute_values(cur, """
+                    WITH data(search_id, listing_id, notified, dedup_key) AS (VALUES %s),
+                    gagnants AS (
+                        SELECT data.*, sl.found_at, sl.notified AS deja_notifiee,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY data.search_id, data.dedup_key
+                                   ORDER BY sl.found_at, data.listing_id
+                               ) AS rang,
+                               MIN(sl.found_at) OVER (
+                                   PARTITION BY data.search_id, data.dedup_key
+                               ) AS premiere_vue,
+                               BOOL_OR(sl.notified) OVER (
+                                   PARTITION BY data.search_id, data.dedup_key
+                               ) AS groupe_notifie
+                        FROM data
+                        JOIN search_listings AS sl
+                          ON sl.search_id = data.search_id AND sl.listing_id = data.listing_id
+                        WHERE data.dedup_key IS NOT NULL
+                    ),
+                    groupes AS (
+                        SELECT search_id, dedup_key,
+                               MIN(premiere_vue) AS premiere_vue,
+                               BOOL_OR(groupe_notifie) AS groupe_notifie
+                        FROM gagnants
+                        GROUP BY search_id, dedup_key
+                    ),
+                    fusion_existants AS (
+                        UPDATE search_listings AS existant SET
+                            found_at = LEAST(existant.found_at, groupe.premiere_vue),
+                            notified = existant.notified OR groupe.groupe_notifie
+                        FROM groupes AS groupe
+                        WHERE existant.search_id = groupe.search_id
+                          AND existant.dedup_key = groupe.dedup_key
+                        RETURNING existant.listing_id
+                    ),
+                    actualises AS (
+                        UPDATE search_listings AS sl SET dedup_key = data.dedup_key,
+                            found_at = data.premiere_vue,
+                            notified = data.groupe_notifie
+                        FROM gagnants AS data
+                        WHERE sl.search_id = data.search_id
+                          AND sl.listing_id = data.listing_id
+                          AND data.rang = 1
+                          AND (sl.dedup_key IS NULL OR sl.dedup_key LIKE 'listing:v1:%%')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM search_listings AS other
+                              WHERE other.search_id = data.search_id
+                                AND other.dedup_key = data.dedup_key
+                                AND other.listing_id <> data.listing_id
+                          )
+                        RETURNING sl.listing_id
+                    )
+                    DELETE FROM search_listings AS sl USING gagnants AS data
+                    WHERE sl.search_id = data.search_id
+                      AND sl.listing_id = data.listing_id
+                      AND (sl.dedup_key IS NULL OR sl.dedup_key LIKE 'listing:v1:%%')
+                      AND (
+                          data.rang > 1
+                          OR EXISTS (
+                              SELECT 1 FROM search_listings AS gagnant
+                              WHERE gagnant.search_id = data.search_id
+                                AND gagnant.dedup_key = data.dedup_key
+                                AND gagnant.listing_id <> data.listing_id
+                          )
+                      )
+                """, link_data, page_size=100)
                 inserted = execute_values(cur, """
-                    INSERT INTO search_listings (search_id, listing_id, notified)
+                    INSERT INTO search_listings (search_id, listing_id, notified, dedup_key)
                     VALUES %s
                     ON CONFLICT DO NOTHING
                     RETURNING listing_id

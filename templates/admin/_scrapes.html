@@ -42,6 +42,21 @@
     </div>
 </div>
 
+{% if scrape_log_detail.details and scrape_log_detail.details.per_source %}
+<div class="card" style="margin-bottom: 1rem;">
+    <h3>Résultat par source</h3>
+    {% for source, result in scrape_log_detail.details.per_source.items() %}
+    <div class="detail-row">
+        <span class="detail-label"><span class="badge badge-source">{{ source }}</span></span>
+        <span class="detail-value">
+            {% if result.get('error') %}<span style="color: var(--red);">{{ result.error }}</span>
+            {% else %}{{ result.get('found', 0) }} annonce(s) trouvée(s){% endif %}
+        </span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 <div class="log-viewer" id="raw-viewer">
     {% if scrape_log_detail.raw_logs %}
         {# Rendu PARTAGÉ avec templates/search_log_raw.html (issue #19). #}
@@ -114,6 +129,7 @@
             <option value="success" {% if statut_filter == 'success' %}selected{% endif %}>✅ Succès</option>
             <option value="error" {% if statut_filter == 'error' %}selected{% endif %}>❌ Échec</option>
             <option value="empty" {% if statut_filter == 'empty' %}selected{% endif %}>ℹ️ Vide (aucun résultat)</option>
+            <option value="partial" {% if statut_filter == 'partial' %}selected{% endif %}>⚠️ Partiel (une source en erreur)</option>
         </select>
         <select name="source" aria-label="Filtrer par source" style="padding: 0.4rem 0.8rem; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.85rem;">
             <option value="">Toutes les sources</option>
@@ -166,6 +182,7 @@
                         {% if log.status == 'success' %}<span class="badge badge-active">✅ Succès</span>
                         {% elif log.status == 'error' %}<span class="badge badge-inactive" title="{{ log.error_message }}">❌ Échec</span>
                         {% elif log.status == 'empty' %}<span class="badge badge-muted">ℹ️ Vide</span>
+                        {% elif log.status == 'partial' %}<span class="badge badge-warning" title="{{ log.error_message }}">⚠️ Partiel</span>
                         {% else %}<span class="badge badge-warning">{{ log.status }}</span>{% endif %}
                     </td>
                     <td class="text-muted">{{ '%.1f'|format(log.duration_sec or 0) }}s</td>
@@ -177,7 +194,7 @@
                            hx-target="#admin-content" hx-swap="outerHTML" hx-push-url="true">📄 Log</a>
                         {# Relance UNIQUEMENT sur un échec dont la recherche existe encore et est active (#19).
                            Les champs cachés transportent filtres+page : la vue filtrée survit à l'action. #}
-                        {% if log.status == 'error' and log.peut_relancer %}
+                        {% if log.status in ('error', 'partial') and log.peut_relancer %}
                         <form method="POST" action="{{ url_for('admin.admin_retry_scrape', search_id=log.search_id) }}" class="inline-form"
                               data-confirm="Relancer le scraping de « {{ log.search_label }} » ?"
                               hx-post="{{ url_for('admin.admin_retry_scrape', search_id=log.search_id) }}"

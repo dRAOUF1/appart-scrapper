@@ -196,6 +196,10 @@ def _native_filters(criteria: dict) -> list[tuple[str, str]]:
     if rooms_min is not None and rooms_min >= 2:
         # nbrePiecesMin=1 ne filtrerait rien : le site ne référence pas de 0 pièce.
         params.append(("nbrePiecesMin", str(rooms_min)))
+    # Le formulaire public envoie exactement ces deux champs pour
+    # « Date (le plus récent) » (vérifié en live le 2026-08-29). Le cap
+    # de pagination conserve ainsi la tête la plus fraîche du stock.
+    params.extend((("sort", "b.dateCreation"), ("direction", "desc")))
     return params
 
 
@@ -620,7 +624,15 @@ class CityaParser(BaseParser):
                     soup = self._fetch_page(session, _search_url(target, type_native, criteria, page))
                     cards = soup.select("div.property-card[data-itemid]")
                     if not cards:
-                        break  # page au-delà de la fin : réponse gracieuse du site
+                        text = soup.get_text(" ", strip=True)
+                        total_match = re.search(r"\b(\d+)\s+résultats?\b", text, re.IGNORECASE)
+                        declared_total = int(total_match.group(1)) if total_match else None
+                        if page == 1 and declared_total != 0:
+                            raise ValueError(
+                                f"Citya {target}/{type_native} : HTTP 200 sans carte ni zéro résultat explicite "
+                                "(page inattendue ou protection anti-bot)"
+                            )
+                        break
                     fetched_for_query += len(cards)
                     for card in cards:
                         listing = _parse_card(card)
@@ -633,6 +645,11 @@ class CityaParser(BaseParser):
                     f"[Citya] {target}/{type_native} : {fetched_for_query} cartes parcourues, "
                     f"{len(listings)} retenues au total"
                 )
+                if fetched_for_query and page == MAX_PAGES and cards:
+                    logger.warning(
+                        f"[Citya] {target}/{type_native} : limite de {MAX_PAGES} pages atteinte ; "
+                        "les annonces collectées restent les plus récentes grâce au tri date décroissant"
+                    )
 
         logger.info(f"[Citya] Scraping terminé : {len(listings)} annonces uniques")
         return listings

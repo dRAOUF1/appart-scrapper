@@ -253,6 +253,7 @@ class Storage:
                         update_date     TEXT DEFAULT '',
                         headline        TEXT DEFAULT '',
                         photos          JSONB DEFAULT '[]',
+                        dedup_key        TEXT,
                         first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -262,6 +263,7 @@ class Storage:
                         listing_id  TEXT NOT NULL REFERENCES listings(listing_id) ON DELETE CASCADE,
                         found_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         notified    BOOLEAN DEFAULT TRUE,
+                        dedup_key   TEXT,
                         PRIMARY KEY (search_id, listing_id)
                     );
                 """)
@@ -546,7 +548,8 @@ class Storage:
                         -- 'approximative' ou 'commune'.
                         ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
                         ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
-                        ADD COLUMN IF NOT EXISTS location_precision TEXT;
+                        ADD COLUMN IF NOT EXISTS location_precision TEXT,
+                        ADD COLUMN IF NOT EXISTS dedup_key TEXT;
                 """)
                 # Issue #26 : la lecture carte ne parcourt que les annonces
                 # géolocalisées — l'index partiel épouse exactement ce filtre.
@@ -583,7 +586,79 @@ class Storage:
                 """)
                 cur.execute("""
                     ALTER TABLE search_listings
-                        ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE;
+                        ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE,
+                        ADD COLUMN IF NOT EXISTS dedup_key TEXT;
+                """)
+                # La v1 ne portait pas de discriminant immobilier assez fort.
+                # On invalide ses clés plutôt que de conserver des fusions
+                # potentiellement erronées. Les annonces revues par un scrape
+                # recevront ensuite une v2 via ListingRepository.
+                cur.execute("""
+                    UPDATE search_listings SET dedup_key = NULL
+                    WHERE dedup_key LIKE 'listing:v1:%';
+                """)
+                cur.execute("""
+                    UPDATE listings SET dedup_key = NULL
+                    WHERE dedup_key LIKE 'listing:v1:%';
+                """)
+                # Rattrape uniquement les empreintes v2 déjà calculées sur la
+                # ligne source. Le lien déjà marqué v2 gagne s'il existe ; à
+                # défaut, le plus ancien gagne. L'état notifié est fusionné par
+                # OR afin qu'une variante déjà envoyée ne soit jamais renotifiée.
+                cur.execute("""
+                    WITH candidats AS (
+                        SELECT sl.search_id, sl.listing_id, l.dedup_key,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                                   ORDER BY (sl.dedup_key = l.dedup_key) DESC NULLS LAST,
+                                            sl.found_at, sl.listing_id
+                               ) AS rang,
+                               MIN(sl.found_at) OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                               ) AS premiere_vue,
+                               BOOL_OR(sl.notified) OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                               ) AS groupe_notifie
+                        FROM search_listings AS sl
+                        JOIN listings AS l ON l.listing_id = sl.listing_id
+                        WHERE l.dedup_key LIKE 'listing:v2:%'
+                    )
+                    UPDATE search_listings AS sl
+                    SET dedup_key = candidats.dedup_key,
+                        found_at = candidats.premiere_vue,
+                        notified = candidats.groupe_notifie
+                    FROM candidats
+                    WHERE sl.search_id = candidats.search_id
+                      AND sl.listing_id = candidats.listing_id
+                      AND candidats.rang = 1;
+                """)
+                # Neutralise les doublons visibles sans toucher aux lignes
+                # `listings`, qui conservent toutes les URLs et sources.
+                cur.execute("""
+                    WITH candidats AS (
+                        SELECT sl.search_id, sl.listing_id, l.dedup_key,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY sl.search_id, l.dedup_key
+                                   ORDER BY (sl.dedup_key = l.dedup_key) DESC NULLS LAST,
+                                            sl.found_at, sl.listing_id
+                               ) AS rang
+                        FROM search_listings AS sl
+                        JOIN listings AS l ON l.listing_id = sl.listing_id
+                        WHERE l.dedup_key LIKE 'listing:v2:%'
+                    )
+                    DELETE FROM search_listings AS sl USING candidats
+                    WHERE sl.search_id = candidats.search_id
+                      AND sl.listing_id = candidats.listing_id
+                      AND candidats.rang > 1;
+                """)
+                # Une clé NULL signifie « preuves insuffisantes » : l'annonce
+                # reste alors distincte. La contrainte partielle ne rapproche
+                # que les empreintes fortes, et seulement au sein d'une même
+                # recherche. Toutes les variantes source restent dans listings.
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_search_listings_search_dedup
+                        ON search_listings(search_id, dedup_key)
+                        WHERE dedup_key IS NOT NULL;
                 """)
                 # Le token API (X-API-Token) a été supprimé (issue #30) :
                 # plus d'API pilotée par script, l'authentification passe par
@@ -631,4 +706,3 @@ class Storage:
         finally:
             # Connexion DDL brute (hors pool) : toujours fermée directement.
             self._close_conn(conn)
-

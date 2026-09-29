@@ -215,6 +215,20 @@ class TestStatusMatrix:
         env.storage.listings.save_and_link.assert_not_called()
 
     @freeze_time(FROZEN)
+    def test_one_failed_source_and_one_empty_source_is_partial(self, env):
+        env.search(sources=["seloger", "laforet"])
+        parsers = {
+            "seloger": make_parser(scrape_error=ValueError("blocage")),
+            "laforet": make_parser([]),
+        }
+
+        assert env.run(parsers) == 0
+        args, kwargs = env.only_log()
+        assert args == (1, "partial")
+        assert kwargs["error_message"] == "seloger: blocage"
+        assert kwargs["details"]["per_source"]["laforet"] == {"found": 0}
+
+    @freeze_time(FROZEN)
     def test_success_logs_counts_already_known_and_per_source(self, env):
         env.search(sources=["seloger", "laforet"])
         found = [make_listing(listing_id="sl_1"), make_listing(listing_id="lf_1")]
@@ -233,6 +247,21 @@ class TestStatusMatrix:
             "per_source": {"seloger": {"found": 1}, "laforet": {"found": 1}},
         }
         env.storage.listings.save_and_link.assert_called_once_with(found, 1)
+
+    @freeze_time(FROZEN)
+    def test_one_failed_source_with_results_is_partial(self, env):
+        env.search(sources=["seloger", "laforet"])
+        listing = make_listing(listing_id="lf_1")
+        env.storage.listings.save_and_link.return_value = ([listing], [])
+        parsers = {
+            "seloger": make_parser(scrape_error=ValueError("blocage")),
+            "laforet": make_parser([listing]),
+        }
+
+        assert env.run(parsers) == 1
+        args, kwargs = env.only_log()
+        assert args == (1, "partial")
+        assert kwargs["error_message"] == "seloger: blocage"
 
 
 # ---------------------------------------------------------------------------

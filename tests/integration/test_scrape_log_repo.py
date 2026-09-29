@@ -409,7 +409,7 @@ class TestScrapeStats:
         stats = storage.scrape_logs.get_scrape_stats(search["id"])
 
         assert stats == {
-            "total": 0, "success_count": 0, "error_count": 0, "empty_count": 0,
+            "total": 0, "success_count": 0, "error_count": 0, "partial_count": 0, "empty_count": 0,
             "avg_listings": 0, "avg_new": 0, "avg_duration": 0, "last_scrape": None,
         }
 

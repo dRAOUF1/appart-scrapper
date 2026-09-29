@@ -119,15 +119,24 @@ class TestScrapePagination:
         second_call_filters = json.loads(mock.request_history[1].qs["filters"][0])
         assert second_call_filters["from"] == PAGE_SIZE
 
-    def test_an_empty_page_before_reaching_the_announced_total_still_stops(self, requests_mock):
+    def test_an_empty_page_before_reaching_the_announced_total_is_an_error(self, requests_mock):
         """Filet de sécurité : si l'API renvoie 0 annonce alors que `total`
         laisse penser qu'il en reste, on n'insiste pas indéfiniment."""
         requests_mock.get(ADS_URL, json=_page(1000, []))
 
-        result = scrape({})
-
-        assert result == []
+        with pytest.raises(ValueError, match="page vide inattendue"):
+            scrape({})
         assert requests_mock.call_count == 1
+
+    @pytest.mark.parametrize(
+        "payload",
+        [[], {}, {"total": 0}, {"realEstateAds": []}, {"total": "0", "realEstateAds": []}],
+    )
+    def test_an_invalid_json_schema_is_retried_then_reported(self, requests_mock, payload):
+        requests_mock.get(ADS_URL, json=payload)
+
+        with pytest.raises(ValueError, match="schéma JSON inattendu"):
+            _fetch_page({}, max_retries=1)
 
     def test_the_max_pages_safety_cap_stops_a_pathologically_large_search(self, requests_mock):
         """Limite structurelle documentée de l'API (~2500 annonces / ~100
