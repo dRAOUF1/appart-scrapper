@@ -49,6 +49,7 @@ from core.reglages import (
     lire_jours,
     valider_jours,
 )
+from core.schemas import validate_scrape_interval
 from core.scrape_control import dernier_tick
 from core.web_utils import format_criteria_lisible, to_int
 from parsers import list_sources, remember_manual_overrides
@@ -67,6 +68,8 @@ from routes.web import (
     _location_error_message,
     _parse_notify_enabled_from_form,
     _parse_search_criteria_from_form,
+    _scrape_stats_for_view,
+    _submitted_form_values,
     _validate_sources_criteria,
     _validation_error_message,
 )
@@ -1181,8 +1184,9 @@ def _contexte_recherche_detail(storage, search_id: int, **extras) -> dict | None
     ctx = {
         "search_detail": detail,
         # Issue #19 : bloc santé des scrapes de CETTE recherche dans la fiche.
-        "scrape_stats": storage.scrape_logs.get_scrape_stats(search_id),
+        "scrape_stats": _scrape_stats_for_view(storage, search_id),
         "criteria_lignes": format_criteria_lisible(detail.get("criteria")),
+        "form_values": None,
     }
     ctx.update(extras)
     return ctx
@@ -1223,7 +1227,6 @@ def admin_edit_search(search_id):
     if request.method == "POST":
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
-        scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
         selected_sources = (
             request.form.getlist("sources")
             or search.get("sources")
@@ -1238,12 +1241,13 @@ def admin_edit_search(search_id):
             return (
                 _contexte_recherche_detail(
                     storage, search_id, edit_mode=True, sources=list_sources(),
-                    form_values=request.form,
+                    form_values=_submitted_form_values(request.form),
                 )
                 or _CONTEXTE_ONGLETS["searches"](storage)
             )
 
         try:
+            scrape_interval = validate_scrape_interval(request.form.get("scrape_interval", 5))
             criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form, existing_locations)
         except ValueError as e:
             # Payload transit corrompu (#28) : même filet que les routes

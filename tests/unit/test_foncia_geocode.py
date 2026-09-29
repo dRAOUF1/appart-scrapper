@@ -90,6 +90,36 @@ OCCITANIE = {
 }
 
 
+class TestHttpHelpers:
+    def test_official_name_and_locality_success(self, requests_mock):
+        official_url = "https://geo.api.gouv.fr/departements/31"
+        requests_mock.get(official_url, json={"nom": "Haute-Garonne"})
+        requests_mock.get(
+            f"{geo.LOCALITY_BY_SLUG_URL}/toulouse-31",
+            json={"items": [TOULOUSE]},
+        )
+
+        assert geo._official_name(official_url) == "Haute-Garonne"
+        assert geo._fetch_locality(" toulouse-31 ") == TOULOUSE
+
+    @pytest.mark.parametrize("status", [500, 404])
+    def test_http_errors_degrade_to_none(self, requests_mock, status):
+        official_url = "https://geo.api.gouv.fr/departements/99"
+        requests_mock.get(official_url, status_code=status)
+        requests_mock.get(f"{geo.LOCALITY_BY_SLUG_URL}/inconnue", status_code=status)
+
+        assert geo._official_name(official_url) is None
+        assert geo._fetch_locality("inconnue") is None
+
+    @pytest.mark.parametrize("payload", [[], {}, {"items": None}, {"items": ["invalide"]}])
+    def test_unexpected_locality_payload_is_empty(self, requests_mock, payload):
+        requests_mock.get(f"{geo.LOCALITY_BY_SLUG_URL}/x", json=payload)
+        assert geo._fetch_locality("x") is None
+
+    def test_empty_slug_never_calls_http(self, no_network):
+        assert geo._fetch_locality(" ") is None
+
+
 @pytest.fixture
 def repo():
     """Le cache persistant, doublé. `spec=` interdit d'appeler une méthode que

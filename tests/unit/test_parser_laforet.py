@@ -912,6 +912,20 @@ class TestCardPhotos:
         article = BeautifulSoup('<article><img alt="rien"></article>', "lxml").find("article")
         assert _card_photos(article) == []
 
+    @pytest.mark.parametrize(
+        "image",
+        [
+            '<img src="/agence/paris/logo.jpg" alt="Agence Laforêt">',
+            '<img src="/media/marque.jpg" class="agency-logo">',
+            '<img src="/media/logo-laforet.svg" alt="">',
+        ],
+    )
+    def test_agency_logos_are_not_used_as_listing_photos(self, image):
+        from bs4 import BeautifulSoup
+
+        article = BeautifulSoup(f"<article>{image}</article>", "lxml").find("article")
+        assert _card_photos(article) == []
+
     def test_a_relative_src_without_a_leading_slash_is_left_alone(self):
         """Divergence connue : seul un `src` commençant par « / » est préfixé par
         le domaine. Laforêt n'émet que des chemins absolus (`/glide/...`), mais

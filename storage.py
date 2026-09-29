@@ -253,6 +253,7 @@ class Storage:
                         update_date     TEXT DEFAULT '',
                         headline        TEXT DEFAULT '',
                         photos          JSONB DEFAULT '[]',
+                        dedup_key        TEXT,
                         first_seen      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
@@ -262,6 +263,7 @@ class Storage:
                         listing_id  TEXT NOT NULL REFERENCES listings(listing_id) ON DELETE CASCADE,
                         found_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         notified    BOOLEAN DEFAULT TRUE,
+                        dedup_key   TEXT,
                         PRIMARY KEY (search_id, listing_id)
                     );
                 """)
@@ -546,7 +548,8 @@ class Storage:
                         -- 'approximative' ou 'commune'.
                         ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
                         ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
-                        ADD COLUMN IF NOT EXISTS location_precision TEXT;
+                        ADD COLUMN IF NOT EXISTS location_precision TEXT,
+                        ADD COLUMN IF NOT EXISTS dedup_key TEXT;
                 """)
                 # Issue #26 : la lecture carte ne parcourt que les annonces
                 # géolocalisées — l'index partiel épouse exactement ce filtre.
@@ -583,7 +586,17 @@ class Storage:
                 """)
                 cur.execute("""
                     ALTER TABLE search_listings
-                        ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE;
+                        ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT TRUE,
+                        ADD COLUMN IF NOT EXISTS dedup_key TEXT;
+                """)
+                # Une clé NULL signifie « preuves insuffisantes » : l'annonce
+                # reste alors distincte. La contrainte partielle ne rapproche
+                # que les empreintes fortes, et seulement au sein d'une même
+                # recherche. Toutes les variantes source restent dans listings.
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_search_listings_search_dedup
+                        ON search_listings(search_id, dedup_key)
+                        WHERE dedup_key IS NOT NULL;
                 """)
                 # Le token API (X-API-Token) a été supprimé (issue #30) :
                 # plus d'API pilotée par script, l'authentification passe par
@@ -631,4 +644,3 @@ class Storage:
         finally:
             # Connexion DDL brute (hors pool) : toujours fermée directement.
             self._close_conn(conn)
-

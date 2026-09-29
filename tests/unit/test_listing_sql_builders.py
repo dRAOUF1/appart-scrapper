@@ -684,8 +684,9 @@ class TestSaveAndLink:
         repo.save_and_link(listings, search_id=7)
 
         link_call = next(call for call in execute_values.calls if call["fetch"])
-        assert link_call["rows"] == [(7, item.listing_id, False) for item in listings]
+        assert link_call["rows"] == [(7, item.listing_id, False, None) for item in listings]
         assert "notified" in link_call["sql"]
+        assert "dedup_key" in link_call["sql"]
         assert all(row[2] is False for row in link_call["rows"])
 
     def test_listings_are_upserted_before_being_linked(self, execute_values):
@@ -697,11 +698,18 @@ class TestSaveAndLink:
 
         repo.save_and_link([make_listing()], search_id=1)
 
-        assert len(execute_values.calls) == 2
-        insert_call, link_call = execute_values.calls
+        assert len(execute_values.calls) == 3
+        insert_call, backfill_call, link_call = execute_values.calls
         assert "INSERT INTO listings" in insert_call["sql"]
-        assert "ON CONFLICT (listing_id) DO NOTHING" in insert_call["sql"]
+        assert "ON CONFLICT (listing_id) DO UPDATE" in insert_call["sql"]
+        assert "listings.dedup_key IS NULL" in insert_call["sql"]
+        assert "listings.dedup_key LIKE 'listing:v1:%%'" in insert_call["sql"]
         assert insert_call["fetch"] is False
+        assert "UPDATE search_listings AS sl SET dedup_key" in backfill_call["sql"]
+        assert "sl.dedup_key IS NULL" in backfill_call["sql"]
+        assert "sl.dedup_key LIKE 'listing:v1:%%'" in backfill_call["sql"]
+        assert "NOT EXISTS" in backfill_call["sql"]
+        assert backfill_call["fetch"] is False
         assert "INSERT INTO search_listings" in link_call["sql"]
         assert "RETURNING listing_id" in link_call["sql"]
         assert link_call["fetch"] is True
@@ -721,6 +729,20 @@ class TestSaveAndLink:
         assert [item.listing_id for item in already_linked] == [known.listing_id]
         assert conn.commits == 1
 
+    def test_duplicate_ids_in_one_batch_keep_only_the_first_occurrence(self, execute_values):
+        conn = RecordingConnection()
+        repo = bind_repository(ListingRepository, conn)
+        first = make_listing(listing_id="sl_unique", title="Première occurrence")
+        duplicate = make_listing(listing_id="sl_unique", title="Occurrence répétée")
+        execute_values.newly_linked = {first.listing_id}
+
+        new_for_search, already_linked = repo.save_and_link([first, duplicate], search_id=1)
+
+        assert new_for_search == [first]
+        assert already_linked == []
+        assert all(len(call["rows"]) == 1 for call in execute_values.calls)
+        assert execute_values.calls[0]["rows"][0][2] == "Première occurrence"
+
     def test_batches_are_chunked(self, execute_values):
         """`page_size=100` borne la taille de la requête envoyée : sans lui, un
         lot de 500 annonces produit une seule requête énorme."""
@@ -729,7 +751,7 @@ class TestSaveAndLink:
 
         repo.save_and_link([make_listing()], search_id=1)
 
-        assert [call["page_size"] for call in execute_values.calls] == [100, 100]
+        assert [call["page_size"] for call in execute_values.calls] == [100, 100, 100]
 
     def test_surrogates_are_cleaned_out_of_the_text_columns(self, execute_values):
         """Le nettoyage s'applique bien aux valeurs envoyées, sinon l'INSERT

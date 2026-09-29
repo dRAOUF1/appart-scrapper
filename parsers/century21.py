@@ -629,11 +629,26 @@ class Century21Parser(BaseParser):
         if not contributions:
             return []
 
-        covered = [location for location, _ in contributions]
-        segment = _level_segments(
-            [slug for _, contribution in contributions for slug in contribution]
-        )
-        return [(covered, segment)]
+        # La concaténation de deux slugs de ville en retirant le second
+        # préfixe (`v-montrouge-nantes`) répond 200 mais ne garantit pas une
+        # union des deux villes. Deux segments (`v-montrouge/v-nantes`)
+        # répondent 410 (vérifié le 2026-08-29). Chaque contribution v-/cpv-
+        # garde donc sa propre série ; les niveaux dont l'union est vérifiée
+        # (cp-/d-) restent fusionnés.
+        isolated = []
+        mergeable = []
+        for location, slugs in contributions:
+            city_slugs = [slug for slug in slugs if slug.startswith(("v-", "cpv-"))]
+            other_slugs = [slug for slug in slugs if slug not in city_slugs]
+            isolated.extend(([location], slug) for slug in city_slugs)
+            if other_slugs:
+                mergeable.append((location, other_slugs))
+
+        if not mergeable:
+            return isolated
+        covered = [location for location, _ in mergeable]
+        segment = _level_segments([slug for _, slugs in mergeable for slug in slugs])
+        return [*isolated, (covered, segment)]
 
     def parse_manual_override(self, value: str) -> dict:
         value = (value or "").strip()

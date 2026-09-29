@@ -883,7 +883,7 @@ class TestGetDetailedListingsFieldExtraction:
         assert listing["isPrivate"] is False and listing["isNew"] is False
         assert listing["keyfacts"] == []
 
-    def test_a_photo_without_a_url_key_breaks_the_whole_scrape(self, serve):
+    def test_a_photo_without_a_url_key_is_ignored(self, serve):
         """# BUG : `img["url"]` est le SEUL accès non protégé de l'extraction
         (scraper/seloger.py:388).
 
@@ -899,8 +899,7 @@ class TestGetDetailedListingsFieldExtraction:
         item = {**CLASSIFIED_ITEM, "gallery": {"images": [{"alt": "Sans url"}]}}
         serve(page=ufrn_page(serp_payload({LISTING_ID: item})))
 
-        with pytest.raises(ValueError, match="DataDome"):
-            get_detailed_listings({"placeIds": ["X"]}, max_retries=1)
+        assert get_detailed_listings({"placeIds": ["X"]}, max_retries=1)[0]["photos"] == []
 
 
 class TestGetDetailedListingsAgencyFallback:
@@ -1169,13 +1168,13 @@ class TestGetDetailedListingsRetryAndBackoff:
             requests.exceptions.TooManyRedirects,
         ],
     )
-    def test_network_errors_are_retried_then_reported_as_datadome(self, requests_mock, exc):
+    def test_network_errors_are_retried_then_reported_as_network_errors(self, requests_mock, exc):
         """Toute `RequestException` part en `continue`. Après épuisement, le
         message parle de DataDome — y compris pour une simple coupure réseau.
         Diagnostic trompeur, comportement actuel."""
         requests_mock.get(HOME_URL, exc=exc)
 
-        with pytest.raises(ValueError, match="DataDome"):
+        with pytest.raises(ValueError, match="erreur réseau SeLoger"):
             get_detailed_listings({"placeIds": ["X"]}, max_retries=2)
 
     def test_a_non_403_http_error_is_raised_by_raise_for_status_and_retried(self, serve):
@@ -1184,7 +1183,7 @@ class TestGetDetailedListingsRetryAndBackoff:
         (donc `RequestException`) -> `continue`."""
         serve(page=HAPPY_PAGE, status=500)
 
-        with pytest.raises(ValueError, match="DataDome"):
+        with pytest.raises(ValueError, match="erreur réseau SeLoger"):
             get_detailed_listings({"placeIds": ["X"]}, max_retries=1)
 
     def test_the_exhaustion_message_names_datadome_and_the_wait(self, serve, no_proxy_works):
@@ -1201,7 +1200,7 @@ class TestGetDetailedListingsRetryAndBackoff:
         connaître, un appelant pourrait passer une valeur de configuration."""
         serve()
 
-        with pytest.raises(ValueError, match="DataDome"):
+        with pytest.raises(ValueError, match="erreur réseau SeLoger"):
             get_detailed_listings({"placeIds": ["X"]}, max_retries=max_retries)
 
         assert requests_mock.request_history == []
@@ -1249,7 +1248,7 @@ class TestGetDetailedListingsParsingFailuresBecomeRetries:
         ids=["no_json_parse", "malformed_json", "empty_page_props", "missing_key",
              "empty_lz_blob", "invalid_lz_blob"],
     )
-    def test_every_parsing_failure_is_reported_as_a_datadome_block(self, serve, page, cause):
+    def test_every_parsing_failure_is_reported_as_an_invalid_response(self, serve, page, cause):
         serve(page=page)
 
         if "structure interne vide" in cause:
@@ -1258,16 +1257,13 @@ class TestGetDetailedListingsParsingFailuresBecomeRetries:
             assert get_detailed_listings({"placeIds": ["X"]}, max_retries=1) == []
             return
 
-        with pytest.raises(ValueError, match="DataDome") as excinfo:
+        with pytest.raises(ValueError, match="réponse SeLoger invalide") as excinfo:
             get_detailed_listings({"placeIds": ["X"]}, max_retries=1)
 
         assert cause  # documenté dans les ids
-        assert "format" not in str(excinfo.value).lower(), (
-            "le message ne mentionne jamais la vraie cause (un changement de format) : "
-            "c'est exactement la perte d'information dénoncée ici"
-        )
+        assert "DataDome" not in str(excinfo.value)
 
-    def test_a_unicode_escape_in_the_blob_makes_the_decoding_explode(self, serve):
+    def test_unicode_escapes_in_the_blob_are_decoded(self, serve):
         """# BUG : le double-décodage ne survit pas aux échappements `\\uXXXX`
         (scraper/seloger.py:340).
 
@@ -1286,8 +1282,8 @@ class TestGetDetailedListingsParsingFailuresBecomeRetries:
         assert "\\u00e9" in page, "la fixture doit porter des échappements \\uXXXX simples"
         serve(page=page)
 
-        with pytest.raises(ValueError, match="DataDome"):
-            get_detailed_listings({"placeIds": ["X"]}, max_retries=1)
+        listing = get_detailed_listings({"placeIds": ["X"]}, max_retries=1)[0]
+        assert listing["headline"] == "Charmant 3 pièces rénové"
 
     def test_the_same_page_in_literal_utf8_parses_perfectly(self, serve):
         """Le pendant du test précédent : seule la *forme* de l'échappement
@@ -1296,7 +1292,7 @@ class TestGetDetailedListingsParsingFailuresBecomeRetries:
 
         assert len(get_detailed_listings({"placeIds": ["X"]}, max_retries=1)) == 1
 
-    def test_a_quote_followed_by_a_parenthesis_truncates_the_blob(self, serve):
+    def test_a_quote_followed_by_a_parenthesis_does_not_truncate_the_blob(self, serve):
         """# BUG : la regex `JSON\\.parse\\("(.+?)"\\)` est non-gourmande
         (scraper/seloger.py:334).
 
@@ -1314,8 +1310,7 @@ class TestGetDetailedListingsParsingFailuresBecomeRetries:
 
         serve(page=page)
 
-        with pytest.raises(ValueError, match="DataDome"):
-            get_detailed_listings({"placeIds": ["X"]}, max_retries=1)
+        assert get_detailed_listings({"placeIds": ["X"]}, max_retries=1)[0]["headline"] == 'Lumineux ") plein sud'
 
 
 # ---------------------------------------------------------------------------

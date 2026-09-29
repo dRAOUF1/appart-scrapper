@@ -28,6 +28,7 @@ from routes.web import (
     _parse_locations_from_form,
     _parse_search_criteria_from_form,
     _parse_source_overrides_from_form,
+    _submitted_form_values,
     _validate_sources_criteria,
     _validation_error_message,
 )
@@ -466,12 +467,25 @@ class TestParseSearchCriteriaFromForm:
 
         assert not any(key.startswith(("price", "surface")) for key in criteria)
 
-    def test_an_unparsable_numeric_value_is_dropped_by_normalization(self):
-        """« abc » n'est pas un prix : la normalisation l'écarte plutôt que de
-        laisser passer une chaîne dans une comparaison numérique."""
-        criteria, _ = _parse_search_criteria_from_form(MultiDict([("price_max", "abc")]))
+    def test_an_unparsable_numeric_value_is_reported(self):
+        with pytest.raises(ValueError, match="Critères invalides"):
+            _parse_search_criteria_from_form(MultiDict([("price_max", "abc")]))
 
-        assert "priceMax" not in criteria
+    def test_submitted_values_preserve_every_multidict_occurrence(self):
+        form = MultiDict([
+            ("sources", "seloger"),
+            ("sources", "bienici"),
+            ("rooms", "2"),
+            ("rooms", "3"),
+            ("location_city", "Paris"),
+            ("location_city", "Nantes"),
+        ])
+
+        assert _submitted_form_values(form) == {
+            "sources": ["seloger", "bienici"],
+            "rooms": ["2", "3"],
+            "location_city": ["Paris", "Nantes"],
+        }
 
     def test_locations_are_absent_when_no_line_is_usable(self):
         """La clé n'est pas posée à vide : `locations: []` et l'absence de clé

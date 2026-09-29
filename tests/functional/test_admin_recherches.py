@@ -240,6 +240,25 @@ class TestEditionAdmin:
         assert "Mon label corrigé" in page, "ce qui avait été saisi doit être réaffiché"
         storage.searches.update_search.assert_not_called()
 
+    def test_une_borne_incoherente_preserve_les_listes_soumises(
+        self, admin_client, storage, recherche_etrangere
+    ):
+        resp = admin_client.post(
+            f"/admin/searches/{RECHERCHE_ETRANGERE_ID}/edit",
+            data=formulaire_edition(
+                price_min="1500", price_max="900", sources=["seloger", "bienici"], rooms=["2", "4"]
+            ),
+        )
+
+        page = resp.data.decode()
+        assert resp.status_code == 200
+        storage.searches.update_search.assert_not_called()
+        assert 'name="price_min"\n                        value="1500"' in page
+        assert 'name="price_max"\n                        value="900"' in page
+        assert 'name="rooms" value="2"' in page and 'value="2" checked' in page
+        assert 'name="rooms" value="4"' in page and 'value="4" checked' in page
+        assert 'value="bienici" class="source-checkbox"\n                        checked' in page
+
     def test_label_ou_topic_manquant_refuse(self, admin_client, storage, recherche_etrangere):
         admin_client.post(
             f"/admin/searches/{RECHERCHE_ETRANGERE_ID}/edit",

@@ -2,6 +2,8 @@
 {% block title %}Modifier — {{ search.label }}{% endblock %}
 
 {% block content %}
+{% set f = form_values %}
+{% set _first = namespace() %}
 <div class="page-header">
     <a href="{{ url_for('web.searches') }}" class="back-link">← Retour aux recherches</a>
     <h1>Modifier « {{ search.label }} »</h1>
@@ -20,6 +22,10 @@
     <div class="stat-card">
         <div class="stat-value" style="color: var(--red);">{{ stats.error_count or 0 }}</div>
         <div class="stat-label">Erreurs</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color: var(--orange);">{{ stats.partial_count or 0 }}</div>
+        <div class="stat-label">Partiels</div>
     </div>
     <div class="stat-card">
         <div class="stat-value" style="color: var(--text-secondary);">{{ stats.empty_count or 0 }}</div>
@@ -64,15 +70,15 @@
             <div class="form-grid">
                 <div class="form-group">
                     <label for="label">Label</label>
-                    <input type="text" id="label" name="label" value="{{ search.label }}" required>
+                    <input type="text" id="label" name="label" value="{{ f.get('label', [''])[0] if f else search.label }}" required>
                 </div>
                 <div class="form-group">
                     <label for="ntfy_topic">Topic ntfy</label>
-                    <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ search.ntfy_topic }}" required>
+                    <input type="text" id="ntfy_topic" name="ntfy_topic" value="{{ f.get('ntfy_topic', [''])[0] if f else search.ntfy_topic }}" required>
                 </div>
                 <div class="form-group">
                     <label for="scrape_interval">Intervalle (min)</label>
-                    <input type="number" id="scrape_interval" name="scrape_interval" value="{{ search.scrape_interval or 5 }}" min="1" max="1440">
+                    <input type="number" id="scrape_interval" name="scrape_interval" value="{{ f.get('scrape_interval', [''])[0] if f else (search.scrape_interval or 5) }}" min="1" max="1440" required>
                 </div>
                 <div class="form-group">
                     <!-- Marqueur obligatoire : une case décochée n'est pas envoyée
@@ -83,7 +89,7 @@
                     <div class="pill-toggle-group">
                         <label class="pill-toggle">
                             <input type="checkbox" id="notify_enabled" name="notify_enabled"
-                                {% if search.notify_enabled %}checked{% endif %}>
+                                {% if (f and f.get('notify_enabled')) or (not f and search.notify_enabled) %}checked{% endif %}>
                             <span class="pill-toggle-label">🔔 Notifier les nouvelles annonces</span>
                         </label>
                     </div>
@@ -95,19 +101,21 @@
 
         <div class="form-section">
             <div class="form-section-label">📍 Localisation</div>
-            {% set _locations = search.criteria.locations or [None] %}
+            {% set _location_cities = f.get('location_city', []) if f else [] %}
+            {% set _location_payloads = f.get('location_payload', []) if f else [] %}
+            {% set _locations = (_location_cities or [None]) if f else (search.criteria.locations or [None]) %}
             <div class="location-list" data-location-list>
                 {% for loc in _locations %}
                 <div class="location-row" data-location-row>
                     <div class="location-autocomplete">
                         <input type="text" name="location_city"
-                            value="{{ location_label(loc) if loc else '' }}"
+                            value="{{ loc if f else (location_label(loc) if loc else '') }}"
                             placeholder="Ville, département ou région" aria-label="Localisation"
                             autocomplete="off" data-location-input>
                         <ul class="location-suggestions" data-location-suggestions hidden></ul>
                     </div>
                     <input type="hidden" name="location_payload"
-                        value="{{ loc | tojson if loc else '' }}" data-location-payload>
+                        value="{{ (_location_payloads[loop.index0] if loop.index0 < _location_payloads|length else '') if f else (loc | tojson if loc else '') }}" data-location-payload>
                     <button type="button" class="location-remove-btn" aria-label="Retirer cette localisation">✕</button>
                 </div>
                 {% endfor %}
@@ -129,7 +137,7 @@
                  location_payload, #24) : écrit par le JS à chaque changement,
                  relu par le serveur puis normalisé — jamais l'inverse. -->
             <input type="hidden" name="transit_payload"
-                value="{{ search.criteria.transit | tojson if search.criteria.transit else '' }}"
+                value="{{ f.get('transit_payload', [''])[0] if f else (search.criteria.transit | tojson if search.criteria.transit else '') }}"
                 data-transit-payload>
             <div class="transit-list" data-transit-list></div>
             <button type="button" class="btn btn-ghost btn-sm" data-add-transit>+ Ajouter une ligne</button>
@@ -151,7 +159,7 @@
                 {% for src in sources %}
                 <label class="source-card">
                     <input type="checkbox" name="sources" value="{{ src.id }}" class="source-checkbox"
-                        {% if src.id in (search.sources or [search.source]) %}checked{% endif %}>
+                        {% if (f and src.id in f.get('sources', [])) or (not f and src.id in (search.sources or [search.source])) %}checked{% endif %}>
                     <span class="source-card-body">
                         <span class="source-card-icon">{{ '🏠' if src.id == 'seloger' else '🏡' }}</span>
                         <span class="source-card-name">{{ src.name }}</span>
@@ -172,32 +180,33 @@
                 <div class="form-group">
                     <label for="price_min">Prix min (€)</label>
                     <input type="number" id="price_min" name="price_min"
-                        value="{{ search.criteria.priceMin if search.criteria.priceMin else '' }}"
-                        placeholder="600">
+                        value="{{ f.get('price_min', [''])[0] if f else (search.criteria.priceMin or '') }}"
+                        min="0" placeholder="600" data-bound-min="price">
                 </div>
                 <div class="form-group">
                     <label for="price_max">Prix max (€)</label>
                     <input type="number" id="price_max" name="price_max"
-                        value="{{ search.criteria.priceMax if search.criteria.priceMax else '' }}"
-                        placeholder="850">
+                        value="{{ f.get('price_max', [''])[0] if f else (search.criteria.priceMax or '') }}"
+                        min="0" placeholder="850" data-bound-max="price">
                 </div>
                 <div class="form-group">
                     <label for="surface_min">Surface min (m²)</label>
                     <input type="number" id="surface_min" name="surface_min"
-                        value="{{ search.criteria.surfaceMin if search.criteria.surfaceMin else '' }}"
-                        placeholder="19">
+                        value="{{ f.get('surface_min', [''])[0] if f else (search.criteria.surfaceMin or '') }}"
+                        min="0" placeholder="19" data-bound-min="surface">
                 </div>
                 <div class="form-group">
                     <label for="surface_max">Surface max (m²)</label>
                     <input type="number" id="surface_max" name="surface_max"
-                        value="{{ search.criteria.surfaceMax if search.criteria.surfaceMax else '' }}"
-                        placeholder="80">
+                        value="{{ f.get('surface_max', [''])[0] if f else (search.criteria.surfaceMax or '') }}"
+                        min="0" placeholder="80" data-bound-max="surface">
                 </div>
                 <div class="form-group">
                     <label for="transaction">Type de transaction</label>
                     <select id="transaction" name="transaction">
-                        <option value="rent" {% if search.criteria.transaction != 'buy' %}selected{% endif %}>Location</option>
-                        <option value="buy" {% if search.criteria.transaction == 'buy' %}selected{% endif %}>Achat</option>
+                        {% set _transaction = f.get('transaction', ['rent'])[0] if f else search.criteria.transaction %}
+                        <option value="rent" {% if _transaction != 'buy' %}selected{% endif %}>Location</option>
+                        <option value="buy" {% if _transaction == 'buy' %}selected{% endif %}>Achat</option>
                     </select>
                 </div>
             </div>
@@ -209,12 +218,12 @@
                         <label class="pill-toggle">
                             <input type="checkbox" name="property_types" value="{{ value }}"
                                 data-property-type="{{ value }}"
-                                {% if value in (search.criteria.propertyTypes or ['apartment']) %}checked{% endif %}>
+                                {% if (f and value in f.get('property_types', [])) or (not f and value in (search.criteria.propertyTypes or ['apartment'])) %}checked{% endif %}>
                             <span class="pill-toggle-label">{{ label }}</span>
                         </label>
                         {% endfor %}
                     </div>
-                    <small class="form-help" data-property-type-warning hidden></small>
+                    <small class="form-help" data-capability-warning role="alert" hidden></small>
                 </div>
             </div>
             <div class="form-grid" style="margin-top: 1rem;">
@@ -224,7 +233,7 @@
                         {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
                             <input type="checkbox" name="rooms" value="{{ n }}"
-                                {% if search.criteria.rooms and n in search.criteria.rooms %}checked{% endif %}>
+                                {% if (f and n|string in f.get('rooms', [])) or (not f and search.criteria.rooms and n in search.criteria.rooms) %}checked{% endif %}>
                             <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
@@ -235,8 +244,8 @@
                     <div class="pill-toggle-group">
                         {% for n in [1, 2, 3, 4, 5] %}
                         <label class="pill-toggle">
-                            <input type="checkbox" name="bedrooms" value="{{ n }}"
-                                {% if search.criteria.bedrooms and n in search.criteria.bedrooms %}checked{% endif %}>
+                            <input type="checkbox" name="bedrooms" value="{{ n }}" data-bedroom
+                                {% if (f and n|string in f.get('bedrooms', [])) or (not f and search.criteria.bedrooms and n in search.criteria.bedrooms) %}checked{% endif %}>
                             <span class="pill-toggle-label">{{ n }}{{ '+' if n == 5 else '' }}</span>
                         </label>
                         {% endfor %}
@@ -260,8 +269,8 @@
             <div class="form-group" style="margin-top: 0.75rem;">
                 <label for="override_{{ src.id }}">{{ src.name }} — {{ src.manual_override_label }}</label>
                 <input type="text" id="override_{{ src.id }}" name="override_{{ src.id }}"
-                    value="{{ _current.placeIds | join(', ') if _current.placeIds else '' }}"
-                    placeholder="Ex: AD08FR31096">
+                    value="{% if f %}{{ f.get('override_' ~ src.id, [''])[0] }}{% else %}{% for key, value in _current.items() %}{{ value | join(', ') if value is sequence and value is not string else value }}{{ ', ' if not loop.last else '' }}{% endfor %}{% endif %}"
+                    placeholder="{{ src.manual_override_label }}">
                 <small class="form-help">{{ src.manual_override_help }}</small>
             </div>
             {% endfor %}

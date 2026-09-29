@@ -33,6 +33,24 @@ from tests.integration.conftest import insert_search
 # ---------------------------------------------------------------------------
 
 class TestSaveAndLink:
+    @staticmethod
+    def _same_property(listing_id: str, source: str):
+        return make_listing(
+            listing_id=listing_id,
+            source=source,
+            description=(
+                "Appartement lumineux entièrement rénové, proche des commerces et transports, avec grand "
+                "séjour, cuisine équipée, deux chambres, rangements et balcon exposé sud sans vis-à-vis."
+            ),
+            price="1 250 €/mois",
+            price_value=1250,
+            surface="65 m²",
+            zip_code="75013",
+            city="Paris",
+            property_type="Appartement",
+            legacy_id="LOT-7842",
+        )
+
     def test_a_new_listing_is_stored_linked_and_left_unnotified(self, storage, search, sql):
         """`notified` a un `DEFAULT TRUE` en base (hérité du backfill qui a
         marqué l'existant comme déjà envoyé) : le repo doit passer `FALSE`
@@ -70,6 +88,110 @@ class TestSaveAndLink:
         assert [item.listing_id for item in already_linked] == ["sl_1"]
         assert sql.one("SELECT COUNT(*) FROM search_listings") == 1
         assert sql.one("SELECT COUNT(*) FROM listings") == 1
+
+    def test_same_property_from_another_site_is_not_linked_or_notified_twice(self, storage, search, sql):
+        first = self._same_property("sl_1", "seloger")
+        duplicate = self._same_property("bi_9", "bienici")
+
+        assert storage.listings.save_and_link([first], search["id"])[0] == [first]
+        new, already_known = storage.listings.save_and_link([duplicate], search["id"])
+
+        assert new == []
+        assert already_known == [duplicate]
+        assert sql.one("SELECT COUNT(*) FROM listings") == 2, "les variantes source restent auditables"
+        assert sql.one("SELECT COUNT(*) FROM search_listings") == 1
+        assert sql.one("SELECT COUNT(*) FROM search_listings WHERE notified = FALSE") == 1
+
+    def test_deduplication_is_scoped_to_each_search(self, storage, search, other_user, sql):
+        other_search = insert_search(storage, other_user["id"], label="Autre")
+        first = self._same_property("sl_1", "seloger")
+        duplicate = self._same_property("bi_9", "bienici")
+
+        storage.listings.save_and_link([first], search["id"])
+        new, _ = storage.listings.save_and_link([duplicate], other_search["id"])
+
+        assert new == [duplicate]
+        assert sql.one("SELECT COUNT(*) FROM search_listings") == 2
+
+    def test_a_preexisting_link_is_backfilled_once_then_remains_idempotent(self, storage, search, sql):
+        historical = self._same_property("sl_historique", "seloger")
+        storage.listings.save_and_link([historical], search["id"])
+        sql.exec(
+            "UPDATE listings SET dedup_key = NULL WHERE listing_id = %s",
+            (historical.listing_id,),
+        )
+        sql.exec(
+            "UPDATE search_listings SET dedup_key = NULL WHERE search_id = %s AND listing_id = %s",
+            (search["id"], historical.listing_id),
+        )
+
+        assert storage.listings.save_and_link([historical], search["id"]) == ([], [historical])
+        first_key = sql.one(
+            "SELECT dedup_key FROM search_listings WHERE search_id = %s AND listing_id = %s",
+            (search["id"], historical.listing_id),
+        )
+        assert first_key and first_key.startswith("listing:v2:")
+
+        assert storage.listings.save_and_link([historical], search["id"]) == ([], [historical])
+        assert sql.one(
+            "SELECT dedup_key FROM search_listings WHERE search_id = %s AND listing_id = %s",
+            (search["id"], historical.listing_id),
+        ) == first_key
+        assert sql.one("SELECT COUNT(*) FROM search_listings WHERE search_id = %s", (search["id"],)) == 1
+
+    def test_two_null_historical_links_in_the_same_batch_collapse_without_pending_notification(
+        self, storage, search, sql
+    ):
+        first = self._same_property("sl_historique", "seloger")
+        duplicate = self._same_property("bi_historique", "bienici")
+        weak_first = make_listing(**{**first.__dict__, "legacy_id": ""})
+        weak_duplicate = make_listing(**{**duplicate.__dict__, "legacy_id": ""})
+        storage.listings.save_and_link([weak_first, weak_duplicate], search["id"])
+        sql.exec(
+            "UPDATE search_listings SET notified = (listing_id = %s) WHERE search_id = %s",
+            (duplicate.listing_id, search["id"]),
+        )
+
+        new, known = storage.listings.save_and_link([first, duplicate], search["id"])
+
+        assert new == []
+        assert known == [first, duplicate]
+        assert sql.one("SELECT COUNT(*) FROM listings") == 2
+        assert sql.one("SELECT COUNT(*) FROM search_listings WHERE search_id = %s", (search["id"],)) == 1
+        assert sql.one("SELECT notified FROM search_listings WHERE search_id = %s", (search["id"],)) is True
+        assert storage.listings.get_unnotified_listings_for_search(search["id"]) == []
+
+    def test_an_existing_v2_winner_deletes_a_null_candidate_without_recreating_it(self, storage, search, sql):
+        winner = self._same_property("sl_gagnant", "seloger")
+        candidate = self._same_property("bi_perdant", "bienici")
+        weak_candidate = make_listing(**{**candidate.__dict__, "legacy_id": ""})
+        storage.listings.save_and_link([winner, weak_candidate], search["id"])
+        sql.exec(
+            """
+            UPDATE search_listings
+            SET found_at = CASE WHEN listing_id = %s THEN TIMESTAMP '2025-02-01 10:00:00'
+                                ELSE TIMESTAMP '2025-01-01 10:00:00' END,
+                notified = (listing_id = %s)
+            WHERE search_id = %s
+            """,
+            (winner.listing_id, candidate.listing_id, search["id"]),
+        )
+
+        new, known = storage.listings.save_and_link([candidate], search["id"])
+
+        assert new == []
+        assert known == [candidate]
+        assert sql.one("SELECT COUNT(*) FROM listings") == 2
+        assert sql.one("SELECT COUNT(*) FROM search_listings WHERE search_id = %s", (search["id"],)) == 1
+        assert sql.one(
+            "SELECT COUNT(*) FROM search_listings WHERE search_id = %s AND listing_id = %s",
+            (search["id"], candidate.listing_id),
+        ) == 0
+        assert sql.row(
+            "SELECT found_at::text, notified FROM search_listings WHERE search_id = %s AND listing_id = %s",
+            (search["id"], winner.listing_id),
+        ) == ("2025-01-01 10:00:00", True)
+        assert storage.listings.get_unnotified_listings_for_search(search["id"]) == []
 
     def test_a_second_scrape_splits_new_from_already_known(self, storage, search):
         storage.listings.save_and_link(
@@ -190,29 +312,22 @@ class TestSaveAndLink:
         assert sql.one("SELECT COUNT(*) FROM listings") == 1
         assert sql.one("SELECT COUNT(*) FROM search_listings") == 2
 
-    def test_a_duplicate_inside_one_batch_is_reported_as_new_twice(self, storage, search, sql):
-        """# BUG : une annonce présente DEUX FOIS dans le même lot (chevauchement
-        de pagination côté source, cas courant) n'est liée qu'une fois en base —
-        `ON CONFLICT DO NOTHING` fait son travail — mais la partition est
-        recalculée en Python par appartenance d'identifiant :
-
-            new_for_search = [item for item in listings if item.listing_id in newly_linked_ids]
-
-        Les DEUX objets passent le test, donc `ScrapeService` envoie deux
-        notifications pour la même annonce. Le compteur « n nouvelles annonces »
-        est faux du même coup. Comportement ACTUEL figé ici.
-        """
+    def test_a_duplicate_inside_one_batch_is_linked_and_reported_only_once(self, storage, search, sql):
+        """Un chevauchement de pagination ne doit ni provoquer une
+        `CardinalityViolation`, ni produire deux notifications."""
         doublon = make_listing(listing_id="sl_1")
 
         new_for_search, already_linked = storage.listings.save_and_link(
             [doublon, make_listing(listing_id="sl_1")], search["id"],
         )
 
-        assert [item.listing_id for item in new_for_search] == ["sl_1", "sl_1"]
+        assert [item.listing_id for item in new_for_search] == ["sl_1"]
         assert already_linked == []
-        # La base, elle, est correcte : une annonce, un lien.
         assert sql.one("SELECT COUNT(*) FROM listings") == 1
         assert sql.one("SELECT COUNT(*) FROM search_listings") == 1
+        assert [
+            item.listing_id for item in storage.listings.get_unnotified_listings_for_search(search["id"])
+        ] == ["sl_1"]
 
     def test_an_unknown_search_id_violates_the_foreign_key_and_rolls_back(self, storage, sql):
         """`search_listings.search_id` référence `searches` : lier à une

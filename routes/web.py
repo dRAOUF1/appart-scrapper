@@ -26,6 +26,7 @@ from loguru import logger
 
 from core.criteria import has_transit, location_label
 from core.geocode import CITY
+from core.schemas import validate_criteria, validate_scrape_interval
 from core.web_utils import to_int
 from parsers import list_sources, remember_manual_overrides
 from parsers._coords import coordonnee_valide
@@ -241,8 +242,6 @@ def _parse_search_criteria_from_form(
     BaseParser.MANUAL_OVERRIDE_LABEL). Ce qui y est saisi est rangé dans
     `sourceOverrides`, jamais mélangé aux critères.
     """
-    from core.criteria import normalize_criteria
-
     criteria: dict = {}
 
     locations, hand_typed_failures = _parse_locations_from_form(form_data, existing_locations)
@@ -277,9 +276,48 @@ def _parse_search_criteria_from_form(
     if overrides:
         criteria["sourceOverrides"] = overrides
 
-    # La normalisation fait le reste : types convertis, valeurs illisibles
-    # écartées, vocabulaire garanti canonique avant stockage.
-    return normalize_criteria(criteria), hand_typed_failures
+    # La validation précède la normalisation afin qu'une valeur fournie mais
+    # invalide ne disparaisse jamais silencieusement du formulaire.
+    return validate_criteria(criteria), hand_typed_failures
+
+
+def _submitted_form_values(form_data) -> dict[str, list[str]]:
+    """Copie sérialisable de la soumission, valeurs multiples comprises.
+
+    Contrat de vue : après une erreur, les templates utilisent `form_values`
+    pour rendre exactement ce que l'utilisateur vient d'envoyer (sources,
+    compteurs et localisations inclus), sans relire l'ancienne recherche.
+    """
+    if hasattr(form_data, "to_dict"):
+        values = form_data.to_dict(flat=False)
+    else:
+        values = {
+            key: list(value) if isinstance(value, list) else [value]
+            for key, value in form_data.items()
+        }
+
+    # Les clients normaux postent le libellé visible et son payload caché.
+    # Les clients programmatiques peuvent n'envoyer que le payload : dériver
+    # alors le libellé évite une ligne visuellement vide tout en conservant le
+    # payload canonique, notamment son inseeCode.
+    payloads = values.get("location_payload", [])
+    if payloads and not values.get("location_city"):
+        cities = []
+        for payload in payloads:
+            try:
+                location = json.loads(payload)
+            except (TypeError, ValueError):
+                location = None
+            cities.append(location_label(location) if isinstance(location, dict) else "")
+        values["location_city"] = cities
+    return values
+
+
+def _scrape_stats_for_view(storage, search_id: int) -> dict:
+    """Statistiques au contrat complet attendu par toutes les vues."""
+    stats = dict(storage.scrape_logs.get_scrape_stats(search_id) or {})
+    stats.setdefault("partial_count", 0)
+    return stats
 
 
 def _location_error_message(criteria: dict, hand_typed_failures: list[str]) -> str | None:
@@ -448,25 +486,39 @@ def searches():
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
         selected_sources = request.form.getlist("sources") or [request.form.get("source", "seloger").strip()]
-        scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
 
         try:
+            scrape_interval = validate_scrape_interval(request.form.get("scrape_interval", 5))
             criteria, hand_typed_failures = _parse_search_criteria_from_form(request.form)
         except ValueError as e:
-            # Payload transit corrompu (#28) : message français explicite,
-            # jamais un 500.
             flash(str(e), "error")
-            return redirect(url_for("web.searches"))
+            all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
+            return render_template(
+                "searches.html",
+                searches=all_searches,
+                base_url=request.url_root.rstrip("/"),
+                sources=sources,
+                form_values=_submitted_form_values(request.form),
+                now=datetime.utcnow,
+            )
 
         location_error = _location_error_message(criteria, hand_typed_failures)
         if location_error:
             flash(location_error, "error")
-            return redirect(url_for("web.searches"))
+            all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
+            return render_template(
+                "searches.html", searches=all_searches, base_url=request.url_root.rstrip("/"), sources=sources,
+                form_values=_submitted_form_values(request.form), now=datetime.utcnow,
+            )
 
         validation = _validate_sources_criteria(selected_sources, criteria)
         if not all(r["ok"] for r in validation):
             flash(_validation_error_message(validation), "error")
-            return redirect(url_for("web.searches"))
+            all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
+            return render_template(
+                "searches.html", searches=all_searches, base_url=request.url_root.rstrip("/"), sources=sources,
+                form_values=_submitted_form_values(request.form), now=datetime.utcnow,
+            )
 
         if label and ntfy_topic:
             current_app.storage.searches.create_search(
@@ -478,7 +530,13 @@ def searches():
             flash(f"Recherche « {label} » créée !", "success")
         else:
             flash("Label et topic ntfy requis", "error")
-        return redirect(url_for("web.searches"))
+        if label and ntfy_topic:
+            return redirect(url_for("web.searches"))
+        all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
+        return render_template(
+            "searches.html", searches=all_searches, base_url=request.url_root.rstrip("/"), sources=sources,
+            form_values=_submitted_form_values(request.form), now=datetime.utcnow,
+        )
 
     all_searches = current_app.storage.searches.get_user_searches(g.user["id"])
     base_url = request.url_root.rstrip("/")
@@ -487,6 +545,7 @@ def searches():
         searches=all_searches,
         base_url=base_url,
         sources=sources,
+        form_values=None,
         now=datetime.utcnow,
     )
 
@@ -671,7 +730,6 @@ def edit_search(search_id: int):
     if request.method == "POST":
         label = request.form.get("label", "").strip()
         ntfy_topic = request.form.get("ntfy_topic", "").strip()
-        scrape_interval = to_int(request.form.get("scrape_interval", 5), 5)
         selected_sources = request.form.getlist("sources") or search.get("sources") or [search.get("source", "seloger")]
 
         # Filet #24 : une ligne dont le payload caché a été perdu mais dont le
@@ -679,32 +737,34 @@ def edit_search(search_id: int):
         # réutilise celle-ci (inseeCode compris) au lieu d'être abandonnée.
         existing_locations = (search.get("criteria") or {}).get("locations") or []
         try:
+            scrape_interval = validate_scrape_interval(request.form.get("scrape_interval", 5))
             criteria, hand_typed_failures = _parse_search_criteria_from_form(
                 request.form, existing_locations
             )
         except ValueError as e:
-            # Payload transit corrompu (#28) : message français explicite et
-            # retour au formulaire — jamais un 500.
             flash(str(e), "error")
-            stats = storage.scrape_logs.get_scrape_stats(search_id)
+            stats = _scrape_stats_for_view(storage, search_id)
             return render_template(
-                "search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow
+                "search_edit.html", search=search, stats=stats, sources=list_sources(),
+                form_values=_submitted_form_values(request.form), now=datetime.utcnow,
             )
 
         location_error = _location_error_message(criteria, hand_typed_failures)
         if location_error:
             flash(location_error, "error")
-            stats = storage.scrape_logs.get_scrape_stats(search_id)
+            stats = _scrape_stats_for_view(storage, search_id)
             return render_template(
-                "search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow
+                "search_edit.html", search=search, stats=stats, sources=list_sources(),
+                form_values=_submitted_form_values(request.form), now=datetime.utcnow,
             )
 
         validation = _validate_sources_criteria(selected_sources, criteria)
         if not all(r["ok"] for r in validation):
             flash(_validation_error_message(validation), "error")
-            stats = storage.scrape_logs.get_scrape_stats(search_id)
+            stats = _scrape_stats_for_view(storage, search_id)
             return render_template(
-                "search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow
+                "search_edit.html", search=search, stats=stats, sources=list_sources(),
+                form_values=_submitted_form_values(request.form), now=datetime.utcnow,
             )
 
         if label and ntfy_topic:
@@ -719,9 +779,16 @@ def edit_search(search_id: int):
             flash("Recherche mise à jour !", "success")
             return redirect(url_for("web.searches"))
         flash("Label et topic ntfy requis", "error")
+        stats = _scrape_stats_for_view(storage, search_id)
+        return render_template(
+            "search_edit.html", search=search, stats=stats, sources=list_sources(),
+            form_values=_submitted_form_values(request.form), now=datetime.utcnow,
+        )
 
-    stats = storage.scrape_logs.get_scrape_stats(search_id)
-    return render_template("search_edit.html", search=search, stats=stats, sources=list_sources(), now=datetime.utcnow)
+    stats = _scrape_stats_for_view(storage, search_id)
+    return render_template(
+        "search_edit.html", search=search, stats=stats, sources=list_sources(), form_values=None, now=datetime.utcnow,
+    )
 
 
 @web_bp.route("/searches/<int:search_id>/logs", methods=["GET"])
@@ -741,7 +808,7 @@ def search_logs(search_id: int):
     logs = storage.scrape_logs.get_scrape_logs(search_id, limit=per_page, offset=offset, status_filter=status_filter)
     total = storage.scrape_logs.count_scrape_logs(search_id, status_filter=status_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
-    stats = storage.scrape_logs.get_scrape_stats(search_id)
+    stats = _scrape_stats_for_view(storage, search_id)
     return render_template(
         "search_logs.html",
         search=search,

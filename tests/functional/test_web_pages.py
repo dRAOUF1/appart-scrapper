@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from datetime import datetime
 
 import pytest
@@ -19,6 +20,7 @@ import pytest
 from tests.functional.conftest import (
     make_dashboard_data,
     make_listing_detail,
+    make_scrape_stats,
     make_search_detail,
     make_user_detail,
     make_view_listing,
@@ -67,7 +69,7 @@ def web_views(storage):
     storage.scrape_logs.get_scrape_logs.return_value = []
     storage.scrape_logs.count_scrape_logs.return_value = 0
     storage.scrape_logs.get_scrape_stats.return_value = {
-        "total": 0, "success": 0, "error": 0, "empty": 0,
+        "total": 0, "success": 0, "error": 0, "empty": 0, "partial_count": 0,
         "avg_duration": 0, "avg_new": 0, "last_scrape": None,
     }
     return storage
@@ -262,6 +264,28 @@ class TestSearchesPage:
         args = storage.searches.create_search.call_args
         assert args[0][3] == "laforet"
         assert args.kwargs["sources"] == ["laforet", "seloger"]
+
+    def test_an_invalid_creation_renders_every_submitted_value(self, web_client, storage):
+        resp = web_client.post("/searches", data={
+            "label": "Mon essai",
+            "ntfy_topic": "topic-test",
+            "sources": ["seloger", "bienici"],
+            "rooms": ["2", "4"],
+            "location_city": ["Paris (75013)", "Nantes (44000)"],
+            "location_payload": [PARIS_PAYLOAD, ""],
+            "price_max": "abc",
+        })
+
+        page = resp.data.decode()
+        assert resp.status_code == 200
+        assert storage.searches.create_search.call_count == 0
+        assert 'value="Mon essai"' in page
+        assert 'value="seloger" class="source-checkbox"\n                        checked' in page
+        assert 'value="bienici" class="source-checkbox"\n                        checked' in page
+        assert re.search(r'name="rooms" value="2"\s+checked', page)
+        assert re.search(r'name="rooms" value="4"\s+checked', page)
+        assert 'value="Paris (75013)"' in page and 'value="Nantes (44000)"' in page
+        assert 'name="price_max" value="abc"' in page
 
     @pytest.mark.parametrize(
         ("label", "topic"),
@@ -616,6 +640,54 @@ class TestEditSearch:
         assert resp.status_code == 200
         storage.searches.update_search.assert_not_called()
 
+    def test_an_invalid_numeric_edit_does_not_restore_stored_values(self, web_client, storage, owned_search):
+        resp = web_client.post("/searches/1/edit", data={
+            "label": "Valeur soumise",
+            "ntfy_topic": "topic-soumis",
+            "sources": ["seloger"],
+            "location_city": ["Paris (75013)"],
+            "location_payload": [PARIS_PAYLOAD],
+            "price_min": "900",
+            "price_max": "800",
+            "rooms": ["2", "4"],
+        })
+
+        page = resp.data.decode()
+        assert resp.status_code == 200
+        storage.searches.update_search.assert_not_called()
+        assert 'value="Valeur soumise"' in page
+        assert re.search(r'name="price_min"\s+value="900"', page)
+        assert re.search(r'name="price_max"\s+value="800"', page)
+        assert re.search(r'name="rooms" value="2"\s+checked', page)
+        assert re.search(r'name="rooms" value="4"\s+checked', page)
+
+    @pytest.mark.parametrize(
+        ("label", "topic"),
+        [("", "topic-soumis"), ("Libellé soumis", "")],
+        ids=["label-vide", "topic-vide"],
+    )
+    def test_a_missing_label_or_topic_preserves_the_submitted_edit_values(
+        self, web_client, storage, owned_search, label, topic
+    ):
+        resp = web_client.post("/searches/1/edit", data={
+            "label": label,
+            "ntfy_topic": topic,
+            "sources": ["seloger"],
+            "location_city": ["Paris (75013)"],
+            "location_payload": [PARIS_PAYLOAD],
+            "price_max": "987",
+            "rooms": ["2", "4"],
+        })
+
+        page = resp.data.decode()
+        assert resp.status_code == 200
+        storage.searches.update_search.assert_not_called()
+        assert f'value="{label}"' in page
+        assert f'value="{topic}"' in page
+        assert re.search(r'name="price_max"\s+value="987"', page)
+        assert re.search(r'name="rooms" value="2"\s+checked', page)
+        assert re.search(r'name="rooms" value="4"\s+checked', page)
+
     def test_a_failed_source_validation_rerenders_with_the_submitted_locations(
         self, web_client, storage, owned_search
     ):
@@ -828,6 +900,16 @@ class TestSearchLogs:
 
         assert web_client.get("/searches/1/logs").status_code == 200
 
+    def test_partial_status_has_a_counter_and_filter(self, web_client, storage, owned_search):
+        storage.scrape_logs.get_scrape_stats.return_value = make_scrape_stats(partial_count=2)
+
+        page = web_client.get("/searches/1/logs?status=partial").data.decode()
+
+        assert "Partiels" in page
+        assert ">2</div>" in page
+        assert "status=partial" in page
+        assert storage.scrape_logs.count_scrape_logs.call_args.kwargs["status_filter"] == "partial"
+
 
 class TestLiveLogs:
     def test_the_tail_is_returned_with_the_next_offset(self, web_client, storage, owned_search, log_dirs):
@@ -900,6 +982,22 @@ class TestRawLog:
 
         assert resp.status_code in (302, 303)
         assert "/logs" in resp.headers["Location"]
+
+    def test_a_partial_log_exposes_per_source_details(self, web_client, storage, owned_search):
+        storage.scrape_logs.get_scrape_log_raw.return_value = {
+            "id": 5, "search_id": 1, "raw_logs": "", "status": "partial",
+            "started_at": datetime(2026, 7, 1, 10, 0), "completed_at": None,
+            "duration_sec": 3, "listings_found": 2, "new_listings": 1,
+            "error_message": "seloger: blocage",
+            "details": {"per_source": {"seloger": {"error": "blocage"}, "laforet": {"found": 2}}},
+        }
+
+        page = web_client.get("/searches/1/logs/5/raw").data.decode()
+
+        assert "Partiel" in page
+        assert "Résultat par source" in page
+        assert "blocage" in page
+        assert "2 annonce(s) trouvée(s)" in page
 
 
 class TestLogDownload:

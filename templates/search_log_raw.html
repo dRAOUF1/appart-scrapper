@@ -11,7 +11,7 @@
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
         <div>
             <span class="badge {% if log_entry.status == 'success' %}badge-active{% elif log_entry.status == 'error' %}badge-inactive{% else %}badge-warning{% endif %}">
-                {% if log_entry.status == 'success' %}✅{% elif log_entry.status == 'empty' %}ℹ️{% elif log_entry.status == 'error' %}❌{% else %}⚠️{% endif %}
+                {% if log_entry.status == 'success' %}✅{% elif log_entry.status == 'empty' %}ℹ️{% elif log_entry.status == 'error' %}❌{% else %}⚠️ Partiel —{% endif %}
                 {{ log_entry.status }}
             </span>
             <span class="text-muted" style="margin-left: 0.75rem;">
@@ -30,6 +30,20 @@
         {{ log_brut(log_entry.raw_logs) }}
     {% else %}
         <span class="text-muted">Aucun log brut disponible pour ce scrape.</span>
+    {% endif %}
+    {% if log_entry.details and log_entry.details.per_source %}
+    <div class="card" style="margin-top: 1rem;">
+        <h3>Résultat par source</h3>
+        {% for source, result in log_entry.details.per_source.items() %}
+        <div class="detail-row">
+            <span class="detail-label"><span class="badge badge-source">{{ source }}</span></span>
+            <span class="detail-value">
+                {% if result.get('error') %}<span style="color: var(--red);">{{ result.error }}</span>
+                {% else %}{{ result.get('found', 0) }} annonce(s) trouvée(s){% endif %}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
     {% endif %}
 </div>
 

@@ -330,6 +330,13 @@ def _card_photos(article) -> list[str]:
         src = (img.get("src") or "").strip()
         if not src or src.startswith("data:"):
             continue
+        marker = " ".join([
+            src,
+            img.get("alt") or "",
+            " ".join(img.get("class") or []),
+        ]).casefold()
+        if "logo" in marker or "/agence" in src.casefold():
+            continue
         url = f"{BASE_URL}{src}" if src.startswith("/") else src
         if url not in photos:
             photos.append(url)

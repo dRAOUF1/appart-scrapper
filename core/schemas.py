@@ -9,7 +9,7 @@ silencieusement écartée par la normalisation.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.criteria import normalize_criteria
 
@@ -29,20 +29,20 @@ class SearchCriteria(BaseModel):
     locations: list[dict] | None = None
     transaction: str | None = None
     propertyTypes: list[str] | None = None
-    priceMin: int | None = None
-    priceMax: int | None = None
-    surfaceMin: int | None = None
-    surfaceMax: int | None = None
-    rooms: list | None = None
-    bedrooms: list | None = None
+    priceMin: int | None = Field(default=None, ge=0)
+    priceMax: int | None = Field(default=None, ge=0)
+    surfaceMin: int | None = Field(default=None, ge=0)
+    surfaceMax: int | None = Field(default=None, ge=0)
+    rooms: list[int] | None = None
+    bedrooms: list[int] | None = None
     sourceOverrides: dict | None = None
 
     # --- ancien vocabulaire, encore accepté en entrée ---
     placeIds: list[str] | None = None
     city: str | None = None
     postalCode: str | None = None
-    spaceMin: int | None = None
-    spaceMax: int | None = None
+    spaceMin: int | None = Field(default=None, ge=0)
+    spaceMax: int | None = Field(default=None, ge=0)
     distributionTypes: list[str] | None = None
     estateTypes: list[str] | None = None
     order: str | None = None
@@ -64,7 +64,19 @@ def validate_criteria(data) -> dict:
         model = SearchCriteria.model_validate(data)
     except ValidationError as e:
         raise ValueError(f"Critères invalides: {e.errors()[0]['msg']}") from e
-    return normalize_criteria(model.model_dump(exclude_none=True))
+    normalized = normalize_criteria(model.model_dump(exclude_none=True))
+    for minimum_key, maximum_key, label in (
+        ("priceMin", "priceMax", "prix"),
+        ("surfaceMin", "surfaceMax", "surface"),
+    ):
+        minimum_value = normalized.get(minimum_key)
+        maximum_value = normalized.get(maximum_key)
+        if minimum_value is not None and maximum_value is not None and minimum_value > maximum_value:
+            raise ValueError(f"La borne minimale de {label} ne peut pas dépasser la borne maximale")
+    for key, label in (("rooms", "pièces"), ("bedrooms", "chambres")):
+        if any(value < 1 for value in normalized.get(key, [])):
+            raise ValueError(f"Le nombre de {label} doit être supérieur ou égal à 1")
+    return normalized
 
 
 def validate_scrape_interval(value, minimum: int = 1, maximum: int = 1440) -> int:

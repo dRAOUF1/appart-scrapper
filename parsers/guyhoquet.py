@@ -42,6 +42,7 @@ from core.criteria import (
 )
 from core.geocode import CITY, REGION
 from models.listing import Listing
+from parsers._coords import PRECISION_APPROXIMATIVE, PRECISION_EXACTE, extraire_coordonnees
 from parsers._dates import normaliser_creation_date
 from parsers.base import BaseParser, ParserRegistry, get_locations, has_transit
 
@@ -196,6 +197,36 @@ def _property_type_label(raw) -> str:
     return ""
 
 
+def _marker_coords(data: dict) -> tuple[tuple[float, float] | None, str]:
+    """Coordonnées markers, directes ou dans ``informations``.
+
+    Le flux public observé le 2026-08-29 porte le couple dans l'entrée
+    ``alentourweb`` sous forme ``latitude,longitude``. Il s'agit d'un point
+    cartographique volontairement approximatif ; des champs directs, quand
+    ils existent, priment et sont considérés exacts.
+    """
+    direct = extraire_coordonnees(
+        data.get("latitude") or data.get("lat"),
+        data.get("longitude") or data.get("lng") or data.get("lon"),
+    )
+    if direct:
+        return direct, PRECISION_EXACTE
+
+    raw_informations = data.get("informations")
+    if isinstance(raw_informations, str):
+        try:
+            raw_informations = json.loads(raw_informations)
+        except json.JSONDecodeError:
+            raw_informations = []
+    for information in raw_informations if isinstance(raw_informations, list) else []:
+        if not isinstance(information, dict) or information.get("field") != "alentourweb":
+            continue
+        latitude, separator, longitude = str(information.get("value") or "").partition(",")
+        if separator and (coords := extraire_coordonnees(latitude, longitude)):
+            return coords, PRECISION_APPROXIMATIVE
+    return None, ""
+
+
 def _dict_to_listing(data: dict) -> Listing:
     """Convertit une annonce markers (format riche ou plat) en Listing."""
     ad_id = str(data.get("id", ""))
@@ -210,6 +241,7 @@ def _dict_to_listing(data: dict) -> Listing:
         if isinstance(p, str) and p
     ]
     image_url = photos[0]["url"] if photos else ""
+    coords, precision = _marker_coords(data)
 
     return Listing(
         listing_id=f"gh_{ad_id}",
@@ -245,6 +277,9 @@ def _dict_to_listing(data: dict) -> Listing:
         creation_date=normaliser_creation_date(data.get("created_at")),
         update_date=data.get("updated_at") or "",
         photos=json.dumps(photos),
+        latitude=coords[0] if coords else None,
+        longitude=coords[1] if coords else None,
+        location_precision=precision,
     )
 
 
@@ -320,6 +355,7 @@ class GuyHoquetParser(BaseParser):
     # parking-box, terrain) et les deux transactions : SUPPORTED_* gardent
     # leur valeur par défaut (tout).
     SUPPORTED_TRANSACTIONS = (RENT, BUY)
+    SUPPORTS_BEDROOMS = True
 
     # Pas de repli manuel : décision utilisateur — la résolution hybride
     # (dérivation statique + autocomplete caché) suffit.
@@ -436,13 +472,13 @@ class GuyHoquetParser(BaseParser):
         params.append(("with_markers", "true" if with_markers else "false"))
         return params
 
-    def _fetch_markers(self, native: dict) -> tuple[int | None, list[dict]]:
+    def _fetch_markers(self, session: requests.Session, native: dict) -> tuple[int | None, list[dict]]:
         """L'appel markers unique pour tous les périmètres fusionnés.
 
         Retourne (total, résultats) ; total None si la réponse n'a pas la
         forme attendue — les erreurs HTTP réelles (réseau, 500) remontent à
         l'appelant plutôt que d'être masquées en résultat vide."""
-        resp = requests.get(
+        resp = session.get(
             RESULT_URL,
             params=self._search_params(native, page=1, with_markers=True),
             headers=_AJAX_HEADERS,
@@ -461,9 +497,9 @@ class GuyHoquetParser(BaseParser):
             raise ValueError("Réponse markers Guy Hoquet inattendue : champ results absent")
         return (markers.get("total"), results)
 
-    def _fetch_page_html(self, native: dict, page: int) -> str:
+    def _fetch_page_html(self, session: requests.Session, native: dict, page: int) -> str:
         """Le fragment HTML des cartes d'une page (templates.properties)."""
-        resp = requests.get(
+        resp = session.get(
             RESULT_URL,
             params=self._search_params(native, page=page, with_markers=False),
             headers=_AJAX_HEADERS,
@@ -471,10 +507,14 @@ class GuyHoquetParser(BaseParser):
         )
         resp.raise_for_status()
         data = resp.json()
-        templates = data.get("templates") or {}
-        return templates.get("properties") or ""
+        templates = data.get("templates")
+        if not isinstance(templates, dict) or not isinstance(templates.get("properties"), str):
+            raise ValueError("Réponse HTML Guy Hoquet inattendue : templates.properties absent")
+        return templates["properties"]
 
-    def _scrape_paged(self, native: dict, total: int, locations: list[dict]) -> list[Listing]:
+    def _scrape_paged(
+        self, session: requests.Session, native: dict, total: int, locations: list[dict]
+    ) -> list[Listing]:
         """La pagination HTML : le seul chemin qui rend tout quand la source
         dépasse le plafond markers de 1000."""
         needed_pages = math.ceil(total / _PAGE_SIZE)
@@ -488,7 +528,7 @@ class GuyHoquetParser(BaseParser):
         seen: set[str] = set()
         pages_without_match = 0
         for page in range(1, pages + 1):
-            html = self._fetch_page_html(native, page)
+            html = self._fetch_page_html(session, native, page)
             cards = BeautifulSoup(html, "lxml").select("div.resultat-item[data-id]")
             if not cards:
                 break
@@ -561,14 +601,16 @@ class GuyHoquetParser(BaseParser):
             )
         locations = [self._scoped_location(loc) for loc in get_locations(criteria)]
 
-        total, results = self._fetch_markers(native)
+        session = requests.Session()
+        session.headers.update(_AJAX_HEADERS)
+        total, results = self._fetch_markers(session, native)
 
         if total is not None and total > _MARKERS_LIMIT:
             logger.info(
                 f"[Guy Hoquet] {total} biens annoncés : dépassement du plafond markers "
                 f"({_MARKERS_LIMIT}), bascule sur la pagination HTML"
             )
-            listings = self._scrape_paged(native, total, locations)
+            listings = self._scrape_paged(session, native, total, locations)
         else:
             listings = []
             seen: set[str] = set()

@@ -85,6 +85,7 @@ class ParserRegistry:
                 "description": pcls.SOURCE_DESCRIPTION,
                 "supported_transactions": list(pcls.SUPPORTED_TRANSACTIONS),
                 "supported_property_types": list(pcls.SUPPORTED_PROPERTY_TYPES),
+                "supports_bedrooms": pcls.SUPPORTS_BEDROOMS,
                 "manual_override_label": pcls.MANUAL_OVERRIDE_LABEL,
                 "manual_override_help": pcls.MANUAL_OVERRIDE_HELP,
                 "url_note": pcls.URL_NOTE,
@@ -130,6 +131,7 @@ class BaseParser(ABC):
     # au lieu de lever une exception au milieu du pipeline.
     SUPPORTED_TRANSACTIONS: tuple[str, ...] = TRANSACTIONS
     SUPPORTED_PROPERTY_TYPES: tuple[str, ...] = PROPERTY_TYPES
+    SUPPORTS_BEDROOMS: bool = False
 
     # Set when build_search_url() deliberately omits some criteria (e.g. a
     # source whose own filter query params break its location matching, so
@@ -267,6 +269,9 @@ class BaseParser(ABC):
             if property_type not in self.SUPPORTED_PROPERTY_TYPES:
                 label = PROPERTY_TYPE_LABELS.get(property_type, property_type)
                 unsupported.append(f"les biens de type « {label} »")
+
+        if criteria.get("bedrooms") and not self.SUPPORTS_BEDROOMS:
+            unsupported.append("le nombre de chambres")
 
         return unsupported
 

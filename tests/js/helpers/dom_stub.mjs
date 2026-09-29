@@ -19,6 +19,11 @@
 
 /** Analyse un sélecteur simple en prédicat. */
 function compileSelector(selector) {
+    const attrWithValue = selector.match(/^\[([^=\]]+)=["']([^"']*)["']\]$/);
+    if (attrWithValue) {
+        const [, attr, value] = attrWithValue;
+        return (node) => node.getAttribute(attr) === value;
+    }
     const tagWithClass = selector.match(/^([a-zA-Z][a-zA-Z0-9]*)\.([\w-]+)$/);
     if (tagWithClass) {
         const [, tag, cls] = tagWithClass;
@@ -58,6 +63,10 @@ export class FakeElement {
         this.hidden = false;
         this.style = {};
         this._textContent = '';
+        this.validationMessage = '';
+        this.setCustomValidity = (message) => {
+            this.validationMessage = String(message);
+        };
         // Le focus réel n'a pas d'effet observable ici : no-op suffisant.
         this.focus = () => {};
     }

@@ -65,10 +65,20 @@ def _fetch_page(filters: dict, max_retries: int = 3) -> dict:
                 timeout=15,
             )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise ValueError("schéma JSON inattendu : objet attendu")
+            if "realEstateAds" not in data or "total" not in data:
+                raise ValueError("schéma JSON inattendu : realEstateAds/total absent")
+            if not isinstance(data["realEstateAds"], list) or not isinstance(data["total"], int):
+                raise ValueError("schéma JSON inattendu : types realEstateAds/total invalides")
+            return data
         except requests.exceptions.RequestException as e:
             last_error = e
             logger.warning(f"[BienIci] Erreur réseau : {e}")
+        except (requests.exceptions.JSONDecodeError, ValueError) as e:
+            last_error = e
+            logger.warning(f"[BienIci] Réponse invalide : {e}")
 
     raise ValueError(f"Impossible d'interroger l'API bienici après {max_retries} tentatives : {last_error}")
 
@@ -89,10 +99,15 @@ def scrape(native: dict) -> list[dict]:
     for _page in range(MAX_PAGES):
         filters = {**native, "size": PAGE_SIZE, "from": offset}
         data = _fetch_page(filters)
-        page_listings = data.get("realEstateAds") or []
+        page_listings = data["realEstateAds"]
         listings.extend(page_listings)
 
-        total = data.get("total", 0)
+        total = data["total"]
+        if not page_listings and offset < total:
+            raise ValueError(
+                f"API bienici : page vide inattendue à l'offset {offset} "
+                f"alors que {total} annonces sont annoncées"
+            )
         offset += len(page_listings)
         if not page_listings or offset >= total:
             break

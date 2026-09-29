@@ -158,10 +158,18 @@ class ScrapeService:
             # Laforet ne correspond au code postal + filtres demandés), pas
             # un échec. Statut distinct de "error" pour ne pas l'afficher
             # comme une panne dans les logs/l'UI.
+            source_errors = {
+                source: result["error"] for source, result in per_source.items() if "error" in result
+            }
+            status = "partial" if source_errors else "empty"
+            error_message = (
+                "; ".join(f"{source}: {message}" for source, message in source_errors.items())
+                if source_errors else "Aucune annonce ne correspond aux critères"
+            )
             logger.info(f"[search:{search_id}] Aucune annonce trouvée")
             storage.scrape_logs.create_scrape_log(
-                search_id, "empty",
-                error_message="Aucune annonce ne correspond aux critères",
+                search_id, status,
+                error_message=error_message,
                 listings_found=0, new_listings=0,
                 details={"per_source": per_source},
                 started_at=started_at,
@@ -234,8 +242,17 @@ class ScrapeService:
         # if new_listings:
         #     notifier.notify_summary(topic, len(new_listings), len(listings))
 
+        source_errors = {
+            source: result["error"] for source, result in per_source.items() if "error" in result
+        }
+        status = "partial" if source_errors else "success"
+        error_message = (
+            "; ".join(f"{source}: {message}" for source, message in source_errors.items())
+            if source_errors else None
+        )
         log_id = storage.scrape_logs.create_scrape_log(
-            search_id, "success",
+            search_id, status,
+            error_message=error_message,
             listings_found=len(listings),
             new_listings=len(new_listings),
             details={

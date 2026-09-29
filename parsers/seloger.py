@@ -87,6 +87,7 @@ class SeLogerParser(BaseParser):
     SOURCE_ID = "seloger"
     SOURCE_NAME = "SeLoger"
     SOURCE_DESCRIPTION = "SeLoger.com — scraping de la page de résultats"
+    SUPPORTS_BEDROOMS = True
 
     # SeLoger couvre les quatre types de bien et les deux transactions :
     # SUPPORTED_TRANSACTIONS / SUPPORTED_PROPERTY_TYPES gardent donc leur
